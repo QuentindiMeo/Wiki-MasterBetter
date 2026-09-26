@@ -34,7 +34,6 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
 - **Suivi de lecture intelligent** : Cliquer sur une notification marque aussi toutes celles plus anciennes comme lues, met à jour le compteur
-- **Notification de carte rendue clarifiée** : « Votre carte "{nom}" vous est rendue. » devient « Personne n'a enchéri pour votre carte « {nom} » »
 - **Suffixe de titre d'onglet** : Le titre de l'onglet du navigateur reflète le contenu de la page visitée
 
 ### 💰 Marché & Enchères
@@ -52,6 +51,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Actions rapides** : Un bouton sur chaque carte de la collection ouvre la modale d'enchère
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
 - **Estimations mémorisées** : Le prix d'estimation vu sur `/pulls` ou `/collection` est mémorisé et affiché à côté de la rareté de chaque carte de la collection
+- **Évaluation en masse** : Deux boutons permettent d'évaluer automatiquement les cartes de la page via la modale d'estimation — l'un pour les seules cartes sans estimation, l'autre pour toute la page
 
 ### 🎁 Pulls
 

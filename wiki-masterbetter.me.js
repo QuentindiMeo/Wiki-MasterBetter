@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.14.10
+// @version      0.15.7
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -48,6 +48,7 @@
  * * Feature ETS: on /pulls and /collection, store span.tabular-nums' value in localStorage under "eval-{name}"; on /collection, append cached eval prices to each card's rarity tag
  * * Feature FCP: a settings-wheel button next to the sidebar's fold toggle opens a modal listing every rule/feature above, individually toggleable; the choice is stored in localStorage and applies after a page reload
  * * Rule 19: rewrite "Votre carte vous est rendue." notifications to name the card and clarify no one bid on it
+ * * Feature EBC: on /collection, buttons next to the rarity filters bulk-evaluate every card (or just those missing a Feature ETS estimate), one at a time (cancellable via a floating "stop" button)
  */
 
 (function () {
@@ -1558,7 +1559,7 @@
     const cardName = document.querySelector("h1.flex-1")?.textContent.trim();
     const priceText = document
       .querySelector("span.text-2xl")
-      ?.textContent.replace(" ", "");
+      ?.textContent.replace(/\s/g, "");
     if (!cardName || !priceText) return;
 
     const price = parseInt(priceText, 10);
@@ -1636,7 +1637,7 @@
     snipable: "SNIPABLE",
     agreeable: "prix agréable",
     tolerable: "prix tolérable",
-    overpriced: "prix abusif",
+    overpriced: "moins cher ailleurs",
   };
 
   function updateSnipableBadge() {
@@ -1655,7 +1656,7 @@
     const cardName = nameEl.textContent.trim();
     const priceText = document
       .querySelector("span.text-2xl")
-      ?.textContent.trim();
+      ?.textContent.replace(/\s/g, "");
     const price = parseInt(priceText, 10);
 
     if (!cardName || Number.isNaN(price)) {
@@ -2046,6 +2047,8 @@
   // appears, store its value in localStorage under "eval-{name}",
   // name being the text content of p.truncate
   // ============================================================
+  const UNKNOWN_EVAL_VALUE = "?";
+
   function recordTabularNumsValue() {
     if (
       !window.location.pathname.startsWith("/pulls") &&
@@ -2060,7 +2063,7 @@
     if (!value) {
       const noSalesContainer = document.querySelector("div.mb-5 p.mt-1\\.5");
       if (noSalesContainer?.textContent.includes("Aucune vente")) {
-        value = "?";
+        value = UNKNOWN_EVAL_VALUE;
       }
     }
 
@@ -2304,6 +2307,10 @@
     {
       id: "rule-19",
       label: "Reformuler la notification « Votre carte vous est rendue »",
+    },
+    {
+      id: "feature-ebc",
+      label: "Bouton d'évaluation groupée des cartes non estimées",
     },
   ];
 
@@ -2647,6 +2654,226 @@
   }
 
   // ============================================================
+  // Feature EBC: on /collection, add two buttons as the last children of div.flex-wrap.gap-2 (rarity filter
+  // buttons): "Réévaluer toute la page" (re-evaluates every card) and, right after it, "Évaluer les cartes non
+  // évaluées" (only cards whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker).
+  // Either shows a fixed "Arrêter la reconnaissance" button and, for each targeted card, clicks its
+  // .wm-quick-action button, waits for Feature ETS to record a fresh value under its "eval-{name}" localStorage
+  // key, then presses Escape to close the modal before moving to the next card. The stop button cancels the run
+  // after the current card; the two buttons disable each other while either is running
+  // ============================================================
+  function getAllCollectionCards() {
+    const grid = document.querySelector("div.gap-3.justify-center");
+    if (!grid) return null;
+
+    return Array.from(grid.children);
+  }
+
+  function getUnevaluatedCollectionCards() {
+    const cards = getAllCollectionCards();
+    if (cards === null) return null;
+
+    return cards.filter((card) => {
+      const rarityEl = card.querySelector("div.top-2.left-2");
+      if (!rarityEl) return false;
+
+      const appendix = rarityEl.querySelector(":scope > .wm-eval-appendix");
+      if (!appendix) return true;
+
+      return appendix.textContent.trim() === `(${UNKNOWN_EVAL_VALUE})`;
+    });
+  }
+
+  // Resolves true once a fresh value lands under "eval-{cardName}" (the
+  // caller must have cleared that key beforehand so a stale value already
+  // present can't be mistaken for a freshly recorded one), or false if
+  // stopped/timed out first
+  function waitForCardEvaluation(
+    cardName,
+    state,
+    timeout = 8000,
+    interval = 150,
+  ) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        if (state.stopped) {
+          resolve(false);
+          return;
+        }
+        if (localStorage.getItem(`eval-${cardName}`) !== null) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start >= timeout) {
+          resolve(false);
+          return;
+        }
+        setTimeout(check, interval);
+      };
+      check();
+    });
+  }
+
+  function insertStopEvaluationButton(state) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-eval-stop";
+    btn.textContent = "Arrêter la reconnaissance";
+
+    btn.addEventListener("click", () => {
+      state.stopped = true;
+    });
+
+    document.body.appendChild(btn);
+    return btn;
+  }
+
+  // Measured: evaluating 50 cards takes about 190 seconds
+  const EVALUATION_SECONDS_PER_CARD = 190 / 50;
+
+  function updateEvaluateUnratedButtonLabel(btn) {
+    if (btn.disabled) return;
+
+    const cards = getUnevaluatedCollectionCards();
+    const label =
+      cards === null
+        ? "Évaluer les cartes non évaluées (chargement...)"
+        : `Évaluer les cartes non évaluées (~${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD)}s)`;
+
+    if (btn.textContent === label) return;
+    btn.textContent = label;
+  }
+
+  async function evaluateCollectionCards(button, cards) {
+    const state = { stopped: false };
+    const stopBtn = insertStopEvaluationButton(state);
+
+    for (let i = 0; i < cards.length; i++) {
+      if (state.stopped) break;
+
+      const card = cards[i];
+      const cardName = card.querySelector("h3")?.textContent.trim();
+      const quickActionBtn = card.querySelector(".wm-quick-action");
+      if (!cardName || !quickActionBtn) continue;
+
+      const key = `eval-${cardName}`;
+      const previousValue = localStorage.getItem(key);
+      localStorage.removeItem(key);
+
+      button.textContent = `Évaluation... (${i + 1}/${cards.length})`;
+      quickActionBtn.click();
+
+      const recorded = await waitForCardEvaluation(cardName, state);
+      if (!recorded && previousValue !== null) {
+        localStorage.setItem(key, previousValue);
+      }
+
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+
+      if (state.stopped) break;
+    }
+
+    stopBtn.remove();
+  }
+
+  async function evaluateUnratedCollectionCards(button, otherButton) {
+    const cards = getUnevaluatedCollectionCards() ?? [];
+    await evaluateCollectionCards(button, cards);
+
+    button.disabled = false;
+    otherButton.disabled = false;
+    updateEvaluateUnratedButtonLabel(button);
+  }
+
+  async function reevaluateAllCollectionCards(button, otherButton) {
+    const originalLabel = button.textContent;
+    const cards = getAllCollectionCards() ?? [];
+
+    await evaluateCollectionCards(button, cards);
+
+    button.textContent = originalLabel;
+    button.disabled = false;
+    otherButton.disabled = false;
+    updateEvaluateUnratedButtonLabel(otherButton);
+  }
+
+  function insertEvaluateUnratedButton() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    const filterBar = document.querySelector("div.flex-wrap.gap-2");
+    if (!filterBar) return;
+
+    let unratedBtn = filterBar.querySelector(":scope > .wm-eval-unrated");
+    if (!unratedBtn) {
+      const referenceBtn = filterBar.querySelector("button");
+
+      const reevaluateBtn = document.createElement("button");
+      reevaluateBtn.type = "button";
+      reevaluateBtn.className = referenceBtn
+        ? `${referenceBtn.className} ml-auto wm-eval-reevaluate-all`
+        : "wm-eval-reevaluate-all";
+      reevaluateBtn.textContent = "Réévaluer toute la page";
+
+      unratedBtn = document.createElement("button");
+      unratedBtn.type = "button";
+      unratedBtn.className = referenceBtn
+        ? `${referenceBtn.className} wm-eval-unrated`
+        : "wm-eval-unrated";
+
+      reevaluateBtn.addEventListener("click", () => {
+        if (reevaluateBtn.disabled) return;
+        reevaluateBtn.disabled = true;
+        unratedBtn.disabled = true;
+        reevaluateAllCollectionCards(reevaluateBtn, unratedBtn);
+      });
+
+      unratedBtn.addEventListener("click", () => {
+        if (unratedBtn.disabled) return;
+        unratedBtn.disabled = true;
+        reevaluateBtn.disabled = true;
+        evaluateUnratedCollectionCards(unratedBtn, reevaluateBtn);
+      });
+
+      filterBar.appendChild(reevaluateBtn);
+      filterBar.appendChild(unratedBtn);
+    }
+
+    updateEvaluateUnratedButtonLabel(unratedBtn);
+  }
+
+  function watchEvaluateUnratedButton() {
+    GM_addStyle(`
+      .wm-eval-stop {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        z-index: 999;
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 0.5rem;
+        background: #dc2626;
+        color: #fff;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        transition: background-color 0.2s ease;
+      }
+      .wm-eval-stop:hover {
+        background: #b91c1c;
+      }
+    `);
+
+    insertEvaluateUnratedButton();
+
+    const observer = new MutationObserver(() => insertEvaluateUnratedButton());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -2692,6 +2919,7 @@
     run("rule-17", watchNotificationContainerFirstChildSpacing);
     run("rule-18", watchCollectionModalInputFocus);
     run("rule-19", watchReturnedCardNotifications);
+    run("feature-ebc", watchEvaluateUnratedButton);
 
     watchFeatureConfigButton();
   }

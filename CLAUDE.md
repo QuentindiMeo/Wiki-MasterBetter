@@ -6,6 +6,7 @@ Don't include in the README:
 - **Fermeture au clavier** : Échap ferme la modale de notification (ou toute autre modale ouverte sur `/pulls` et `/collection`)
 - **Lancer l'enchère au clavier** : Appuyer sur Entrée dans le champ de mise de départ lance directement l'enchère
 - **Focus automatique** : L'ouverture de la modale d'une carte place le curseur dans son champ de mise
+- **Notification de carte rendue clarifiée** : « Votre carte "{nom}" vous est rendue. » devient « Personne n'a enchéri pour votre carte « {nom} ». »
 
 ### Metadata for development
 
