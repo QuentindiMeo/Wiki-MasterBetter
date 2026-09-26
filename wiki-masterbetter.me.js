@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.12.13
+// @version      0.14.10
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -17,12 +17,12 @@
  * * Rule 1a: make the notifications list larger
  * * Rule 1b: hide the market analysis button
  * * Rule 2: mark all notifications earlier than the one that's clicked as read
- * * Rule 3: append a suffix to the page title; on another user's profile, use "👤 {username}" instead
+ * * Rule 3: append a suffix to the page title
  * * Rule 4: arrange friends list into a 3-column grid
  * * Rule 5: reduce message/trade buttons on friends grid
  * * Rule 6: navbar is folded by default, expanded on hover
  * * Feature NPN: the navbar can be pinned (expands on hover vs. always expanded)
- * * Rule 7: clicking the first notification marks all as read; give it a "text-box: alphabetic" style
+ * * Rule 7: clicking the first notification marks all as read
  * . Rule 8 was merged into feature NPN
  * * Rule 9: auto-click the "Mes enchères" market tab on arrival on marketplace
  * * Feature TBC: add a trading button to the cards on collection page
@@ -42,10 +42,12 @@
  * * Rule 15: on a marketplace item page, relabel the back button "Retour en arrière"
  * * Feature PLB: on a bid page, add an "@" profile link after each card-frame entry's name and the username (p.text-sm.mt-1)
  * * Rule 16: smooth-scroll to the last unread notification when the card frame opens
- * * Feature BSP: record sold bids' prices in localStorage; flag the card on the marketplace depending on whether the current price undercuts the average; recorded data is dumped on personal profile
+ * * Feature BSP: record sold bids' prices in localStorage; flag the card on the marketplace as SNIPABLE/agréable/tolérable/overpriced depending on how the current price compares to the average; recorded data is dumped on personal profile
  * * Rule 17: replace the notification container's first child's "justify-between" with "gap-4"
  * * Rule 18: on /collection and /pulls, focus input.px-3 (after 250ms) when the card modal opens
  * * Feature ETS: on /pulls and /collection, store span.tabular-nums' value in localStorage under "eval-{name}"; on /collection, append cached eval prices to each card's rarity tag
+ * * Feature FCP: a settings-wheel button next to the sidebar's fold toggle opens a modal listing every rule/feature above, individually toggleable; the choice is stored in localStorage and applies after a page reload
+ * * Rule 19: rewrite "Votre carte vous est rendue." notifications to name the card and clarify no one bid on it
  */
 
 (function () {
@@ -370,9 +372,26 @@
     nav.classList.toggle("wm-sidebar-pinned", pinned);
   }
 
+  // Shared by the pin toggle (feature NPN) and the settings toggle
+  // (feature FCP): both sit, in that order, inside this single
+  // horizontal flex row, always the sidebar's first child.
+  function ensureToggleRow(nav) {
+    let row = nav.querySelector(":scope > .wm-toggle-row");
+    if (!row) {
+      row = document.createElement("div");
+      row.className = "wm-toggle-row";
+      nav.insertBefore(row, nav.firstChild);
+    }
+    return row;
+  }
+
   function setupNavFoldToggle() {
-    const nav = document.querySelector("nav.wm-sidebar");
-    if (!nav || nav.querySelector(":scope > .wm-fold-toggle")) return;
+    const nav = document.querySelector("nav h1")?.closest("nav");
+    if (!nav) return;
+
+    const row = ensureToggleRow(nav);
+    if (row.querySelector(":scope > .wm-fold-toggle:not(.wm-settings-toggle)"))
+      return;
 
     const pinned = GM_getValue("wm-sidebar-pinned", false);
     applyNavPinState(nav, pinned);
@@ -400,7 +419,7 @@
       GM_setValue("wm-sidebar-pinned", next);
     });
 
-    nav.insertBefore(toggle, nav.firstChild);
+    row.appendChild(toggle);
   }
 
   function watchNavFoldToggle() {
@@ -821,27 +840,30 @@
   // ============================================================
   // Rule 13: when div.card-frame.shadow-xl.overflow-hidden enters the DOM and
   // there's no span.absolute anywhere in the document, keep only
-  // the first 20 children of div.min-h-0.flex-1; scrolling that
+  // the first N children of div.min-h-0.flex-1; scrolling that
   // container to the bottom restores the remaining children
   // ============================================================
   // Holds the trimmed-off children so they can be reinserted later.
+  const MAX_TRIMMED_NOTIFICATIONS = 10;
   const flexOneHiddenChildren = new WeakMap();
 
-  function trimFlexOneChildren() {
+  function trimNotifications() {
     if (document.querySelector("span.absolute")) return;
 
     const container = document.querySelector("div.min-h-0.flex-1");
     if (!container || flexOneHiddenChildren.has(container)) return;
 
-    const hidden = Array.from(container.children).slice(20);
+    const hidden = Array.from(container.children).slice(
+      MAX_TRIMMED_NOTIFICATIONS,
+    );
     if (hidden.length === 0) return;
 
     hidden.forEach((child) => child.remove());
     flexOneHiddenChildren.set(container, hidden);
-    bindFlexOneScrollRestore(container);
+    bindNotificationScrollRestore(container);
   }
 
-  function bindFlexOneScrollRestore(container) {
+  function bindNotificationScrollRestore(container) {
     if (container.dataset.wmScrollRestoreBound === "true") return;
     container.dataset.wmScrollRestoreBound = "true";
 
@@ -859,7 +881,7 @@
     });
   }
 
-  function watchCardFrameArrival() {
+  function watchNotificationBoardArrival() {
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
@@ -871,7 +893,7 @@
             "div.card-frame.shadow-xl.overflow-hidden",
           );
           if (isCardFrame || containsCardFrame) {
-            trimFlexOneChildren();
+            trimNotifications();
             return;
           }
         }
@@ -1401,7 +1423,7 @@
   // Feature PLB: on a bid page (/marketplace/{UUID}), for each
   // entry of ul.card-frame, insert an "@" anchor right before its
   // first child (a <span> holding the bidder's name), linking to
-  // /profile/{name} in a new tab; also give the entry's last
+  // /profile/{name}; also give the entry's last
   // child the "ml-auto" class. Also insert the same "@" link right
   // before the username (a <span> inside p.text-sm.mt-1)
   // ============================================================
@@ -1409,7 +1431,6 @@
     const link = document.createElement("a");
     link.className = "wm-profile-link";
     link.href = `/profile/${encodeURIComponent(name)}`;
-    link.target = "_blank";
     link.rel = "noopener noreferrer";
     link.textContent = "@";
     return link;
@@ -1450,7 +1471,7 @@
   function watchBidEntryProfileLinks() {
     GM_addStyle(`
       .wm-profile-link {
-        margin-right: 0.375rem;
+        margin-right: 0.25rem;
         color: var(--color-accent);
         text-decoration: none;
         opacity: 0.7;
@@ -1471,16 +1492,12 @@
   }
 
   // ============================================================
-  // Feature BSP: on a bid page, once span.font-medium reads "Vendue" or "Non vendue"
-  // and there's no owned card label (span.bg-emerald-600/90), record
-  // the sale price (span.text-2xl) in localStorage, keyed by
-  // "observed-{card name}" (h1.flex-1). A legacy entry still stored
-  // under the untagged card name is migrated to that prefixed key on
-  // read. Skips while div.animate-spin is present (the page is still
-  // loading). Each stored entry is tagged as "{price}-{tag}", tag
-  // being the bid UUID's second segment, so the same bid can never be
-  // recorded twice. Each card keeps at most N entries: once full, a
-  // new price replaces the array's current highest value, but only
+  // Feature BSP: on a bid page, once span.font-medium reads "Vendue" or "Non vendue" and there's no owned card
+  // label (span.bg-emerald-600/90), record the sale price (span.text-2xl) in localStorage, keyed by
+  // "observed-{card name}" (h1.flex-1). A legacy entry still stored under the untagged card name is migrated to that
+  // prefixed key on read. Skips while div.animate-spin is present (the page is still loading). Each stored entry is
+  // tagged as "{price}-{tag}", tag being the bid UUID's second segment, so the same bid can never be recorded twice.
+  // Each card keeps at most N entries: once full, a new price replaces the array's current highest value, but only
   // when it's strictly lower than that value.
   // ============================================================
   const MAX_STORED_PRICES = 5;
@@ -1541,7 +1558,7 @@
     const cardName = document.querySelector("h1.flex-1")?.textContent.trim();
     const priceText = document
       .querySelector("span.text-2xl")
-      ?.textContent.trim();
+      ?.textContent.replace(" ", "");
     if (!cardName || !priceText) return;
 
     const price = parseInt(priceText, 10);
@@ -1600,18 +1617,26 @@
   // Feature BSP (cont'd): on a bid page, flag the card name
   // (h1.flex-1, given "display: contents") as "SNIPABLE" when the
   // current price (span.text-2xl) is below 80% of the average of
-  // that card's stored sold prices, "tolerable" when it's between
-  // 80% and 120% of that average, or "overpriced" when it's above
-  // 120%; unflag it as soon as none of those is true. Skips while
-  // div.animate-spin is present (the page is still loading).
+  // that card's stored sold prices, "agréable" when it's between
+  // 80% and 100% of that average, "tolérable" when it's between
+  // 100% and 120%, or "overpriced" when it's above 120%; unflag it
+  // as soon as none of those is true. Skips while div.animate-spin
+  // is present (the page is still loading).
   // ============================================================
   const SNIPABLE_THRESHOLD_RATIO = 0.8;
+  const TOLERABLE_THRESHOLD_RATIO = 1.0;
   const OVERPRICED_THRESHOLD_RATIO = 1.2;
-  const BADGE_CLASSES = ["wm-snipable", "wm-tolerable", "wm-overpriced"];
+  const BADGE_CLASSES = [
+    "wm-snipable",
+    "wm-agreeable",
+    "wm-tolerable",
+    "wm-overpriced",
+  ];
   const STATUS_LABELS = {
     snipable: "SNIPABLE",
-    tolerable: "tolérable",
-    overpriced: "overpriced",
+    agreeable: "prix agréable",
+    tolerable: "prix tolérable",
+    overpriced: "prix abusif",
   };
 
   function updateSnipableBadge() {
@@ -1647,6 +1672,8 @@
     let status = null;
     if (average !== null) {
       if (price < average * SNIPABLE_THRESHOLD_RATIO) status = "snipable";
+      else if (price < average * TOLERABLE_THRESHOLD_RATIO)
+        status = "agreeable";
       else if (price < average * OVERPRICED_THRESHOLD_RATIO)
         status = "tolerable";
       else status = "overpriced";
@@ -1674,22 +1701,30 @@
         display: contents;
       }
       .wm-snipable,
+      .wm-agreeable,
       .wm-tolerable,
       .wm-overpriced {
         margin-left: 0.5rem;
         font-weight: 600;
         font-size: 0.85rem;
+        border-radius: 0.375rem;
+        padding: 0.1rem 0.4rem;
       }
       .wm-snipable {
         color: #d8b4fe;
+        background-color: rgba(216, 180, 254, 0.15);
+      }
+      .wm-agreeable {
+        color: #4ade80;
+        background-color: rgba(74, 222, 128, 0.15);
       }
       .wm-tolerable {
-        color: #4ade80;
-        opacity: 0.7;
+        color: #fbbf24;
+        background-color: rgba(251, 191, 36, 0.15);
       }
       .wm-overpriced {
         color: #ef2222;
-        opacity: 0.6;
+        background-color: rgba(239, 34, 34, 0.15);
       }
     `);
 
@@ -1808,7 +1843,7 @@
 
     const title = document.createElement("h2");
     title.className = "wm-bsp-dump-title";
-    title.textContent = "Prix de vente des enchères observées ";
+    title.textContent = "🎯 Prix de vente des enchères observées ";
 
     const titlePrecision = document.createElement("span");
     titlePrecision.className = "wm-bsp-dump-title-precision";
@@ -1835,9 +1870,27 @@
 
       const pricesCell = document.createElement("span");
       pricesCell.className = "wm-bsp-dump-prices";
-      pricesCell.textContent = prices
+
+      const numericPrices = prices.map((entry) => parseInt(entry, 10));
+      const average = numericPrices.length
+        ? Math.round(
+            numericPrices.reduce((sum, entry) => sum + entry, 0) /
+              numericPrices.length,
+          )
+        : null;
+
+      const averageCell = document.createElement("span");
+      averageCell.className = "wm-bsp-dump-target";
+      averageCell.textContent = average !== null ? `Objectif : ${average}` : "";
+      pricesCell.appendChild(averageCell);
+
+      const pricesListCell = document.createElement("span");
+      pricesListCell.className = "wm-bsp-dump-prices-list";
+      pricesListCell.textContent = prices
         .map((entry) => String(entry).split("-")[0])
-        .join(", ");
+        .join(",");
+      pricesListCell.textContent = `(${pricesListCell.textContent})`;
+      pricesCell.appendChild(pricesListCell);
 
       clearBtn.addEventListener("click", () => {
         localStorage.removeItem(getBspStorageKey(cardName));
@@ -1856,20 +1909,6 @@
     const actionsRow = document.createElement("div");
     actionsRow.className = "wm-bsp-dump-actions";
     dump.appendChild(actionsRow);
-
-    const updateCacheBtn = document.createElement("button");
-    updateCacheBtn.type = "button";
-    updateCacheBtn.className = "wm-bsp-dump-update-cache";
-    updateCacheBtn.textContent = "Mettre à jour le cache";
-    actionsRow.appendChild(updateCacheBtn);
-
-    updateCacheBtn.addEventListener("click", () => {
-      const migratedCount = migrateUntaggedBspKeys();
-      updateCacheBtn.textContent =
-        migratedCount > 0
-          ? `Mettre à jour le cache (${migratedCount} migrées)`
-          : "Mettre à jour le cache (rien à migrer)";
-    });
 
     const totalCacheSizeBytes = entries.reduce((sum, [cardName, prices]) => {
       const key = getBspStorageKey(cardName);
@@ -1965,6 +2004,7 @@
         opacity: 0.35;
       }
       .wm-bsp-dump-name {
+        font-size: .825rem;
         font-weight: 600;
       }
       .wm-bsp-dump-clear {
@@ -1980,8 +2020,18 @@
         opacity: 1;
         color: #ef2222;
       }
+      .wm-bsp-dump-target {
+        color: #8db600;
+        width: max-content;
+        font-weight: 600;
+        font-size: 1em;
+      }
       .wm-bsp-dump-prices {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
         margin-left: auto;
+        font-size: .75em;
       }
     `);
 
@@ -2005,7 +2055,15 @@
 
     const valueEl = document.querySelector("span.tabular-nums");
     const cardName = document.querySelector("p.truncate")?.textContent.trim();
-    const value = valueEl?.textContent.trim();
+    let value = valueEl?.textContent.trim().replace(/\s/g, "");
+
+    if (!value) {
+      const noSalesContainer = document.querySelector("div.mb-5 p.mt-1\\.5");
+      if (noSalesContainer?.textContent.includes("Aucune vente")) {
+        value = "?";
+      }
+    }
+
     if (!cardName || !value) return;
 
     const key = `eval-${cardName}`;
@@ -2039,9 +2097,14 @@
   // eval price (Feature ETS, keyed "eval-{name}") to its rarity
   // tag (div.top-2.left-2), as "{rarity} ({eval})"
   // ============================================================
+  const WORTHLESS_THRESHOLD = 15;
   function formatEvalValue(rawValue) {
     const num = parseFloat(rawValue.replace(/\s/g, "").replace(",", "."));
     if (Number.isNaN(num)) return rawValue;
+
+    if (num < WORTHLESS_THRESHOLD) {
+      return "💩";
+    }
 
     if (num > 1000) {
       return `${(num / 1000).toFixed(1).replace(".", ",")} K`;
@@ -2167,45 +2230,470 @@
   }
 
   // ============================================================
+  // Feature FCP: a settings-wheel button, visually cloning
+  // .wm-fold-toggle, sits next to the sidebar's fold/pin toggle
+  // (nav h1's closest nav). Clicking it opens a modal listing
+  // every rule/feature documented above, each with its own
+  // checkbox; unchecking one disables it. The choice is stored in
+  // localStorage under "wm-feature-flags" (default: everything
+  // enabled) and, since most rules only wire themselves up once
+  // at page load, applies after the next reload — hence the
+  // "Recharger la page" button in the modal's footer. Styled
+  // independently of .wm-fold-toggle's own stylesheet (injected
+  // by rule 6) so this button and modal always work even when
+  // every other rule/feature is disabled.
+  // ============================================================
+  const FEATURE_FLAGS_KEY = "wm-feature-flags";
+
+  const FEATURE_REGISTRY = [
+    { id: "rule-1a", label: "Notifications affichées en plus grand" },
+    { id: "rule-1b", label: "Masquer le bouton d'analyse de marché" },
+    {
+      id: "rule-2",
+      label: "Marquer les notifications précédentes comme lues au clic",
+    },
+    { id: "rule-3", label: "Suffixe du titre d'onglet selon la page active" },
+    { id: "rule-4", label: "Grille d'amis sur 3 colonnes" },
+    { id: "rule-5", label: "Réduire les boutons Message / Échanger" },
+    { id: "rule-6", label: "Repli automatique de la barre latérale" },
+    { id: "feature-npn", label: "Épingle pour la barre latérale" },
+    { id: "rule-7", label: "Tout marquer lu au clic sur la 1ère notification" },
+    { id: "feature-tbc", label: "Bouton d'échange rapide sur la collection" },
+    { id: "rule-9", label: "Ouvrir automatiquement l'onglet « Mes enchères »" },
+    { id: "rule-10", label: "Mise à jour du compteur au clic sur un objet" },
+    { id: "rule-11", label: "Opacité réduite de l'incitation Pro épuisée" },
+    { id: "rule-12", label: "Boutons d'action plus visibles sur les profils" },
+    {
+      id: "feature-pnp",
+      label: "Notification push quand les paquets s'accumulent",
+    },
+    { id: "rule-13", label: "Limiter l'affichage à 20 notifications lues" },
+    { id: "feature-tmb", label: "Regrouper les enchères par statut" },
+    { id: "feature-cme", label: "Fermer les modales avec Échap" },
+    {
+      id: "feature-pnb",
+      label: "Notification push en fin d'enchère (30 secondes)",
+    },
+    {
+      id: "feature-car",
+      label: "Bouton « Tout réclamer » sur les hauts faits",
+    },
+    { id: "feature-akp", label: "Navigation au clavier sur /pulls" },
+    {
+      id: "feature-sat",
+      label: "Bouton « Tout sélectionner sauf étiquetées »",
+    },
+    { id: "feature-lbd", label: "Lancer l'enchère avec la touche Entrée" },
+    {
+      id: "rule-14",
+      label: "Encadrer le nom de carte des notifs de liste de souhaits",
+    },
+    { id: "rule-15", label: "Relabelliser le bouton retour d'une enchère" },
+    { id: "feature-plb", label: "Liens de profil sur la page d'enchère" },
+    {
+      id: "rule-16",
+      label: "Défilement vers la dernière notification non lue",
+    },
+    {
+      id: "feature-bsp",
+      label: "Suivi et alerte des prix de vente des enchères",
+    },
+    { id: "rule-17", label: "Espacement du conteneur de notifications" },
+    { id: "rule-18", label: "Focus automatique sur le champ de mise" },
+    { id: "feature-ets", label: "Mémorisation des estimations de cartes" },
+    {
+      id: "rule-19",
+      label: "Reformuler la notification « Votre carte vous est rendue »",
+    },
+  ];
+
+  function readFeatureFlags() {
+    let stored = {};
+    try {
+      stored = JSON.parse(localStorage.getItem(FEATURE_FLAGS_KEY) ?? "{}");
+    } catch {
+      stored = {};
+    }
+
+    const flags = {};
+    FEATURE_REGISTRY.forEach(({ id }) => {
+      flags[id] = stored[id] !== false;
+    });
+    return flags;
+  }
+
+  function writeFeatureFlags(flags) {
+    localStorage.setItem(FEATURE_FLAGS_KEY, JSON.stringify(flags));
+  }
+
+  function buildFeatureConfigModal(flags) {
+    const overlay = document.createElement("div");
+    overlay.className = "wm-settings-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "wm-settings-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Configuration de Wiki-MasterBetter");
+
+    const header = document.createElement("div");
+    header.className = "wm-settings-header";
+
+    const title = document.createElement("h2");
+    title.className = "wm-settings-title";
+    title.textContent = "⚙️ Fonctionnalités";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "wm-settings-close";
+    closeBtn.setAttribute("aria-label", "Fermer");
+    closeBtn.textContent = "✕";
+
+    header.append(title, closeBtn);
+
+    const hint = document.createElement("p");
+    hint.className = "wm-settings-hint";
+    hint.textContent =
+      "Tout est activé par défaut. Rechargez la page pour appliquer vos changements.";
+
+    const list = document.createElement("div");
+    list.className = "wm-settings-list";
+
+    FEATURE_REGISTRY.forEach(({ id, label }) => {
+      const item = document.createElement("label");
+      item.className = "wm-settings-item";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = flags[id];
+      checkbox.addEventListener("change", () => {
+        flags[id] = checkbox.checked;
+        writeFeatureFlags(flags);
+      });
+
+      const idTitle = document.createElement("h3");
+      idTitle.className = "wm-settings-item-title";
+      idTitle.textContent = id;
+
+      const idRow = document.createElement("div");
+      idRow.className = "wm-settings-item-id-row";
+      idRow.append(checkbox, idTitle);
+
+      const text = document.createElement("p");
+      text.className = "wm-settings-item-label";
+      text.textContent = label;
+
+      item.append(idRow, text);
+      list.appendChild(item);
+    });
+
+    const footer = document.createElement("div");
+    footer.className = "wm-settings-footer";
+
+    const reloadBtn = document.createElement("button");
+    reloadBtn.type = "button";
+    reloadBtn.className = "wm-settings-reload";
+    reloadBtn.textContent = "Recharger la page";
+    reloadBtn.addEventListener("click", () => window.location.reload());
+
+    footer.appendChild(reloadBtn);
+
+    modal.append(header, hint, list, footer);
+    overlay.appendChild(modal);
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeydown);
+    };
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", onKeydown);
+
+    return overlay;
+  }
+
+  function setupFeatureConfigButton() {
+    const nav = document.querySelector("nav h1")?.closest("nav");
+    if (!nav) return;
+
+    const row = ensureToggleRow(nav);
+    if (row.querySelector(":scope > .wm-settings-toggle")) return;
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "wm-fold-toggle wm-settings-toggle";
+    toggle.title = "Configurer les fonctionnalités de Wiki-MasterBetter";
+    toggle.setAttribute("aria-haspopup", "dialog");
+
+    const icon = document.createElement("span");
+    icon.className = "wm-fold-toggle-icon";
+    icon.textContent = "⚙️";
+    toggle.appendChild(icon);
+
+    toggle.addEventListener("click", () => {
+      if (document.querySelector(".wm-settings-overlay")) return;
+      document.body.appendChild(buildFeatureConfigModal(readFeatureFlags()));
+    });
+
+    row.insertBefore(toggle, row.firstChild);
+  }
+
+  function watchFeatureConfigButton() {
+    GM_addStyle(`
+      .wm-fold-toggle,
+      .wm-settings-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        margin-bottom: 0.5rem;
+        padding: 0.75rem;
+        border-radius: 0.75rem;
+        border: 1px solid var(--color-border);
+        background: transparent;
+        color: var(--color-foreground);
+        opacity: 0.6;
+        cursor: pointer;
+        font-size: 1.1rem;
+        line-height: 1;
+        transition: background-color 0.2s ease, opacity 0.2s ease;
+      }
+      .wm-fold-toggle:hover,
+      .wm-settings-toggle:hover {
+        opacity: 1;
+        background-color: var(--color-surface-light);
+      }
+      .wm-fold-toggle-icon {
+        display: inline-block;
+      }
+      .wm-toggle-row {
+        display: flex;
+        flex-direction: row;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+      }
+      .wm-toggle-row > .wm-fold-toggle {
+        flex: 1 1 0;
+        min-width: 0;
+        margin-bottom: 0;
+      }
+      .wm-settings-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.5);
+      }
+      .wm-settings-modal {
+        display: flex;
+        flex-direction: column;
+        width: min(50rem, 90vw);
+        max-height: 80vh;
+        border-radius: 0.75rem;
+        border: 1px solid var(--color-border);
+        background-color: var(--color-surface-light);
+        color: var(--color-foreground);
+        padding: 1rem;
+      }
+      .wm-settings-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.5rem;
+      }
+      .wm-settings-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      .wm-settings-close {
+        border: none;
+        background: transparent;
+        color: var(--color-foreground);
+        opacity: 0.6;
+        cursor: pointer;
+        font-size: 1rem;
+        line-height: 1;
+        padding: 0.25rem;
+      }
+      .wm-settings-close:hover {
+        opacity: 1;
+      }
+      .wm-settings-hint {
+        font-size: 0.85rem;
+        opacity: 0.7;
+        margin: 0 0 0.75rem 0;
+      }
+      .wm-settings-list {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem 0.5rem;
+        overflow-y: auto;
+        padding-right: 0.25rem;
+      }
+      .wm-settings-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.4rem;
+        text-align: center;
+        cursor: pointer;
+        padding: 0.5rem;
+        border: 1px solid rgba(128, 128, 128, 0.4);
+        border-radius: 0.5rem;
+      }
+      .wm-settings-item-id-row {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .wm-settings-item-title {
+        margin: 0;
+        font-family: monospace;
+        font-size: 0.75rem;
+        font-weight: 600;
+        opacity: 0.6;
+      }
+      .wm-settings-item-label {
+        margin-block: auto;
+        font-size: 0.8rem;
+      }
+      .wm-settings-item input {
+        flex-shrink: 0;
+        accent-color: var(--color-accent);
+      }
+      .wm-settings-footer {
+        margin-top: 0.75rem;
+      }
+      .wm-settings-reload {
+        display: block;
+        width: 100%;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--color-accent);
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+        color: var(--color-accent);
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+      .wm-settings-reload:hover {
+        background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+      }
+    `);
+
+    setupFeatureConfigButton();
+
+    const observer = new MutationObserver(() => setupFeatureConfigButton());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 19: in the notification display
+  // (div.card-frame.shadow-xl.overflow-hidden), find the <p> whose
+  // own text reads exactly "Votre carte vous est rendue." — that
+  // fixed phrase, with no name in it, is only how this
+  // notification type is identified. The card name isn't in that
+  // <p>: it's found by scanning the enclosing notification item
+  // (button.w-full.items-start)'s whole text content for a quoted
+  // segment (straight quotes or « » guillemets). Once found,
+  // replace the identifying <p>'s text with "Personne n'a enchéri
+  // pour votre carte « {name} »"
+  // ============================================================
+  const RETURNED_CARD_PHRASE = "Votre carte vous est rendue.";
+  const QUOTED_TEXT_REGEX = /[«"](.+?)[»"]/;
+
+  function rewriteReturnedCardNotifications() {
+    const container = document.querySelector(
+      "div.card-frame.shadow-xl.overflow-hidden",
+    );
+    if (!container) return;
+
+    container.querySelectorAll("p").forEach((p) => {
+      if (p.dataset.wmReturnedCardRewritten === "true") return;
+      if (!p.textContent.trim().endsWith(RETURNED_CARD_PHRASE)) return;
+
+      const item = p.closest("button.w-full.items-start");
+      const match = item?.textContent.match(QUOTED_TEXT_REGEX);
+      if (!match) return;
+
+      const cardName = match[1].trim();
+      p.textContent = `Personne n'a enchéri pour votre carte « ${cardName} ».`;
+      p.dataset.wmReturnedCardRewritten = "true";
+    });
+  }
+
+  function watchReturnedCardNotifications() {
+    rewriteReturnedCardNotifications();
+
+    const observer = new MutationObserver(() => {
+      if (!document.querySelector("div.card-frame.shadow-xl.overflow-hidden"))
+        return;
+      rewriteReturnedCardNotifications();
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
-    applyCardFrameMaxHeight();
-    hideShrinkButton();
-    watchAccentSiblings();
-    watchNavForTitleChanges();
-    watchFriendsGrid();
-    watchActionButtonLabels();
-    watchSidebarFold();
-    watchNavFoldToggle();
-    watchMarkAllReadTrigger();
-    watchMarkAllReadButtonStyle();
-    watchCardFrameDocking();
-    watchCollectionQuickActionButtons();
-    watchItemButtonIndexDisplay();
-    watchPullsOpacity();
-    watchPullsCounterNotification();
-    watchProfileButtonColor();
-    watchCardFrameArrival();
-    watchAuctionGroupToggle();
-    watchAuctionsTabArrival();
-    watchPullsModalEscape();
-    watchBidTimerNotification();
-    watchClaimAllButton();
-    watchPullsArrowNavigation();
-    watchSelectUntaggedButton();
-    watchStartingBidEnterKey();
-    watchWishlistToastWrap();
-    watchMarketplaceBackButtonLabel();
-    watchBidEntryProfileLinks();
-    watchUnreadNotificationScrollOnCardFrameArrival();
-    watchSoldBidPriceRecording();
-    watchSnipableBadge();
-    watchStoredBidPricesGrid();
-    watchTabularNumsRecording();
-    watchRarityEvalTags();
-    watchNotificationContainerFirstChildSpacing();
-    watchCollectionModalInputFocus();
+    const flags = readFeatureFlags();
+    const run = (id, fn) => {
+      if (flags[id]) fn();
+    };
+
+    run("rule-1a", applyCardFrameMaxHeight);
+    run("rule-1b", hideShrinkButton);
+    run("rule-2", watchAccentSiblings);
+    run("rule-3", watchNavForTitleChanges);
+    run("rule-4", watchFriendsGrid);
+    run("rule-5", watchActionButtonLabels);
+    run("rule-6", watchSidebarFold);
+    run("rule-6", watchCardFrameDocking);
+    run("feature-npn", watchNavFoldToggle);
+    run("rule-7", watchMarkAllReadTrigger);
+    run("rule-7", watchMarkAllReadButtonStyle);
+    run("feature-tbc", watchCollectionQuickActionButtons);
+    run("rule-10", watchItemButtonIndexDisplay);
+    run("rule-11", watchPullsOpacity);
+    run("feature-pnp", watchPullsCounterNotification);
+    run("rule-12", watchProfileButtonColor);
+    run("rule-13", watchNotificationBoardArrival);
+    run("feature-tmb", watchAuctionGroupToggle);
+    run("rule-9", watchAuctionsTabArrival);
+    run("feature-cme", watchPullsModalEscape);
+    run("feature-pnb", watchBidTimerNotification);
+    run("feature-car", watchClaimAllButton);
+    run("feature-akp", watchPullsArrowNavigation);
+    run("feature-sat", watchSelectUntaggedButton);
+    run("feature-lbd", watchStartingBidEnterKey);
+    run("rule-14", watchWishlistToastWrap);
+    run("rule-15", watchMarketplaceBackButtonLabel);
+    run("feature-plb", watchBidEntryProfileLinks);
+    run("rule-16", watchUnreadNotificationScrollOnCardFrameArrival);
+    run("feature-bsp", watchSoldBidPriceRecording);
+    run("feature-bsp", watchSnipableBadge);
+    run("feature-bsp", watchStoredBidPricesGrid);
+    run("feature-ets", watchTabularNumsRecording);
+    run("feature-ets", watchRarityEvalTags);
+    run("rule-17", watchNotificationContainerFirstChildSpacing);
+    run("rule-18", watchCollectionModalInputFocus);
+    run("rule-19", watchReturnedCardNotifications);
+
+    watchFeatureConfigButton();
   }
 
   main();

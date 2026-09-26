@@ -30,24 +30,28 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🔔 Barre de navigation & Notifications
 
 - **Barre de navigation repliable** : Se replie en icônes par défaut, se déplie en douceur au survol — ou épinglez-la grâce au bouton en haut de la barre
+- **Panneau de configuration** : Un bouton en forme de roue crantée, à côté de celui d'épinglage, ouvre une modale pour activer/désactiver individuellement chaque fonctionnalité du script (tout est activé par défaut) ; les choix sont sauvegardés dans `localStorage` et s'appliquent après rechargement de la page
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
 - **Suivi de lecture intelligent** : Cliquer sur une notification marque aussi toutes celles plus anciennes comme lues, met à jour le compteur
+- **Notification de carte rendue clarifiée** : « Votre carte "{nom}" vous est rendue. » devient « Personne n'a enchéri pour votre carte « {nom} » »
 - **Suffixe de titre d'onglet** : Le titre de l'onglet du navigateur reflète le contenu de la page visitée
 
 ### 💰 Marché & Enchères
 
+- **Onglet « Mes enchères » par défaut** : L'arrivée sur le marché ouvre automatiquement cet onglet
 - **Regroupement des enchères** : Bascule pour séparer « Mes enchères » en groupes « Surenchéri » / « Vous menez »
 - **Alertes d'expiration** : Une notification push se déclenche quand il reste 30 secondes sur une enchère
 - **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
 - **Liens de profil des enchérisseurs** : Un lien « @ » à côté du nom de chaque enchérisseur ouvre son profil dans un nouvel onglet
-- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues (jusqu'à 5 prix les moins chers observés) par carte, puis signale le prix courant lors des visites suivantes comme **_SNIPABLE_**, **tolérable**, ou **_overpriced_** par rapport à cette moyenne
+- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues (jusqu'à 5 prix les moins chers observés) par carte, puis signale le prix courant lors des visites suivantes comme **_SNIPABLE_**, **agréable**, **tolérable**, ou **_overpriced_** par rapport à cette moyenne
   - Les prix enregistrés sont listés dans une grille effaçable sur votre propre profil
 
 ### 📦 Collection
 
 - **Actions rapides** : Un bouton sur chaque carte de la collection ouvre la modale d'enchère
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
+- **Estimations mémorisées** : Le prix d'estimation vu sur `/pulls` ou `/collection` est mémorisé et affiché à côté de la rareté de chaque carte de la collection
 
 ### 🎁 Pulls
 
