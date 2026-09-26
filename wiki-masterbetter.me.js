@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.15.7
+// @version      0.15.18
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -40,15 +40,17 @@
  * * Feature LBD: on /collection, pressing Enter inside the minimal bid input launches the auction
  * * Rule 14: wrap the card name in « » on "added to wishlist" notifications
  * * Rule 15: on a marketplace item page, relabel the back button "Retour en arrière"
- * * Feature PLB: on a bid page, add an "@" profile link after each card-frame entry's name and the username (p.text-sm.mt-1)
+ * * Feature PLB: on a bid page, add an "@" profile link after each card-frame entry's name and the username
  * * Rule 16: smooth-scroll to the last unread notification when the card frame opens
- * * Feature BSP: record sold bids' prices in localStorage; flag the card on the marketplace as SNIPABLE/agréable/tolérable/overpriced depending on how the current price compares to the average; recorded data is dumped on personal profile
- * * Rule 17: replace the notification container's first child's "justify-between" with "gap-4"
- * * Rule 18: on /collection and /pulls, focus input.px-3 (after 250ms) when the card modal opens
- * * Feature ETS: on /pulls and /collection, store span.tabular-nums' value in localStorage under "eval-{name}"; on /collection, append cached eval prices to each card's rarity tag
- * * Feature FCP: a settings-wheel button next to the sidebar's fold toggle opens a modal listing every rule/feature above, individually toggleable; the choice is stored in localStorage and applies after a page reload
- * * Rule 19: rewrite "Votre carte vous est rendue." notifications to name the card and clarify no one bid on it
- * * Feature EBC: on /collection, buttons next to the rarity filters bulk-evaluate every card (or just those missing a Feature ETS estimate), one at a time (cancellable via a floating "stop" button)
+ * * Feature BSP: record sold bids' prices in localStorage; flag the card on the marketplace depending on how good a deal it is; recorded data is dumped at /profile, with import/export
+ * * Rule 17: bring "Mark all as read" notification button to the left
+ * * Rule 18: on /collection and /pulls, focus tags input when the card modal opens; also focus the search input on arrival on /collection
+ * * Feature ETS: on /pulls and /collection, store market value evaluation in localStorage; on /collection, append cached eval prices to each card's rarity tag
+ * * Feature FCP: feature flipping is available through the button near the navbar pin; choices stored in localStorage, applies after a page reload
+ * * Rule 19: single-pass rewrite of notification labels
+ * * Feature EBC: on /collection, add buttons to bulk-evaluate every card (or just those missing it); cancellable via a stop button; plus a button to sort the page by descending eval price
+ * * Rule 20: on /collection and /pulls, the card modal's tag list scrolls to follow the keyboard-focused item
+ * * Feature GCP: on /global-collection, clicking a card's friend-owner username opens that friend's profile
  */
 
 (function () {
@@ -80,8 +82,7 @@
   // ============================================================
   // Rule 2: if a button.w-full.items-start has no
   // bg-[var(--color-accent)]/5 styling:
-  //   - strip that class from all of its NEXT siblings
-  //     (previous siblings are untouched)
+  //   - strip that class from all of its NEXT siblings (previous siblings are untouched)
   //   - hide (display: none) every div.w-2.h-2 found inside those next siblings
   // ============================================================
   const ACCENT_CLASS = "bg-[var(--color-accent)]/5";
@@ -114,11 +115,9 @@
   }
 
   // ============================================================
-  // Rule 3: append a suffix to the page title based on the nav's
-  // active tab (the <a> with class bg-[var(--color-accent)]/10
-  // inside <nav>), and keep it in sync as that tab changes.
-  // On another user's profile (/profile/{username}, as opposed to
-  // the own user's /profile), replace the suffix with "👤 {username}"
+  // Rule 3: append a suffix to the page title based on the nav's active tab (the <a> with
+  // class bg-[var(--color-accent)]/10 inside <nav>), and keep it in sync as that tab changes. On another user's
+  // profile (/profile/{username}, as opposed to the own user's /profile), replace the suffix with "👤 {username}"
   // ============================================================
   const MARKETPLACE_BID_PATH_REGEX = /^\/marketplace\/([0-9a-f-]+)/i;
   const OTHER_PROFILE_PATH_REGEX = /^\/profile\/([^/]+)/i;
@@ -184,8 +183,7 @@
   }
 
   // ============================================================
-  // Rule 4: on the /friends page, rearrange the friend list
-  // (everything after the search box) into a 3-column grid
+  // Rule 4: on the /friends page, rearrange the friend list (everything after the search box) into a 3-column grid
   // ============================================================
   function rearrangeFriendsGrid() {
     if (!window.location.pathname.startsWith("/friends")) return;
@@ -228,8 +226,7 @@
   }
 
   // ============================================================
-  // Rule 5: reduce the "Message" and "Échanger" buttons to just
-  // their icon by hiding the text label span
+  // Rule 5: reduce the "Message" and "Échanger" buttons to just their icon by hiding the text label span
   // ============================================================
   function hideActionButtonLabels() {
     document
@@ -249,9 +246,8 @@
   }
 
   // ============================================================
-  // Rule 6: fold the left navbar by default; on hover, smoothly
-  // expand it. Folded: only each anchor's icon is visible, and
-  // the site logo is squashed horizontally instead of hidden
+  // Rule 6: fold the left navbar by default; on hover, smoothly expand it. Folded: only each anchor's icon is visible,
+  // and the site logo is squashed horizontally instead of hidden
   // ============================================================
   function foldSidebarNav() {
     const logo = document.querySelector("nav h1");
@@ -365,9 +361,8 @@
   }
 
   // ============================================================
-  // Feature NPN: pin toggle to switch the navbar between "foldable
-  // on hover" (Rule 6's default) and "always expanded". The
-  // choice persists across page loads via GM_setValue.
+  // Feature NPN: pin toggle to switch the navbar between "foldable on hover" (Rule 6's default) and "always expanded".
+  // The choice persists across page loads via GM_setValue.
   // ============================================================
   function applyNavPinState(nav, pinned) {
     nav.classList.toggle("wm-sidebar-pinned", pinned);
@@ -488,8 +483,7 @@
   }
 
   // ============================================================
-  // Rule 7: clicking the first <button> inside div.min-h-0.flex-1
-  // also clicks the button labelled "Tout marquer lu"
+  // Rule 7: clicking the first <button> inside div.min-h-0.flex-1 also clicks the button labelled "Tout marquer lu"
   // ============================================================
   function findMarkAllReadButton() {
     return Array.from(document.querySelectorAll("button")).find(
@@ -517,9 +511,8 @@
   }
 
   // ============================================================
-  // Rule 7 (cont'd): give the "Tout marquer lu" button a
-  // "text-box: alphabetic" style (trims its box to the font's
-  // alphabetic edge)
+  // Rule 7 (cont'd): give the "Tout marquer lu" button a "text-box: alphabetic" style (trims its box to the
+  // font's alphabetic edge)
   // ============================================================
   function styleMarkAllReadButton() {
     findMarkAllReadButton()?.classList.add("wm-mark-all-read-btn");
@@ -539,11 +532,9 @@
   }
 
   // ============================================================
-  // Feature TBC: on /collection, insert a button as the second child of
-  // each div.justify-between.pt-1 (inside a div.relative.isolate).
-  // This button clicks the img.scale-\\[1\\.8\\] overlay inside
-  // the parent div.relative.isolate, then (requestAnimationFrame
-  // later) clicks button.flex-1.font-semibold
+  // Feature TBC: on /collection, insert a button as the second child of each div.justify-between.pt-1 (inside
+  // a div.relative.isolate). This button clicks the img.scale-\\[1\\.8\\] overlay inside the parent
+  // div.relative.isolate, then (requestAnimationFrame later) clicks button.flex-1.font-semibold
   // ============================================================
   function insertCollectionQuickActionButtons() {
     if (!window.location.pathname.startsWith("/collection")) return;
@@ -604,10 +595,9 @@
   }
 
   // ============================================================
-  // Feature SAT: on /collection, once the button labelled "Tout
-  // sélectionner (page)" is in the DOM, add a button right after it
-  // that clicks img.scale-[1.8] of every div.hover:scale-105 that
-  // doesn't contain a div.flex-wrap.shrink-0 (i.e. untagged cards)
+  // Feature SAT: on /collection, once the button labelled "Tout sélectionner (page)" is in the DOM, add a button
+  // right after it that clicks img.scale-[1.8] of every div.hover:scale-105 that doesn't contain
+  // a div.flex-wrap.shrink-0 (i.e. untagged cards)
   // ============================================================
   function insertSelectUntaggedButton() {
     if (!window.location.pathname.startsWith("/collection")) return;
@@ -647,9 +637,8 @@
   }
 
   // ============================================================
-  // Feature LBD: on /collection, pressing Enter while focus is
-  // inside the <input aria-label="Mise de départ"> clicks the
-  // button labelled "Lancer l'enchère"
+  // Feature LBD: on /collection, pressing Enter while focus is inside the <input aria-label="Mise de départ"> clicks
+  // the button labelled "Lancer l'enchère"
   // ============================================================
   function watchStartingBidEnterKey() {
     document.addEventListener("keydown", (event) => {
@@ -674,8 +663,7 @@
   }
 
   // ============================================================
-  // Rule 9: on /marketplace, click the "Mes enchères" tab as
-  // soon as it appears in the DOM
+  // Rule 9: on /marketplace, click the "Mes enchères" tab as soon as it appears in the DOM
   // ============================================================
   function clickAuctionsTabOnArrival() {
     if (!window.location.pathname.startsWith("/marketplace")) return;
@@ -695,8 +683,7 @@
   }
 
   // ============================================================
-  // Rule 10: clicking a button.w-full.items-start updates the
-  // first span.absolute in the document with the number of
+  // Rule 10: clicking a button.w-full.items-start updates the first span.absolute in the document with the number of
   // button.w-full.items-start PREVIOUS siblings it has
   // ============================================================
   function countPreviousSiblingsMatching(el, selector) {
@@ -741,8 +728,7 @@
   }
 
   // ============================================================
-  // Rule 12: on /profile/*, give buttons inside div.-mt-0\.5 a
-  // color of #ccc, but only while they're not hovered
+  // Rule 12: on /profile/*, give buttons inside div.-mt-0\.5 a color of #ccc, but only while they're not hovered
   // ============================================================
   function updateProfileButtonColor() {
     const onProfile = window.location.pathname.startsWith("/profile/");
@@ -765,9 +751,8 @@
   }
 
   // ============================================================
-  // Feature PNP: on /pulls, send a push notification when the text
-  // content of div.text-lg > span.text-[var(--color-accent)] is
-  // "7" or higher. Re-send every 10 minutes while it's exactly "10"
+  // Feature PNP: on /pulls, send a push notification when the text content of
+  // div.text-lg > span.text-[var(--color-accent)] is N or higher. Re-send every X minutes while it's full
   // ============================================================
   function watchPullsCounterNotification() {
     const MAX_PILE_SIZE = 10;
@@ -839,11 +824,11 @@
   }
 
   // ============================================================
-  // Rule 13: when div.card-frame.shadow-xl.overflow-hidden enters the DOM and
-  // there's no span.absolute anywhere in the document, keep only
-  // the first N children of div.min-h-0.flex-1; scrolling that
-  // container to the bottom restores the remaining children
+  // Rule 13: when div.card-frame.shadow-xl.overflow-hidden enters the DOM and there's no span.absolute anywhere in the
+  // document, keep only the first N children of div.min-h-0.flex-1; scrolling that container to the bottom restores
+  // the remaining children
   // ============================================================
+
   // Holds the trimmed-off children so they can be reinserted later.
   const MAX_TRIMMED_NOTIFICATIONS = 10;
   const flexOneHiddenChildren = new WeakMap();
@@ -904,9 +889,8 @@
   }
 
   // ============================================================
-  // Rule 16: when div.card-frame.shadow-xl.overflow-hidden enters
-  // the DOM, smoothly scroll the last unread notification (an
-  // element carrying ACCENT_CLASS) into view
+  // Rule 16: when div.card-frame.shadow-xl.overflow-hidden enters the DOM, smoothly scroll the last unread
+  // notification (an element carrying ACCENT_CLASS) into view
   // ============================================================
   function scrollToLastUnreadNotification() {
     const unread = document.querySelectorAll(`.${CSS.escape(ACCENT_CLASS)}`);
@@ -938,11 +922,10 @@
   }
 
   // ============================================================
-  // Feature TMB: on /marketplace, when the "Mes enchères" tab is
-  // active, add a toggle next to h1.text-2xl.gap-2 that groups
-  // div.flex-wrap's children into "Surenchéri" (first) and
-  // "Vous menez" (second), separated by an hr
+  // Feature TMB: on /marketplace, when the "Mes enchères" tab is active, add a toggle next to h1.text-2xl.gap-2 that
+  // groups div.flex-wrap's children into "Surenchéri" (first) and "Vous menez" (second), separated by an hr
   // ============================================================
+
   // Remembers each flex-wrap's original child order for un-grouping.
   const auctionWrapOriginalOrder = new WeakMap();
 
@@ -1136,9 +1119,8 @@
   }
 
   // ============================================================
-  // Feature CME: on /pulls and /collection, while div.fixed.inset-0
-  // (a modal) is in the DOM, pressing Escape clicks the button
-  // labelled "Fermer"
+  // Feature CME: on /pulls and /collection, while div.fixed.inset-0 (a modal) is in the DOM, pressing Escape clicks
+  // the button labelled "Fermer"
   // ============================================================
   function watchPullsModalEscape() {
     document.addEventListener("keydown", (event) => {
@@ -1157,9 +1139,8 @@
   }
 
   // ============================================================
-  // Feature PNB: on a bid page (/marketplace/{UUID}), send a push
-  // notification when span.tabular-nums.font-medium's text ends
-  // with "dans 30s"
+  // Feature PNB: on a bid page (/marketplace/{UUID}), send a push notification when
+  // span.tabular-nums.font-medium's text ends with "dans 30s"
   // ============================================================
   const BID_PAGE_REGEX = /^\/marketplace\/[0-9a-f]+/i;
   function watchBidTimerNotification() {
@@ -1203,9 +1184,8 @@
   }
 
   // ============================================================
-  // Feature CAR: on /achievements, when div.grid contains "Réclamer"
-  // buttons, add a button before the grid that sums up the reward
-  // amounts (from the <p> just before each button) and claims all
+  // Feature CAR: on /achievements, when div.grid contains "Réclamer" buttons, add a button before the grid that sums
+  // up the reward amounts (from the <p> just before each button) and claims all
   // ============================================================
   function updateClaimAllButton() {
     if (!window.location.pathname.startsWith("/achievements")) return;
@@ -1223,6 +1203,7 @@
       return;
     }
 
+    const count = claimButtons.length;
     const total = claimButtons.reduce((sum, btn) => {
       const amountText = btn.previousElementSibling?.textContent ?? "";
       const match = amountText.match(/(\d+)/);
@@ -1240,7 +1221,7 @@
       });
       grid.before(claimAllBtn);
     }
-    claimAllBtn.textContent = `Tout réclamer (+${total} wikibidous)`;
+    claimAllBtn.textContent = `Tout réclamer (+${total} wb grâce à ${count} récompense${count > 1 ? "s" : ""})`;
   }
 
   function watchClaimAllButton() {
@@ -1281,15 +1262,34 @@
   }
 
   // ============================================================
-  // Feature AKP: on /pulls, once div.gap-4:not(.flex-col) is in the
-  // DOM, pressing ArrowLeft/ArrowRight clicks its first/second button.
-  // Pressing Space clicks the "Continuer" button inside main, or
-  // button.relative.gap-4 if that's what's present in the DOM instead.
-  // Pressing E, while a span "Carte" is in main, clicks img.scale-[1.8].
-  // Pressing V does the same as E, then also clicks the first
-  // button.py-2.5 found in the document. E and V are ignored while
-  // focus is inside an <input>.
+  // Feature AKP: on /pulls, once div.gap-4:not(.flex-col) is in the DOM, pressing ArrowLeft/ArrowRight clicks its
+  // first/second button; Home/End do the same but 4 times in a row (each click re-reads the container/buttons,
+  // waiting 50ms between clicks for React to re-render). Pressing Space clicks the "Continuer" button inside main,
+  // or button.relative.gap-4 if that's what's present in the DOM instead. Pressing E, while a span "Carte" is in
+  // main, clicks img.scale-[1.8]. Pressing V does the same as E, then also clicks the first button.py-2.5 found in
+  // the document. E and V are ignored while focus is inside an <input>.
   // ============================================================
+  function clickPullsNavButton(direction) {
+    const container = document.querySelector("div.gap-4:not(.flex-col)");
+    if (!container) return false;
+
+    const buttons = container.querySelectorAll(":scope > button");
+    if (buttons.length < 2) return false;
+
+    const navTarget = direction === "left" ? buttons[0] : buttons[1];
+    navTarget.click();
+    return true;
+  }
+
+  function clickPullsNavButtonRepeatedly(direction, times) {
+    if (times <= 0) return;
+    if (!clickPullsNavButton(direction)) return;
+
+    if (times > 1) {
+      setTimeout(() => clickPullsNavButtonRepeatedly(direction, times - 1), 50);
+    }
+  }
+
   function watchPullsArrowNavigation() {
     document.addEventListener("keydown", (event) => {
       if (!window.location.pathname.startsWith("/pulls")) return;
@@ -1334,25 +1334,25 @@
         return;
       }
 
+      if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        clickPullsNavButtonRepeatedly(
+          event.key === "Home" ? "left" : "right",
+          4,
+        );
+        return;
+      }
+
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 
-      const container = document.querySelector("div.gap-4:not(.flex-col)");
-      if (!container) return;
-
-      const buttons = container.querySelectorAll(":scope > button");
-      if (buttons.length < 2) return;
-
-      const navTarget = event.key === "ArrowLeft" ? buttons[0] : buttons[1];
-      navTarget.click();
+      clickPullsNavButton(event.key === "ArrowLeft" ? "left" : "right");
     });
   }
 
   // ============================================================
-  // Rule 14: wherever div.min-h-0.overflow-y-auto is in the DOM
-  // (it only exists after a user action), for each of its children
-  // that contains a <p> reading "Liste de souhaits", find the <p>
-  // that contains "vient d'être" and wrap the text preceding that
-  // segment in « » guillemets
+  // Rule 14: wherever div.min-h-0.overflow-y-auto is in the DOM (it only exists after a user action), for each of its
+  // children that contains a <p> reading "Liste de souhaits", find the <p> that contains "vient d'être" and wrap the
+  // text preceding that segment in « » guillemets
   // ============================================================
   function wrapWishlistToastCardName() {
     const list = document.querySelector("div.min-h-0.overflow-y-auto");
@@ -1391,9 +1391,8 @@
   }
 
   // ============================================================
-  // Rule 15: on a marketplace item URL, replace the text content
-  // of button.text-sm.gap-1.5 with "Retour en arrière", leaving
-  // its svg icon child untouched
+  // Rule 15: on a marketplace item URL, replace the text content of button.text-sm.gap-1.5 with "Retour en arrière",
+  // leaving its svg icon child untouched
   // ============================================================
   function relabelMarketplaceBackButton() {
     if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
@@ -1421,12 +1420,9 @@
   }
 
   // ============================================================
-  // Feature PLB: on a bid page (/marketplace/{UUID}), for each
-  // entry of ul.card-frame, insert an "@" anchor right before its
-  // first child (a <span> holding the bidder's name), linking to
-  // /profile/{name}; also give the entry's last
-  // child the "ml-auto" class. Also insert the same "@" link right
-  // before the username (a <span> inside p.text-sm.mt-1)
+  // Feature PLB: on a bid page (/marketplace/{UUID}), for each entry of ul.card-frame, insert an "@" anchor right
+  // before its first child (a <span> holding the bidder's name), linking to /profile/{name}; also give the entry's
+  // last child the "ml-auto" class. Also insert the same "@" link right before the username (a <span> inside p.text-sm.mt-1)
   // ============================================================
   function createProfileLink(name) {
     const link = document.createElement("a");
@@ -1466,7 +1462,9 @@
     const name = nameSpan.textContent.trim();
     if (!name) return;
 
-    nameSpan.before(createProfileLink(name));
+    const profileLink = createProfileLink(name);
+    profileLink.style.marginRight = "0.125rem";
+    nameSpan.before(profileLink);
   }
 
   function watchBidEntryProfileLinks() {
@@ -1476,9 +1474,6 @@
         color: var(--color-accent);
         text-decoration: none;
         opacity: 0.7;
-      }
-      p.text-sm.mt-1 .wm-profile-link {
-        margin-right: 0.25rem;
       }
       .wm-profile-link:hover {
         opacity: 1;
@@ -1615,29 +1610,29 @@
   }
 
   // ============================================================
-  // Feature BSP (cont'd): on a bid page, flag the card name
-  // (h1.flex-1, given "display: contents") as "SNIPABLE" when the
-  // current price (span.text-2xl) is below 80% of the average of
-  // that card's stored sold prices, "agréable" when it's between
-  // 80% and 100% of that average, "tolérable" when it's between
-  // 100% and 120%, or "overpriced" when it's above 120%; unflag it
-  // as soon as none of those is true. Skips while div.animate-spin
-  // is present (the page is still loading).
+  // Feature BSP (cont'd): on a bid page, flag the card name (h1.flex-1, given "display: contents") as "EXCELLENT" when
+  // the current price (span.text-2xl) is below 80% of the average of that card's stored sold prices, "agréable" when
+  // it's between 80% and 100% of that average, "tolérable" when it's between 100% and 120%, or "overpriced" when it's
+  // above 120%; unflag it as soon as none of those is true. When this bid's own price is the only entry stored for
+  // that card (a cache no-hit that this bid's end just filled), that lone entry trivially equals the current price
+  // and would otherwise misleadingly compute as "tolérable" — flag it "NEW ENTRY" (white) instead, since there's no
+  // real history yet to compare against. Skips while div.animate-spin is present (the page is still loading).
   // ============================================================
-  const SNIPABLE_THRESHOLD_RATIO = 0.8;
+  const EXCELLENT_THRESHOLD_RATIO = 0.8;
   const TOLERABLE_THRESHOLD_RATIO = 1.0;
   const OVERPRICED_THRESHOLD_RATIO = 1.2;
   const BADGE_CLASSES = [
-    "wm-snipable",
+    "wm-excellent",
     "wm-agreeable",
     "wm-tolerable",
     "wm-overpriced",
+    "wm-new-entry",
   ];
   const STATUS_LABELS = {
-    snipable: "SNIPABLE",
+    excellent: "prix excellent",
     agreeable: "prix agréable",
     tolerable: "prix tolérable",
-    overpriced: "moins cher ailleurs",
+    overpriced: "prix excessif",
   };
 
   function updateSnipableBadge() {
@@ -1665,6 +1660,26 @@
     }
 
     const stored = readBspEntries(cardName);
+
+    const currentTag = getBidTag();
+    const isFreshCacheEntry =
+      currentTag !== null &&
+      stored.length === 1 &&
+      typeof stored[0] === "string" &&
+      stored[0].endsWith(`-${currentTag}`);
+
+    if (isFreshCacheEntry) {
+      if (existing?.classList.contains("wm-new-entry")) return;
+
+      existing?.remove();
+
+      const badge = document.createElement("span");
+      badge.className = "wm-new-entry";
+      badge.textContent = "Ajouté au registre des ventes observées";
+      nameEl.after(badge);
+      return;
+    }
+
     const average = stored.length
       ? stored.reduce((sum, entry) => sum + parseInt(entry, 10), 0) /
         stored.length
@@ -1672,7 +1687,7 @@
 
     let status = null;
     if (average !== null) {
-      if (price < average * SNIPABLE_THRESHOLD_RATIO) status = "snipable";
+      if (price < average * EXCELLENT_THRESHOLD_RATIO) status = "excellent";
       else if (price < average * TOLERABLE_THRESHOLD_RATIO)
         status = "agreeable";
       else if (price < average * OVERPRICED_THRESHOLD_RATIO)
@@ -1701,17 +1716,18 @@
       h1.flex-1 {
         display: contents;
       }
-      .wm-snipable,
+      .wm-excellent,
       .wm-agreeable,
       .wm-tolerable,
-      .wm-overpriced {
+      .wm-overpriced,
+      .wm-new-entry {
         margin-left: 0.5rem;
         font-weight: 600;
         font-size: 0.85rem;
         border-radius: 0.375rem;
         padding: 0.1rem 0.4rem;
       }
-      .wm-snipable {
+      .wm-excellent {
         color: #d8b4fe;
         background-color: rgba(216, 180, 254, 0.15);
       }
@@ -1726,6 +1742,10 @@
       .wm-overpriced {
         color: #ef2222;
         background-color: rgba(239, 34, 34, 0.15);
+      }
+      .wm-new-entry {
+        color: #ffffff;
+        background-color: rgba(255, 255, 255, 0.15);
       }
     `);
 
@@ -1749,10 +1769,9 @@
   }
 
   // ============================================================
-  // Feature BSP (cont'd): on the user's own profile (/profile),
-  // dump every card's stored sold prices into a grid, inserted as
-  // a sibling right after div.grid; each entry gets a "✕" button
-  // to clear its stored data
+  // Feature BSP (cont'd): on the user's own profile (/profile), dump every card's stored sold prices into a grid,
+  // inserted as a sibling right after div.grid; each entry gets a "✕" button to clear its stored data. Next to
+  // "Vider le cache", an import/export pill copies/restores every "observed-"/"eval-" localStorage entry as JSON
   // ============================================================
   function collectStoredBidPrices() {
     // Snapshot the keys first: migrating a legacy key below removes it
@@ -1827,6 +1846,85 @@
     });
 
     return migratedCount;
+  }
+
+  // Feature BSP/ETS (cont'd): an import/export pill next to "Vider le cache" carries every "observed-" (Feature
+  // BSP) and "eval-" (Feature ETS) localStorage entry as one JSON blob, so that cache can be moved to another
+  // browser/device. Values are copied as their raw stored strings (not re-parsed), since Feature BSP's entries are
+  // JSON-encoded arrays while Feature ETS's are plain strings.
+  const TAGGED_CACHE_PREFIXES = [BSP_KEY_PREFIX, "eval-"];
+
+  function collectTaggedCacheEntries() {
+    const entries = {};
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (
+        !key ||
+        !TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))
+      )
+        continue;
+
+      const raw = localStorage.getItem(key);
+      if (raw !== null) entries[key] = raw;
+    }
+
+    return entries;
+  }
+
+  function exportTaggedCacheEntries() {
+    const entries = collectTaggedCacheEntries();
+    const json = JSON.stringify(entries);
+    const count = Object.keys(entries).length;
+
+    navigator.clipboard
+      ?.writeText(json)
+      .then(() => {
+        GM_notification({
+          title: "Wiki-Masters",
+          text: `${count} entrée(s) copiée(s) dans le presse-papiers.`,
+          timeout: 4000,
+        });
+      })
+      .catch(() => {
+        prompt(`Copiez ce texte pour exporter ${count} entrée(s) :`, json);
+      });
+  }
+
+  function importTaggedCacheEntries() {
+    const json = prompt("Collez le texte précédemment exporté :");
+    if (!json) return;
+
+    let entries;
+    try {
+      entries = JSON.parse(json);
+    } catch {
+      alert("Le texte collé n'est pas un export valide.");
+      return;
+    }
+
+    if (
+      typeof entries !== "object" ||
+      entries === null ||
+      Array.isArray(entries)
+    ) {
+      alert("Le texte collé n'est pas un export valide.");
+      return;
+    }
+
+    let importedCount = 0;
+    Object.entries(entries).forEach(([key, value]) => {
+      if (typeof value !== "string") return;
+      if (!TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix)))
+        return;
+
+      localStorage.setItem(key, value);
+      importedCount++;
+    });
+
+    alert(
+      `${importedCount} entrée(s) importée(s). Rechargez la page pour les voir.`,
+    );
   }
 
   function renderStoredBidPricesGrid() {
@@ -1932,6 +2030,24 @@
       });
     });
 
+    const importExportPill = document.createElement("div");
+    importExportPill.className = "wm-bsp-dump-import-export";
+
+    const exportBtn = document.createElement("button");
+    exportBtn.type = "button";
+    exportBtn.className = "wm-bsp-dump-import-export-btn";
+    exportBtn.textContent = "Exporter";
+    exportBtn.addEventListener("click", exportTaggedCacheEntries);
+
+    const importBtn = document.createElement("button");
+    importBtn.type = "button";
+    importBtn.className = "wm-bsp-dump-import-export-btn";
+    importBtn.textContent = "Importer";
+    importBtn.addEventListener("click", importTaggedCacheEntries);
+
+    importExportPill.append(exportBtn, importBtn);
+    actionsRow.appendChild(importExportPill);
+
     grid.after(dump);
   }
 
@@ -1992,6 +2108,31 @@
         opacity: 1;
         background: rgba(239, 34, 34, 0.1);
       }
+      .wm-bsp-dump-import-export {
+        display: flex;
+        border: 1px solid var(--color-accent);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .wm-bsp-dump-import-export-btn {
+        padding: 0.35rem 0.75rem;
+        border: none;
+        background: transparent;
+        color: var(--color-accent);
+        font-weight: 600;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-bsp-dump-import-export-btn:first-child {
+        border-right: 1px solid var(--color-accent);
+      }
+      .wm-bsp-dump-import-export-btn:hover {
+        opacity: 1;
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+      }
       .wm-bsp-dump-entry {
         display: flex;
         align-items: center;
@@ -2043,9 +2184,8 @@
   }
 
   // ============================================================
-  // Feature ETS: on /pulls and /collection, once span.tabular-nums
-  // appears, store its value in localStorage under "eval-{name}",
-  // name being the text content of p.truncate
+  // Feature ETS: on /pulls and /collection, once span.tabular-nums appears, store its value in localStorage
+  // under "eval-{name}", name being the text content of p.truncate
   // ============================================================
   const UNKNOWN_EVAL_VALUE = "?";
 
@@ -2095,10 +2235,8 @@
   }
 
   // ============================================================
-  // Feature ETS (cont'd): on /collection, whenever the cards grid
-  // (div.gap-3.justify-center) changes, append each card's cached
-  // eval price (Feature ETS, keyed "eval-{name}") to its rarity
-  // tag (div.top-2.left-2), as "{rarity} ({eval})"
+  // Feature ETS (cont'd): on /collection, whenever the cards grid (div.gap-3.justify-center) changes, append each
+  // card's cached eval price (Feature ETS, keyed "eval-{name}") to its rarity tag (div.top-2.left-2), as "{rarity} ({eval})"
   // ============================================================
   const WORTHLESS_THRESHOLD = 15;
   function formatEvalValue(rawValue) {
@@ -2173,8 +2311,7 @@
   }
 
   // ============================================================
-  // Rule 17: on the notification container
-  // (div.card-frame.shadow-xl.overflow-hidden), replace its first
+  // Rule 17: on the notification container (div.card-frame.shadow-xl.overflow-hidden), replace its first
   // child's "justify-between" class with "gap-4"
   // ============================================================
   function replaceNotificationContainerFirstChildSpacing() {
@@ -2199,8 +2336,8 @@
   }
 
   // ============================================================
-  // Rule 18: on /collection and /pulls, when the card modal
-  // (div.card-frame.p-6) opens, focus input.px-3 after 250ms
+  // Rule 18: on /collection and /pulls, when the card modal (div.card-frame.p-6) opens, focus input.px-3 after 250ms.
+  // Also, on arrival on /collection, focus input.rounded-lg as soon as it enters the DOM
   // ============================================================
   function focusCollectionModalInput() {
     if (
@@ -2219,6 +2356,16 @@
     }, 250);
   }
 
+  function focusCollectionSearchInput() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    const input = document.querySelector("input.rounded-lg");
+    if (!input || input.dataset.wmInputFocused === "true") return;
+
+    input.dataset.wmInputFocused = "true";
+    input.focus();
+  }
+
   function watchCollectionModalInputFocus() {
     GM_addStyle(`
       nav a[href="/pulls"]:focus {
@@ -2227,24 +2374,22 @@
     `);
 
     focusCollectionModalInput();
+    focusCollectionSearchInput();
 
-    const observer = new MutationObserver(() => focusCollectionModalInput());
+    const observer = new MutationObserver(() => {
+      focusCollectionModalInput();
+      focusCollectionSearchInput();
+    });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ============================================================
-  // Feature FCP: a settings-wheel button, visually cloning
-  // .wm-fold-toggle, sits next to the sidebar's fold/pin toggle
-  // (nav h1's closest nav). Clicking it opens a modal listing
-  // every rule/feature documented above, each with its own
-  // checkbox; unchecking one disables it. The choice is stored in
-  // localStorage under "wm-feature-flags" (default: everything
-  // enabled) and, since most rules only wire themselves up once
-  // at page load, applies after the next reload — hence the
-  // "Recharger la page" button in the modal's footer. Styled
-  // independently of .wm-fold-toggle's own stylesheet (injected
-  // by rule 6) so this button and modal always work even when
-  // every other rule/feature is disabled.
+  // Feature FCP: a settings-wheel button, visually cloning .wm-fold-toggle, sits next to the sidebar's fold/pin toggle
+  // (nav h1's closest nav). Clicking it opens a modal listing every rule/feature documented above, each with its own
+  // checkbox; unchecking one disables it. The choice is stored in localStorage under "wm-feature-flags" (default:
+  // everything enabled) and, since most rules only wire themselves up once at page load, applies after the next
+  // reload — hence the "Recharger la page" button in the modal's footer. Styled independently of .wm-fold-toggle's own
+  // stylesheet (injected by rule 6) so this button and modal always work even when every other rule/feature is disabled.
   // ============================================================
   const FEATURE_FLAGS_KEY = "wm-feature-flags";
 
@@ -2302,7 +2447,11 @@
       label: "Suivi et alerte des prix de vente des enchères",
     },
     { id: "rule-17", label: "Espacement du conteneur de notifications" },
-    { id: "rule-18", label: "Focus automatique sur le champ de mise" },
+    {
+      id: "rule-18",
+      label:
+        "Focus automatique sur le champ de mise et la recherche de collection",
+    },
     { id: "feature-ets", label: "Mémorisation des estimations de cartes" },
     {
       id: "rule-19",
@@ -2311,6 +2460,22 @@
     {
       id: "feature-ebc",
       label: "Bouton d'évaluation groupée des cartes non estimées",
+    },
+    {
+      id: "rule-20",
+      label: "Scroll suit la sélection clavier dans la modale de carte",
+    },
+    {
+      id: "rule-21",
+      label: "Reformuler la notification de remboursement après surenchère",
+    },
+    {
+      id: "rule-22",
+      label: "Reformuler la notification de vente de carte",
+    },
+    {
+      id: "feature-gcp",
+      label: "Lien de profil sur le nom des amis (souhaits globaux)",
     },
   ];
 
@@ -2604,48 +2769,140 @@
   }
 
   // ============================================================
-  // Rule 19: in the notification display
-  // (div.card-frame.shadow-xl.overflow-hidden), find the <p> whose
-  // own text reads exactly "Votre carte vous est rendue." — that
-  // fixed phrase, with no name in it, is only how this
-  // notification type is identified. The card name isn't in that
-  // <p>: it's found by scanning the enclosing notification item
-  // (button.w-full.items-start)'s whole text content for a quoted
-  // segment (straight quotes or « » guillemets). Once found,
-  // replace the identifying <p>'s text with "Personne n'a enchéri
-  // pour votre carte « {name} »"
+  // Rule 19: a single pass over every <p> in the notification display
+  // (div.card-frame.shadow-xl.overflow-hidden) rewrites whichever of these three notification types it matches:
+  //   - the fixed phrase "Votre carte vous est rendue." — with no name in it, that phrase is only how this
+  //     notification type is identified. The card name isn't in that <p>: it's found by scanning the enclosing
+  //     notification item (button.w-full.items-start)'s whole text content for a quoted segment (straight quotes or
+  //     « » guillemets). Rewritten to "Personne n'a enchéri pour votre carte « {name} »"
+  //   - an outbid refund notification, "{username} a misé {bid} wikibidous sur « {card} ». Vos {refund}
+  //     wikibidous vous ont été remboursés.", rewritten to "Enchère pour « {card} » : {bid} > {refund}.
+  //     Réenchérissez pour gagner la carte.", with the "{bid}" segment in a gentle yellow
+  //   - "Votre carte « {card} » a été vendue pour {amount} wikibidous." rewritten to "+{amount} wb pour
+  //     avoir vendu « {card} »" (green); "Vous avez remporté « {card} » pour {amount} wikibidous." rewritten to
+  //     "-{amount} wb pour avoir acheté « {card} »" (gentle red)
+  // Each <p> matches at most one of these, so they're tried in sequence and the first hit wins.
   // ============================================================
   const RETURNED_CARD_PHRASE = "Votre carte vous est rendue.";
   const QUOTED_TEXT_REGEX = /[«"](.+?)[»"]/;
+  const OUTBID_REFUND_PHRASE_SUFFIX = "vous ont été remboursés.";
+  const OUTBID_REFUND_DETAILS_REGEX =
+    /a misé\s+(\d+)\s+wikibidous sur\s*[«"](.+?)[»"]\.\s*Vos\s+(\d+)\s+wikibidous vous ont été remboursés/;
+  const CARD_SOLD_DETAILS_REGEX =
+    /Votre carte\s*[«"](.+?)[»"]\s*a été vendue pour\s+(\d+)\s+wikibidous\.?/;
+  const CARD_BOUGHT_DETAILS_REGEX =
+    /Vous avez remporté\s*[«"](.+?)[»"]\s*pour\s+(\d+)\s+wikibidous\.?/;
 
-  function rewriteReturnedCardNotifications() {
+  function rewriteReturnedCardParagraph(p) {
+    if (!p.textContent.trim().endsWith(RETURNED_CARD_PHRASE)) return false;
+
+    const item = p.closest("button.w-full.items-start");
+    const match = item?.textContent.match(QUOTED_TEXT_REGEX);
+    if (!match) return false;
+
+    const cardName = match[1].trim();
+    p.textContent = `Personne n'a enchéri pour votre carte « ${cardName} ».`;
+    return true;
+  }
+
+  function rewriteOutbidRefundParagraph(p) {
+    if (!p.textContent.trim().endsWith(OUTBID_REFUND_PHRASE_SUFFIX))
+      return false;
+
+    const match = p.textContent.match(OUTBID_REFUND_DETAILS_REGEX);
+    if (!match) return false;
+
+    const [, otherBid, cardName, userBid] = match;
+    const formattedCardName =
+      cardName.length < 42 ? cardName : cardName.trim().slice(0, 42) + "...";
+
+    const bidComparisonSpan = document.createElement("span");
+    bidComparisonSpan.className = "wm-outbid-refund-other-bid";
+    bidComparisonSpan.textContent = `${otherBid} > ${userBid}`;
+
+    p.textContent = "";
+    p.append(
+      `Enchère pour « ${formattedCardName} » : `,
+      bidComparisonSpan,
+      `. Réenchérissez pour gagner la carte.`,
+    );
+    return true;
+  }
+
+  function rewriteCardSoldOrBoughtParagraph(p) {
+    const soldMatch = p.textContent.match(CARD_SOLD_DETAILS_REGEX);
+    const boughtMatch =
+      !soldMatch && p.textContent.match(CARD_BOUGHT_DETAILS_REGEX);
+    const match = soldMatch || boughtMatch;
+    if (!match) return false;
+
+    const [, cardName, amount] = match;
+
+    const amountSpan = document.createElement("span");
+    amountSpan.className = soldMatch
+      ? "wm-card-sold-amount"
+      : "wm-card-bought-amount";
+    amountSpan.textContent = soldMatch ? `+${amount} wb` : `-${amount} wb`;
+
+    p.textContent = "";
+    p.append(
+      amountSpan,
+      soldMatch
+        ? ` pour avoir vendu « ${cardName.trim()} ».`
+        : ` pour avoir acheté « ${cardName.trim()} ».`,
+    );
+    return true;
+  }
+
+  function rewriteNotificationParagraphs() {
     const container = document.querySelector(
       "div.card-frame.shadow-xl.overflow-hidden",
     );
     if (!container) return;
 
     container.querySelectorAll("p").forEach((p) => {
-      if (p.dataset.wmReturnedCardRewritten === "true") return;
-      if (!p.textContent.trim().endsWith(RETURNED_CARD_PHRASE)) return;
+      try {
+        if (p.dataset.wmNotificationRewritten === "true") return;
 
-      const item = p.closest("button.w-full.items-start");
-      const match = item?.textContent.match(QUOTED_TEXT_REGEX);
-      if (!match) return;
+        const rewritten =
+          rewriteReturnedCardParagraph(p) ||
+          rewriteOutbidRefundParagraph(p) ||
+          rewriteCardSoldOrBoughtParagraph(p);
+        if (!rewritten) return;
 
-      const cardName = match[1].trim();
-      p.textContent = `Personne n'a enchéri pour votre carte « ${cardName} ».`;
-      p.dataset.wmReturnedCardRewritten = "true";
+        p.dataset.wmNotificationRewritten = "true";
+      } catch (error) {
+        console.error(
+          "[Wiki-MasterBetter] Rule 19 failed on a notification",
+          error,
+        );
+      }
     });
   }
 
-  function watchReturnedCardNotifications() {
-    rewriteReturnedCardNotifications();
+  function watchNotificationRewrites() {
+    GM_addStyle(`
+      .wm-outbid-refund-other-bid {
+        color: #facc15;
+        font-weight: 600;
+      }
 
-    const observer = new MutationObserver(() => {
-      if (!document.querySelector("div.card-frame.shadow-xl.overflow-hidden"))
-        return;
-      rewriteReturnedCardNotifications();
-    });
+      .wm-card-sold-amount {
+        color: #10b981;
+        font-weight: 600;
+      }
+
+      .wm-card-bought-amount {
+        color: #f87171;
+        font-weight: 600;
+      }
+    `);
+
+    rewriteNotificationParagraphs();
+
+    const observer = new MutationObserver(() =>
+      rewriteNotificationParagraphs(),
+    );
     observer.observe(document.body, {
       childList: true,
       subtree: true,
@@ -2654,13 +2911,98 @@
   }
 
   // ============================================================
-  // Feature EBC: on /collection, add two buttons as the last children of div.flex-wrap.gap-2 (rarity filter
-  // buttons): "Réévaluer toute la page" (re-evaluates every card) and, right after it, "Évaluer les cartes non
-  // évaluées" (only cards whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker).
-  // Either shows a fixed "Arrêter la reconnaissance" button and, for each targeted card, clicks its
-  // .wm-quick-action button, waits for Feature ETS to record a fresh value under its "eval-{name}" localStorage
-  // key, then presses Escape to close the modal before moving to the next card. The stop button cancels the run
-  // after the current card; the two buttons disable each other while either is running
+  // Feature GCP: on /global-collection, each card showing which friend owns it renders that friend's username in a
+  // span.truncate, but the card's own overlay (div.inset-0) sits on top and captures every pointer event, so a plain
+  // hover/click listener on the span never fires. Instead, track the mouse position (mousemove) and, at any given
+  // point, resolve which card (the div.inset-0 whose bounding rect contains that point) and username span (its
+  // parent's span.truncate) the cursor is over; while it's within that span's own bounding rect, show it as
+  // clickable, and clicking navigates to /profile/{username} instead of the card's default action
+  // ============================================================
+  function getGcpCardAtPoint(clientX, clientY) {
+    const cards = document.querySelectorAll("div.inset-0");
+
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect();
+      if (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      ) {
+        return card;
+      }
+    }
+
+    return null;
+  }
+
+  function getGcpUsernameSpanAt(clientX, clientY) {
+    const card = getGcpCardAtPoint(clientX, clientY);
+    if (!card) return null;
+
+    const usernameSpan =
+      card.querySelector("span.truncate") ??
+      card.parentElement?.querySelector("span.truncate");
+    if (!usernameSpan) return null;
+
+    const rect = usernameSpan.getBoundingClientRect();
+    const isOverUsername =
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom;
+
+    return isOverUsername ? usernameSpan : null;
+  }
+
+  let gcpHoveredUsernameSpan = null;
+
+  function handleGcpMouseMove(event) {
+    if (!window.location.pathname.startsWith("/global-collection")) return;
+
+    const usernameSpan = getGcpUsernameSpanAt(event.clientX, event.clientY);
+    if (usernameSpan === gcpHoveredUsernameSpan) return;
+
+    gcpHoveredUsernameSpan?.classList.remove("wm-friend-username-hover");
+    usernameSpan?.classList.add("wm-friend-username-hover");
+    gcpHoveredUsernameSpan = usernameSpan;
+  }
+
+  function handleGcpClick(event) {
+    if (!window.location.pathname.startsWith("/global-collection")) return;
+
+    const usernameSpan = getGcpUsernameSpanAt(event.clientX, event.clientY);
+    if (!usernameSpan) return;
+
+    const username = usernameSpan.textContent.trim();
+    if (!username) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    window.location.href = `/profile/${encodeURIComponent(username)}`;
+  }
+
+  function watchGlobalCollectionFriendProfileLinks() {
+    GM_addStyle(`
+      .wm-friend-username-hover {
+        cursor: pointer;
+        text-decoration: underline;
+      }
+    `);
+
+    document.addEventListener("mousemove", handleGcpMouseMove);
+    document.addEventListener("click", handleGcpClick, true);
+  }
+
+  // ============================================================
+  // Feature EBC: on /collection, add three buttons as the last children of div.flex-wrap.gap-2 (rarity filter
+  // buttons): "Réévaluer toute la page" (re-evaluates every card), "Évaluer les cartes non évaluées" (only cards
+  // whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker), and "Ordonner la page
+  // par prix décroissant" (reorders the grid by each card's raw eval value, unknowns last). The two evaluation
+  // buttons show a fixed "Arrêter la reconnaissance" button and, for each targeted card, click its
+  // .wm-quick-action button, wait for Feature ETS to record a fresh value under its "eval-{name}" localStorage
+  // key, then press Escape to close the modal before moving to the next card. The stop button cancels the run
+  // after the current card; the two evaluation buttons disable each other while either is running
   // ============================================================
   function getAllCollectionCards() {
     const grid = document.querySelector("div.gap-3.justify-center");
@@ -2719,7 +3061,12 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "wm-eval-stop";
-    btn.textContent = "Arrêter la reconnaissance";
+    btn.append("Arrêter la reconnaissance");
+
+    const note = document.createElement("span");
+    note.className = "wm-eval-stop-note";
+    note.textContent = "Les valeurs trouvées seront conservées";
+    btn.appendChild(note);
 
     btn.addEventListener("click", () => {
       state.stopped = true;
@@ -2729,8 +3076,8 @@
     return btn;
   }
 
-  // Measured: evaluating 50 cards takes about 190 seconds
-  const EVALUATION_SECONDS_PER_CARD = 190 / 50;
+  // Measured: evaluating 50 cards takes about 68 seconds
+  const EVALUATION_SECONDS_PER_CARD = 68 / 50;
 
   function updateEvaluateUnratedButtonLabel(btn) {
     if (btn.disabled) return;
@@ -2739,7 +3086,7 @@
     const label =
       cards === null
         ? "Évaluer les cartes non évaluées (chargement...)"
-        : `Évaluer les cartes non évaluées (~${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD)}s)`;
+        : `Évaluer les cartes non évaluées (≃ ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD)} s)`;
 
     if (btn.textContent === label) return;
     btn.textContent = label;
@@ -2800,6 +3147,37 @@
     updateEvaluateUnratedButtonLabel(otherButton);
   }
 
+  // Reads a card's raw eval value straight from localStorage (not its
+  // formatted rarity-tag appendix, which loses precision to "💩"/"X K"),
+  // returning null when it's missing or the "?" unknown marker
+  function getCardEvalValue(card) {
+    const cardName = card.querySelector("h3")?.textContent.trim();
+    if (!cardName) return null;
+
+    const raw = localStorage.getItem(`eval-${cardName}`);
+    if (raw === null || raw === UNKNOWN_EVAL_VALUE) return null;
+
+    const num = parseFloat(raw.replace(/\s/g, "").replace(",", "."));
+    return Number.isNaN(num) ? null : num;
+  }
+
+  function sortCollectionByPriceDescending() {
+    const grid = document.querySelector("div.gap-3.justify-center");
+    if (!grid) return;
+
+    const sorted = Array.from(grid.children)
+      .map((card, index) => ({ card, index, value: getCardEvalValue(card) }))
+      .sort((a, b) => {
+        if (a.value === null && b.value === null) return a.index - b.index;
+        if (a.value === null) return 1;
+        if (b.value === null) return -1;
+        return b.value - a.value;
+      })
+      .map((entry) => entry.card);
+
+    grid.append(...sorted);
+  }
+
   function insertEvaluateUnratedButton() {
     if (!window.location.pathname.startsWith("/collection")) return;
 
@@ -2823,6 +3201,13 @@
         ? `${referenceBtn.className} wm-eval-unrated`
         : "wm-eval-unrated";
 
+      const sortBtn = document.createElement("button");
+      sortBtn.type = "button";
+      sortBtn.className = referenceBtn
+        ? `${referenceBtn.className} wm-eval-sort`
+        : "wm-eval-sort";
+      sortBtn.textContent = "Ordonner la page par prix décroissant";
+
       reevaluateBtn.addEventListener("click", () => {
         if (reevaluateBtn.disabled) return;
         reevaluateBtn.disabled = true;
@@ -2837,8 +3222,13 @@
         evaluateUnratedCollectionCards(unratedBtn, reevaluateBtn);
       });
 
+      sortBtn.addEventListener("click", () => {
+        sortCollectionByPriceDescending();
+      });
+
       filterBar.appendChild(reevaluateBtn);
       filterBar.appendChild(unratedBtn);
+      filterBar.appendChild(sortBtn);
     }
 
     updateEvaluateUnratedButtonLabel(unratedBtn);
@@ -2851,6 +3241,10 @@
         top: 1rem;
         right: 1rem;
         z-index: 999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.15rem;
         padding: 0.5rem 1rem;
         border: none;
         border-radius: 0.5rem;
@@ -2865,12 +3259,51 @@
       .wm-eval-stop:hover {
         background: #b91c1c;
       }
+      .wm-eval-stop-note {
+        font-size: 0.7rem;
+        font-weight: 400;
+        opacity: 0.85;
+      }
     `);
 
     insertEvaluateUnratedButton();
 
     const observer = new MutationObserver(() => insertEvaluateUnratedButton());
     observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 20: on /collection and /pulls, inside the card modal (div.card-frame.p-6), when keyboard navigation changes
+  // which li in ul.absolute carries aria-selected="true", scroll that item into view so the list's scroll follows the
+  // active element
+  // ============================================================
+  function scrollActiveCardModalListItemIntoView(mutation) {
+    if (
+      !window.location.pathname.startsWith("/collection") &&
+      !window.location.pathname.startsWith("/pulls")
+    )
+      return;
+
+    if (mutation.attributeName !== "aria-selected") return;
+
+    const target = mutation.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.getAttribute("aria-selected") !== "true") return;
+    if (!target.closest("div.card-frame.p-6 ul.absolute")) return;
+
+    target.scrollIntoView({ block: "nearest" });
+  }
+
+  function watchCardModalListScroll() {
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach(scrollActiveCardModalListItemIntoView);
+    });
+
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["aria-selected"],
+      subtree: true,
+    });
   }
 
   // ============================================================
@@ -2918,8 +3351,10 @@
     run("feature-ets", watchRarityEvalTags);
     run("rule-17", watchNotificationContainerFirstChildSpacing);
     run("rule-18", watchCollectionModalInputFocus);
-    run("rule-19", watchReturnedCardNotifications);
+    run("rule-19", watchNotificationRewrites);
     run("feature-ebc", watchEvaluateUnratedButton);
+    run("rule-20", watchCardModalListScroll);
+    run("feature-gcp", watchGlobalCollectionFriendProfileLinks);
 
     watchFeatureConfigButton();
   }

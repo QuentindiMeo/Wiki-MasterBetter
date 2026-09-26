@@ -7,6 +7,8 @@ Don't include in the README:
 - **Lancer l'enchère au clavier** : Appuyer sur Entrée dans le champ de mise de départ lance directement l'enchère
 - **Focus automatique** : L'ouverture de la modale d'une carte place le curseur dans son champ de mise
 - **Notification de carte rendue clarifiée** : « Votre carte "{nom}" vous est rendue. » devient « Personne n'a enchéri pour votre carte « {nom} ». »
+- **Enchère perdue clarifiée** : « {enchérisseur} a misé {mise} wikibidous sur « {carte} ». Vos {remise} wikibidous vous ont été remboursés. » devient « Enchère pour « {carte} » : {mise} > {remise}. Réenchérissez pour gagner la carte. », avec la mise adverse mise en évidence en jaune
+- **Vente et achat de cartes mis en évidence** : les notifications de carte vendue ou remportée affichent le montant en couleur — vert pour une vente, rouge pour un achat
 
 ### Metadata for development
 

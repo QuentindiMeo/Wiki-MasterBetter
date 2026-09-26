@@ -12,13 +12,31 @@
 
 &#xa0;
 
+<div align="center">
+  <a href="https://github.com/QuentindiMeo/Wiki-MasterBetter/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/QuentindiMeo/Wiki-MasterBetter?style=flat&color=%23ffe937&logo=github" /></a>
+  <a href="https://github.com/QuentindiMeo/Wiki-MasterBetter/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/QuentindiMeo/Wiki-MasterBetter?color=forestgreen&logo=target" /></a>
+</div>
+
+&#xa0;
+
+<div align="center">
+  <b>Si ce script vous est utile, laissez une ⭐ sur le repo — ça aide à le faire connaître !</b>
+  <br />
+  Et si vous voulez m'offrir un café :&nbsp;
+  <a href="https://ko-fi.com/quentindimeo">
+    <img alt="ko-fi tip button" src="https://storage.ko-fi.com/cdn/brandasset/v2/support_me_on_kofi_blue.png" height="32px" />
+  </a>
+</div>
+
+&#xa0;
+
 ## 📝 Description
 
-Un userscript Tampermonkey qui ajoute une couche d'ajustements de confort, de raccourcis et de petites automatisations sur [wiki-masters.com](https://www.wiki-masters.com) — navbar repliable, notifications plus intelligentes, pulls pilotables au clavier, suivi des prix du marché, et bien plus.
+Un script local Tampermonkey qui ajoute une couche d'ajustements de confort, de raccourcis et de petites automatisations sur [wiki-masters.com](https://www.wiki-masters.com) — navbar repliable, notifications plus intelligentes, pulls pilotables au clavier, suivi des prix du marché, et bien plus.
 
 ## 🚀 Installation
 
-1. Installez [Tampermonkey](https://www.tampermonkey.net/) (ou un gestionnaire de userscripts compatible) dans votre navigateur
+1. Installez [Tampermonkey](https://www.tampermonkey.net/) (ou un gestionnaire de scripts local compatible) dans votre navigateur
 2. Ouvrez le tableau de bord de Tampermonkey et créez un nouveau script
 3. Collez le contenu de [`wiki-masterbetter.me.js`](./wiki-masterbetter.me.js) et enregistrez
 4. Rendez-vous sur [wiki-masters.com](https://www.wiki-masters.com) — le script s'active automatiquement
@@ -45,13 +63,14 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Liens de profil des enchérisseurs** : Un lien « @ » à côté du nom de chaque enchérisseur ouvre son profil dans un nouvel onglet
 - **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues (jusqu'à 5 prix les moins chers observés) par carte, puis signale le prix courant lors des visites suivantes comme **_SNIPABLE_**, **agréable**, **tolérable**, ou **_overpriced_** par rapport à cette moyenne
   - Les prix enregistrés sont listés dans une grille effaçable sur votre propre profil
+  - Un bouton Exporter/Importer permet de copier-coller ce cache (prix de vente et estimations) vers un autre navigateur ou appareil
 
 ### 📦 Collection
 
 - **Actions rapides** : Un bouton sur chaque carte de la collection ouvre la modale d'enchère
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
 - **Estimations mémorisées** : Le prix d'estimation vu sur `/pulls` ou `/collection` est mémorisé et affiché à côté de la rareté de chaque carte de la collection
-- **Évaluation en masse** : Deux boutons permettent d'évaluer automatiquement les cartes de la page via la modale d'estimation — l'un pour les seules cartes sans estimation, l'autre pour toute la page
+- **Évaluation en masse** : Trois boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation (avec une estimation du temps restant), réévaluer toute la page, ou trier la page par prix décroissant ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours
 
 ### 🎁 Pulls
 
@@ -61,6 +80,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 👤 Profil & Amis
 
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits à leur icône
+- **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 
 ### 🏆 Hauts faits
 
