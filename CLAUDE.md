@@ -9,6 +9,8 @@ Don't include in the README:
 - **Notification de carte rendue clarifiée** : « Votre carte "{nom}" vous est rendue. » devient « Personne n'a enchéri pour votre carte « {nom} ». »
 - **Enchère perdue clarifiée** : « {enchérisseur} a misé {mise} wikibidous sur « {carte} ». Vos {remise} wikibidous vous ont été remboursés. » devient « Enchère pour « {carte} » : {mise} > {remise}. Réenchérissez pour gagner la carte. », avec la mise adverse mise en évidence en jaune
 - **Vente et achat de cartes mis en évidence** : les notifications de carte vendue ou remportée affichent le montant en couleur — vert pour une vente, rouge pour un achat
+- **Favicon personnalisé** : L'onglet du navigateur affiche le logo Wiki-MasterBetter à la place du favicon du site
+- **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
 
 ### Metadata for development
 

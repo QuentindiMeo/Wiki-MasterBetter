@@ -1,4 +1,5 @@
 <div align="center" id="top">
+  <img src="./wikimasterbetter-logo.svg" alt="Wiki-MasterBetter" width="120" height="120" />
   <h2>Wiki-MasterBetter</h2>
   <p>Une collection de fonctionnalités et d'ajustements pour améliorer l'expérience utilisateur sur WikiMasters</p>
 </div>
@@ -48,34 +49,38 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🔔 Barre de navigation & Notifications
 
 - **Barre de navigation repliable** : Se replie en icônes par défaut, se déplie en douceur au survol — ou épinglez-la grâce au bouton en haut de la barre
-- **Panneau de configuration** : Un bouton en forme de roue crantée, à côté de celui d'épinglage, ouvre une modale pour activer/désactiver individuellement chaque fonctionnalité du script (tout est activé par défaut) ; les choix sont sauvegardés dans `localStorage` et s'appliquent après rechargement de la page
+- **Panneau de configuration** : Un bouton à roue crantée, à côté de celui d'épinglage, ouvre une modale pour activer/désactiver individuellement chaque fonctionnalité du script ; les choix sont sauvegardés dans votre cache de navigateur
+- **Tutoriels intégrés** : Un bouton « ❓ » juste à côté ouvre une modale avec de courtes explications pour les fonctionnalités les moins évidentes du script
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
 - **Suivi de lecture intelligent** : Cliquer sur une notification marque aussi toutes celles plus anciennes comme lues, met à jour le compteur
 - **Suffixe de titre d'onglet** : Le titre de l'onglet du navigateur reflète le contenu de la page visitée
+
+### 🎁 Pulls
+
+- **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées (gauche, droite / début, fin), Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente
+- **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent
+
+### 📦 Collection
+
+- **Actions rapides** : Un bouton pour ouvrir directement la modale d'enchère sur chaque carte
+- **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
+- **Estimations mémorisées** : Le prix d'estimation vu sur `/pulls` ou `/collection` est mémorisé et affiché à côté de la rareté de chaque carte de la collection
+- **Évaluation en masse** : Trois boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation (avec une estimation du temps restant), réévaluer toute la page, ou trier la page par prix décroissant ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours
+- **Modale de carte épurée** : Sur `/collection` et `/pulls`, les mentions légales n'apparaissent plus dans la modale d'une carte, laissant plus de place à l'essentiel
+- **Liste d'étiquettes plus lisible** : La liste des étiquettes d'une carte s'adapte à son contenu au lieu d'une largeur fixe, et se trie automatiquement par nombre de cartes décroissant dès que les compteurs sont chargés
 
 ### 💰 Marché & Enchères
 
 - **Onglet « Mes enchères » par défaut** : L'arrivée sur le marché ouvre automatiquement cet onglet
 - **Regroupement des enchères** : Bascule pour séparer « Mes enchères » en groupes « Surenchéri » / « Vous menez »
 - **Alertes d'expiration** : Une notification push se déclenche quand il reste 30 secondes sur une enchère
-- **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
-- **Liens de profil des enchérisseurs** : Un lien « @ » à côté du nom de chaque enchérisseur ouvre son profil dans un nouvel onglet
-- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues (jusqu'à 5 prix les moins chers observés) par carte, puis signale le prix courant lors des visites suivantes comme **_SNIPABLE_**, **agréable**, **tolérable**, ou **_overpriced_** par rapport à cette moyenne
+- **Liens de profil de la salle de vente** : Un lien « @ » à côté du nom de chaque enchérisseur, et du vendeur
+- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
+  - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
+  - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Les prix enregistrés sont listés dans une grille effaçable sur votre propre profil
   - Un bouton Exporter/Importer permet de copier-coller ce cache (prix de vente et estimations) vers un autre navigateur ou appareil
-
-### 📦 Collection
-
-- **Actions rapides** : Un bouton sur chaque carte de la collection ouvre la modale d'enchère
-- **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
-- **Estimations mémorisées** : Le prix d'estimation vu sur `/pulls` ou `/collection` est mémorisé et affiché à côté de la rareté de chaque carte de la collection
-- **Évaluation en masse** : Trois boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation (avec une estimation du temps restant), réévaluer toute la page, ou trier la page par prix décroissant ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours
-
-### 🎁 Pulls
-
-- **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées, Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente
-- **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent
 
 ### 👤 Profil & Amis
 

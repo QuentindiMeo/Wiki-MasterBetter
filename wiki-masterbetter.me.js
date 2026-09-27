@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.16.3
+// @version      0.17.11
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -48,10 +48,15 @@
  * * Feature ETS: on /pulls and /collection, store market value evaluation in localStorage; on /collection, append cached eval prices to each card's rarity tag
  * * Feature FCP: feature flipping is available through the button near the navbar pin; choices stored in localStorage, applies after a page reload
  * * Rule 19: single-pass rewrite of notification labels
- * * Feature EBC: on /collection, add buttons to bulk-evaluate every card (or just those missing it); cancellable via a stop button; plus a button to sort the page by descending eval price
+ * * Feature EBC: on /collection, add buttons to bulk-evaluate every card (or just those missing it); cancellable via a stop button; plus a button to sort the page by descending eval price; keeps the site's own rarity filter buttons grouped ahead of these when one is (re)inserted
  * * Rule 20: on /collection and /pulls, the card modal's tag list scrolls to follow the keyboard-focused item
  * * Feature GCP: on /global-collection, clicking a card's friend-owner username opens that friend's profile
- * * Rule 21: on /collection and /pulls, hide the legal mentions paragraph when the card modal opens
+ * * Rule 21: on /collection and /pulls, hide the legal mentions paragraph of the card modal
+ * * Rule 22: on all pages, center loading spinner; on a bid page, also rewrite and center the "Enchère introuvable" message
+ * * Rule 23: replace the site's favicon
+ * * Feature FIS: on /pulls, /friends and /guild, clear the inline style the page's own load-transition wrapper keeps ending up with
+ * * Feature TUT: a "❓" button next to the settings wheel opens a modal with short tutorials for the script's less-obvious features
+ * * Rule 24: enlarge tag list on collection page; sort the list by descending count
  */
 
 const MY_USERNAME = "onohunt";
@@ -60,7 +65,7 @@ const MY_USERNAME = "onohunt";
   "use strict";
 
   // ============================================================
-  // Rule 1a: give .card-frame.shadow-xl a max-height of 90vh
+  // Rule 1a: give div.overflow-hidden.card-frame.shadow-xl a max-height of 80vh and a width of 50vw
   // ============================================================
   function applyCardFrameMaxHeight() {
     GM_addStyle(`
@@ -428,6 +433,12 @@ const MY_USERNAME = "onohunt";
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  // ============================================================
+  // Rule 6 (cont'd): while the sidebar's fold/unfold width transition is running, keep the notification card frame
+  // (div.card-frame.shadow-xl.overflow-hidden) docked — position: fixed, right under button.relative.p-2 — by
+  // tracking its position every animation frame for the transition's duration; otherwise it would drift out of
+  // place as the sidebar (and the button it's anchored to) resizes underneath it.
+  // ============================================================
   function dockCardFrameToButton() {
     const button = document.querySelector("button.relative.p-2");
     const card = document.querySelector(
@@ -754,8 +765,9 @@ const MY_USERNAME = "onohunt";
   }
 
   // ============================================================
-  // Feature PNP: on /pulls, send a push notification when the text content of
-  // div.text-lg > span.text-[var(--color-accent)] is N or higher. Re-send every X minutes while it's full
+  // Feature PNP: on /pulls, once div.text-lg > span.text-[var(--color-accent)]'s count reaches ~69% of the max
+  // pile size (10), send a push notification on every further increase; once it hits the max, re-send every 10
+  // minutes for as long as it stays full instead of only once. Drops back below that ~69% floor resets tracking.
   // ============================================================
   function watchPullsCounterNotification() {
     const MAX_PILE_SIZE = 10;
@@ -926,7 +938,9 @@ const MY_USERNAME = "onohunt";
 
   // ============================================================
   // Feature TMB: on /marketplace, when the "Mes enchères" tab is active, add a toggle next to h1.text-2xl.gap-2 that
-  // groups div.flex-wrap's children into "Surenchéri" (first) and "Vous menez" (second), separated by an hr
+  // groups div.flex-wrap's children into "Surenchéri" (first) and "Vous menez" (second), separated by an hr. Any
+  // child whose span.rounded-lg label matches neither text (an edge case, not expected in practice) is folded into
+  // the "Vous menez" group rather than dropped or given a group of its own.
   // ============================================================
 
   // Remembers each flex-wrap's original child order for un-grouping.
@@ -1267,10 +1281,11 @@ const MY_USERNAME = "onohunt";
   // ============================================================
   // Feature AKP: on /pulls, once div.gap-4:not(.flex-col) is in the DOM, pressing ArrowLeft/ArrowRight clicks its
   // first/second button; Home/End do the same but 4 times in a row (each click re-reads the container/buttons,
-  // waiting 50ms between clicks for React to re-render). Pressing Space clicks the "Continuer" button inside main,
-  // or button.relative.gap-4 if that's what's present in the DOM instead. Pressing E, while a span "Carte" is in
-  // main, clicks img.scale-[1.8]. Pressing V does the same as E, then also clicks the first button.py-2.5 found in
-  // the document. E and V are ignored while focus is inside an <input>.
+  // waiting 50ms between clicks for React to re-render). Pressing Space, only while no modal (div.fixed.inset-0)
+  // is open, clicks the "Continuer" button inside main, or button.relative.gap-4 if that's what's present in the
+  // DOM instead. Pressing E, while a span reading "Carte" is inside main, clicks main img.scale-[1.8]. Pressing V
+  // does the same as E, then (50ms later, to let React re-render the sell button after the card click) also
+  // clicks button.py-2.5.font-semibold. E and V are ignored while focus is inside an <input>.
   // ============================================================
   function clickPullsNavButton(direction) {
     const container = document.querySelector("div.gap-4:not(.flex-col)");
@@ -1491,8 +1506,10 @@ const MY_USERNAME = "onohunt";
   }
 
   // ============================================================
-  // Feature BSP: on a bid page, once span.font-medium reads "Vendue" or "Non vendue" and there's no owned card
-  // label (span.bg-emerald-600/90), record the sale price (span.text-2xl) in localStorage, keyed by
+  // Feature BSP: on a bid page, once span.font-medium reads "Vendue" or "Non vendue" (a cancelled auction,
+  // "Annulée", is neither and is never recorded — findAuctionOutcomeSpan only matches text ending in "endue") and
+  // there's no owned card label (span.bg-emerald-600/90), record the final displayed price (span.text-2xl) —
+  // whether the auction actually sold or not, it's still useful market signal — in localStorage, keyed by
   // "observed-{card name}" (h1.flex-1). A legacy entry still stored under the untagged card name is migrated to that
   // prefixed key on read. Skips while div.animate-spin is present (the page is still loading). Each stored entry is
   // tagged as "{price}-{tag}", tag being the bid UUID's second segment, so the same bid can never be recorded twice.
@@ -1503,7 +1520,7 @@ const MY_USERNAME = "onohunt";
   const PRICE_ENTRY_REGEX = /^\d+-[0-9a-f]+$/i;
   const BSP_KEY_PREFIX = "observed-";
 
-  function getBspStorageKey(cardName) {
+  function getBspObservedStorageKey(cardName) {
     return `${BSP_KEY_PREFIX}${cardName}`;
   }
 
@@ -1523,7 +1540,7 @@ const MY_USERNAME = "onohunt";
   // Migrates a legacy untagged key (the plain card name) to the
   // prefixed key if that's still where the data lives.
   function readBspEntries(cardName) {
-    const key = getBspStorageKey(cardName);
+    const key = getBspObservedStorageKey(cardName);
     let raw = localStorage.getItem(key);
 
     if (raw === null) {
@@ -1605,7 +1622,10 @@ const MY_USERNAME = "onohunt";
       }
     }
 
-    localStorage.setItem(getBspStorageKey(cardName), JSON.stringify(prices));
+    localStorage.setItem(
+      getBspObservedStorageKey(cardName),
+      JSON.stringify(prices),
+    );
   }
 
   function watchSoldBidPriceRecording() {
@@ -1630,34 +1650,46 @@ const MY_USERNAME = "onohunt";
 
   // ============================================================
   // Feature BSP (cont'd): on a bid page, flag the card name (h1.flex-1, given "display: contents") as "EXCELLENT" when
-  // the current price (span.text-2xl) is below 80% of the average of that card's stored sold prices, "agréable" when
+  // the current price (input.min-w-0) is below 80% of the average of that card's stored sold prices, "agréable" when
   // it's between 80% and 100% of that average, "tolérable" when it's between 100% and 120%, or "excessive" when it's
-  // above 120%; unflag it as soon as none of those is true. When this bid's own price is the only entry stored for
-  // that card (a cache no-hit that this bid's end just filled), that lone entry trivially equals the current price
-  // and would otherwise misleadingly compute as "tolérable" — flag it "NEW ENTRY" (white) instead, since there's no
-  // real history yet to compare against. Skips while div.animate-spin is present (the page is still loading).
+  // above 120%; unflag it as soon as none of those is true. Below 50% of that average, with at least 5 stored sold
+  // prices backing it — i.e. that card's cache is at its full MAX_STORED_PRICES capacity, so the average is
+  // actually meaningful — it's flagged "prix extraordinaire" instead of "EXCELLENT". When this bid's own price is
+  // the only entry stored for that card (a cache no-hit that this bid's
+  // end just filled), that lone entry trivially equals the current price and would otherwise misleadingly compute
+  // as "tolérable" — flag it "NEW ENTRY" (white) instead, since there's no real history yet to compare against.
+  // Skips while div.animate-spin is present (the page is still loading).
   //
   // Feature BSP (cont'd) — seller's own sale: when the auction just sold ("Vendue") and the seller (p.text-sm.mt-1's
   // username) is MY_USERNAME, the tag instead grades how good a SALE it was — the mirror image of the buyer-facing
-  // grading: a price above 120% of the stored average is an "excellente" sale, above 100% "agréable", above 80%
-  // "tolérable", below that "décevante". With no stored average yet (this seller's sales are never themselves logged,
-  // see recordSoldBidPrice), it falls back to the same "NEW ENTRY" (white) tag, worded for a sale instead.
+  // grading: a price above 120% of the reference value is an "excellente" sale, above 100% "agréable", above 80%
+  // "tolérable", below that "décevante". The reference here is the ETS eval price (localStorage "eval-{name}"),
+  // not the "observed-" BSP average: recordSoldBidPrice never logs the seller's own sales there (see its own
+  // comment), so that cache is essentially always empty for a card you just sold. With no eval price cached
+  // either, it falls back to the same "NEW ENTRY" (white) tag, worded for a sale instead.
   //
   // Feature BSP (cont'd) — buyer's own win: when the auction just sold ("Vendue") and the owned card label
   // (span.bg-emerald-600/90) is present — meaning this viewer is the one who just won it — the usual buyer-facing
   // tag also appends the reference average it was compared against, as "(obj. {value})"
+  //
+  // Feature BSP (cont'd) — cancelled auction: when any span.font-medium reads "Annulée", no tag is shown at all,
+  // buyer- or seller-facing — a cancelled auction has no real sale or final bid worth grading or comparing to.
   // ============================================================
+  const EXTRAORDINARY_THRESHOLD_RATIO = 0.5;
+  const EXTRAORDINARY_MIN_OBSERVED_ENTRIES = 5;
   const EXCELLENT_THRESHOLD_RATIO = 0.8;
   const TOLERABLE_THRESHOLD_RATIO = 1.0;
   const EXCESSIVE_THRESHOLD_RATIO = 1.2;
   const BADGE_CLASSES = [
+    "wm-extraordinary",
     "wm-excellent",
     "wm-agreeable",
     "wm-tolerable",
     "wm-excessive",
     "wm-new-entry",
   ];
-  const STATUS_LABELS = {
+  const BUY_STATUS_LABELS = {
+    extraordinary: "prix extraordinaire",
     excellent: "prix excellent",
     agreeable: "prix agréable",
     tolerable: "prix tolérable",
@@ -1698,26 +1730,57 @@ const MY_USERNAME = "onohunt";
       ? nameEl.nextElementSibling
       : null;
 
+    // A cancelled auction ("Annulée") isn't a real outcome to price against — no sale, no legitimate final bid —
+    // so no tag at all, buyer- or seller-facing. findAuctionOutcomeSpan only matches text ending in "endue" and
+    // wouldn't catch this anyway, hence the separate check here.
+    const isCancelled = Array.from(
+      document.querySelectorAll("span.font-medium"),
+    ).some((span) => span.textContent.trim() === "Annulée");
+    if (isCancelled) {
+      existing?.remove();
+      return;
+    }
+
     const cardName = nameEl.textContent.trim();
-    const priceText = document
-      .querySelector("span.text-2xl")
-      ?.textContent.replace(/\s/g, "");
-    const price = parseInt(priceText, 10);
+    const isSold = findAuctionOutcomeSpan()?.textContent.trim() === "Vendue";
+
+    // Once an auction is terminated — sold OR "Non vendue" — the bid input is gone (bidding's over either way),
+    // so branching on isSold here is wrong: a "Non vendue" auction has no input.min-w-0 either. Prefer the input
+    // when it's actually there (a live auction); otherwise fall back to the final price display, same source
+    // recordSoldBidPrice uses.
+    const priceInput = document.querySelector("input.min-w-0");
+    let price;
+    if (priceInput) {
+      price = parseInt(priceInput.value.replace(/\s/g, ""), 10);
+    } else {
+      const priceText = document
+        .querySelector("span.text-2xl")
+        ?.textContent.replace(/\s/g, "");
+      price = parseInt(priceText, 10);
+    }
 
     if (!cardName || Number.isNaN(price)) {
       existing?.remove();
       return;
     }
 
-    const isSold = findAuctionOutcomeSpan()?.textContent.trim() === "Vendue";
     const isMySoldAuction =
       isSold && getBidPageSellerUsername() === MY_USERNAME;
     const isMyWonAuction =
       isSold && document.querySelector("span.bg-emerald-600\\/90") !== null;
 
-    const stored = readBspEntries(cardName);
+    // Your own sale is graded against the ETS eval price, not the "observed-" BSP cache: recordSoldBidPrice
+    // deliberately never logs your own sales there (to keep the market-observed average clean), so that cache
+    // is essentially always empty for a card you just sold — the eval price is what's actually available.
+    let referenceValue;
+    let observedEntryCount = 0;
 
-    if (!isMySoldAuction) {
+    if (isMySoldAuction) {
+      referenceValue = getCardEvalValueByName(cardName);
+    } else {
+      const stored = readBspEntries(cardName);
+      observedEntryCount = stored.length;
+
       const currentTag = getBidTag();
       const isFreshCacheEntry =
         currentTag !== null &&
@@ -1729,14 +1792,14 @@ const MY_USERNAME = "onohunt";
         setBadge(nameEl, existing, "wm-new-entry", "désormais observé");
         return;
       }
+
+      referenceValue = stored.length
+        ? stored.reduce((sum, entry) => sum + parseInt(entry, 10), 0) /
+          stored.length
+        : null;
     }
 
-    const average = stored.length
-      ? stored.reduce((sum, entry) => sum + parseInt(entry, 10), 0) /
-        stored.length
-      : null;
-
-    if (average === null) {
+    if (referenceValue === null) {
       if (isMySoldAuction) {
         setBadge(nameEl, existing, "wm-new-entry", "vente non comparable");
         return;
@@ -1748,26 +1811,33 @@ const MY_USERNAME = "onohunt";
 
     let status;
     if (isMySoldAuction) {
-      if (price > average * EXCESSIVE_THRESHOLD_RATIO) status = "excellent";
-      else if (price > average * TOLERABLE_THRESHOLD_RATIO)
+      if (price > referenceValue * EXCESSIVE_THRESHOLD_RATIO)
+        status = "excellent";
+      else if (price > referenceValue * TOLERABLE_THRESHOLD_RATIO)
         status = "agreeable";
-      else if (price > average * EXCELLENT_THRESHOLD_RATIO)
+      else if (price > referenceValue * EXCELLENT_THRESHOLD_RATIO)
         status = "tolerable";
       else status = "excessive";
     } else {
-      if (price < average * EXCELLENT_THRESHOLD_RATIO) status = "excellent";
-      else if (price < average * TOLERABLE_THRESHOLD_RATIO)
+      if (
+        price < referenceValue * EXTRAORDINARY_THRESHOLD_RATIO &&
+        observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES
+      )
+        status = "extraordinary";
+      else if (price < referenceValue * EXCELLENT_THRESHOLD_RATIO)
+        status = "excellent";
+      else if (price < referenceValue * TOLERABLE_THRESHOLD_RATIO)
         status = "agreeable";
-      else if (price < average * EXCESSIVE_THRESHOLD_RATIO)
+      else if (price < referenceValue * EXCESSIVE_THRESHOLD_RATIO)
         status = "tolerable";
       else status = "excessive";
     }
 
     let label = isMySoldAuction
       ? SALE_STATUS_LABELS[status]
-      : STATUS_LABELS[status];
+      : BUY_STATUS_LABELS[status];
     if (isMyWonAuction) {
-      label += ` (obj. ${Math.round(average)})`;
+      label += ` (obj. ${Math.round(referenceValue)})`;
     }
     setBadge(nameEl, existing, `wm-${status}`, label);
   }
@@ -1777,6 +1847,7 @@ const MY_USERNAME = "onohunt";
       h1.flex-1 {
         display: contents;
       }
+      .wm-extraordinary,
       .wm-excellent,
       .wm-agreeable,
       .wm-tolerable,
@@ -1787,6 +1858,10 @@ const MY_USERNAME = "onohunt";
         font-size: 0.85rem;
         border-radius: 0.375rem;
         padding: 0.1rem 0.4rem;
+      }
+      .wm-extraordinary {
+        color: #22d3ee;
+        background-color: rgba(34, 211, 238, 0.15);
       }
       .wm-excellent {
         color: #d8b4fe;
@@ -1864,7 +1939,7 @@ const MY_USERNAME = "onohunt";
 
       if (!isTagged) {
         // Legacy untagged key — migrate it to the prefixed key.
-        localStorage.setItem(getBspStorageKey(cardName), raw);
+        localStorage.setItem(getBspObservedStorageKey(cardName), raw);
         localStorage.removeItem(key);
       }
 
@@ -1901,7 +1976,7 @@ const MY_USERNAME = "onohunt";
 
       if (!isValidBspPriceArray(value)) return;
 
-      localStorage.setItem(getBspStorageKey(key), raw);
+      localStorage.setItem(getBspObservedStorageKey(key), raw);
       localStorage.removeItem(key);
       migratedCount++;
     });
@@ -2053,7 +2128,7 @@ const MY_USERNAME = "onohunt";
       pricesCell.appendChild(pricesListCell);
 
       clearBtn.addEventListener("click", () => {
-        localStorage.removeItem(getBspStorageKey(cardName));
+        localStorage.removeItem(getBspObservedStorageKey(cardName));
         clearBtn.remove();
         entryEl.classList.add("wm-bsp-dump-entry-cleared");
       });
@@ -2071,7 +2146,7 @@ const MY_USERNAME = "onohunt";
     dump.appendChild(actionsRow);
 
     const totalCacheSizeBytes = entries.reduce((sum, [cardName, prices]) => {
-      const key = getBspStorageKey(cardName);
+      const key = getBspObservedStorageKey(cardName);
       const raw = JSON.stringify(prices);
       return sum + (key.length + raw.length) * 2;
     }, 0);
@@ -2085,7 +2160,7 @@ const MY_USERNAME = "onohunt";
 
     clearCacheBtn.addEventListener("click", () => {
       rows.forEach(({ cardName, entryEl, clearBtn }) => {
-        localStorage.removeItem(getBspStorageKey(cardName));
+        localStorage.removeItem(getBspObservedStorageKey(cardName));
         clearBtn.remove();
         entryEl.classList.add("wm-bsp-dump-entry-cleared");
       });
@@ -2246,7 +2321,9 @@ const MY_USERNAME = "onohunt";
 
   // ============================================================
   // Feature ETS: on /pulls and /collection, once span.tabular-nums appears, store its value in localStorage
-  // under "eval-{name}", name being the text content of p.truncate
+  // under "eval-{name}", name being the text content of p.truncate. If it's missing but div.mb-5 p.mt-1\.5 reads
+  // "Aucune vente" (no sales recorded yet for that card), stores the "?" placeholder (UNKNOWN_EVAL_VALUE) instead
+  // of leaving that card unrecorded.
   // ============================================================
   const UNKNOWN_EVAL_VALUE = "?";
 
@@ -2297,7 +2374,10 @@ const MY_USERNAME = "onohunt";
 
   // ============================================================
   // Feature ETS (cont'd): on /collection, whenever the cards grid (div.gap-3.justify-center) changes, append each
-  // card's cached eval price (Feature ETS, keyed "eval-{name}") to its rarity tag (div.top-2.left-2), as "{rarity} ({eval})"
+  // card's cached eval price (Feature ETS, keyed "eval-{name}") to its rarity tag (div.top-2.left-2), as
+  // "{rarity} ({eval})". The eval value is reformatted first: below 15, it's replaced outright with "💩"; above
+  // 1000, it's abbreviated to "{X,X} K" (French decimal comma); otherwise it's shown as stored, including the "?"
+  // placeholder for a card with no recorded sales.
   // ============================================================
   const WORTHLESS_THRESHOLD = 15;
   function formatEvalValue(rawValue) {
@@ -2398,7 +2478,8 @@ const MY_USERNAME = "onohunt";
 
   // ============================================================
   // Rule 18: on /collection and /pulls, when the card modal (div.card-frame.p-6) opens, focus input.px-3 after 250ms.
-  // Also, on arrival on /collection, focus input.rounded-lg as soon as it enters the DOM
+  // Also, on arrival on /collection, focus input.rounded-lg as soon as it enters the DOM. Also suppresses the
+  // focus outline on nav a[href="/pulls"], left lingering from the click that navigated there.
   // ============================================================
   function focusCollectionModalInput() {
     if (
@@ -2447,10 +2528,12 @@ const MY_USERNAME = "onohunt";
   // ============================================================
   // Feature FCP: a settings-wheel button, visually cloning .wm-fold-toggle, sits next to the sidebar's fold/pin toggle
   // (nav h1's closest nav). Clicking it opens a modal listing every rule/feature documented above, each with its own
-  // checkbox; unchecking one disables it. The choice is stored in localStorage under "wm-feature-flags" (default:
-  // everything enabled) and, since most rules only wire themselves up once at page load, applies after the next
-  // reload — hence the "Recharger la page" button in the modal's footer. Styled independently of .wm-fold-toggle's own
-  // stylesheet (injected by rule 6) so this button and modal always work even when every other rule/feature is disabled.
+  // checkbox; unchecking one disables it. A pill next to the hint text toggles every checkbox at once — reading
+  // "Tout désélectionner" when all are checked, "Tout sélectionner" otherwise, and flipping to match whichever it
+  // said. The choice is stored in localStorage under "wm-feature-flags" (default: everything enabled) and, since
+  // most rules only wire themselves up once at page load, applies after the next reload — hence the "Recharger la
+  // page" button in the modal's footer. Styled independently of .wm-fold-toggle's own stylesheet (injected by rule
+  // 6) so this button and modal always work even when every other rule/feature is disabled.
   // ============================================================
   const FEATURE_FLAGS_KEY = "wm-feature-flags";
 
@@ -2495,7 +2578,7 @@ const MY_USERNAME = "onohunt";
     { id: "feature-lbd", label: "Lancer l'enchère avec la touche Entrée" },
     {
       id: "rule-14",
-      label: "Encadrer le nom de carte des notifs de liste de souhaits",
+      label: "Encadrer le nom de carte des notifications de liste de souhaits",
     },
     { id: "rule-15", label: "Relabelliser le bouton retour d'une enchère" },
     { id: "feature-plb", label: "Liens de profil sur la page d'enchère" },
@@ -2534,6 +2617,20 @@ const MY_USERNAME = "onohunt";
     {
       id: "rule-21",
       label: "Masquer les mentions légales de la modale de carte",
+    },
+    {
+      id: "rule-22",
+      label: "Centrer le chargement / « Enchère introuvable » dans la page",
+    },
+    { id: "rule-23", label: "Remplacer le favicon du site" },
+    {
+      id: "feature-fis",
+      label:
+        "Corriger le style de la transition de page (/pulls, /friends, /guild)",
+    },
+    {
+      id: "rule-24",
+      label: "Ajuster la taille de la liste d'étiquettes et la trier par usage",
     },
   ];
 
@@ -2581,13 +2678,41 @@ const MY_USERNAME = "onohunt";
 
     header.append(title, closeBtn);
 
+    const hintRow = document.createElement("div");
+    hintRow.className = "wm-settings-hint-row";
+
     const hint = document.createElement("p");
     hint.className = "wm-settings-hint";
     hint.textContent =
       "Tout est activé par défaut. Rechargez la page pour appliquer vos changements.";
 
+    const selectAllBtn = document.createElement("button");
+    selectAllBtn.type = "button";
+    selectAllBtn.className = "wm-settings-select-all";
+
+    hintRow.append(hint, selectAllBtn);
+
     const list = document.createElement("div");
     list.className = "wm-settings-list";
+
+    const checkboxes = [];
+
+    const updateSelectAllLabel = () => {
+      const allChecked = checkboxes.every((checkbox) => checkbox.checked);
+      selectAllBtn.textContent = allChecked
+        ? "Tout désélectionner"
+        : "Tout sélectionner";
+    };
+
+    selectAllBtn.addEventListener("click", () => {
+      const next = !checkboxes.every((checkbox) => checkbox.checked);
+      checkboxes.forEach((checkbox) => {
+        checkbox.checked = next;
+        flags[checkbox.dataset.wmFeatureId] = next;
+      });
+      writeFeatureFlags(flags);
+      updateSelectAllLabel();
+    });
 
     FEATURE_REGISTRY.forEach(({ id, label }) => {
       const item = document.createElement("label");
@@ -2596,10 +2721,13 @@ const MY_USERNAME = "onohunt";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = flags[id];
+      checkbox.dataset.wmFeatureId = id;
       checkbox.addEventListener("change", () => {
         flags[id] = checkbox.checked;
         writeFeatureFlags(flags);
+        updateSelectAllLabel();
       });
+      checkboxes.push(checkbox);
 
       const idTitle = document.createElement("h3");
       idTitle.className = "wm-settings-item-title";
@@ -2617,6 +2745,8 @@ const MY_USERNAME = "onohunt";
       list.appendChild(item);
     });
 
+    updateSelectAllLabel();
+
     const footer = document.createElement("div");
     footer.className = "wm-settings-footer";
 
@@ -2628,7 +2758,7 @@ const MY_USERNAME = "onohunt";
 
     footer.appendChild(reloadBtn);
 
-    modal.append(header, hint, list, footer);
+    modal.append(header, hintRow, list, footer);
     overlay.appendChild(modal);
 
     const onKeydown = (event) => {
@@ -2757,10 +2887,33 @@ const MY_USERNAME = "onohunt";
       .wm-settings-close:hover {
         opacity: 1;
       }
+      .wm-settings-hint-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin: 0 0 0.75rem 0;
+      }
       .wm-settings-hint {
         font-size: 0.85rem;
         opacity: 0.7;
-        margin: 0 0 0.75rem 0;
+        margin: 0;
+      }
+      .wm-settings-select-all {
+        flex-shrink: 0;
+        padding: 0.3rem 0.75rem;
+        border-radius: 999px;
+        border: 1px solid var(--color-accent);
+        background: transparent;
+        color: var(--color-accent);
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+      .wm-settings-select-all:hover {
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
       }
       .wm-settings-list {
         display: grid;
@@ -2827,6 +2980,193 @@ const MY_USERNAME = "onohunt";
   }
 
   // ============================================================
+  // Feature TUT: a "❓" button, right next to the settings wheel (same row, same .wm-fold-toggle styling), opens
+  // a modal with short explanations for the script's features that aren't self-explanatory from their UI alone —
+  // keyboard shortcuts, toggles, and anything with a non-obvious trigger. Always on, like the settings button
+  // itself: it's documentation, not a behavior to disable. Reuses the settings modal's overlay/header/close
+  // styling (.wm-settings-*) so it looks consistent, with its own single-column list style for readable prose.
+  // ============================================================
+  const TUTORIAL_ENTRIES = [
+    {
+      title: "La barre de menu à gauche",
+      text: "Elle se réduit en petites icônes. Passez la souris dessus pour la voir en entier, ou cliquez sur 📌 pour qu'elle reste toujours ouverte.",
+    },
+    {
+      title: "Le bouton ⚙️ (réglages)",
+      text: "Il permet d'activer ou de désactiver chaque fonctionnalité de ce script. Il faut recharger la page après avoir changé quelque chose.",
+    },
+    {
+      title: "Trier ses enchères",
+      text: "Dans l'onglet « Mes enchères » du marché, un bouton sépare vos enchères en deux groupes : celles où quelqu'un vous a dépassé, et celles où vous êtes toujours en tête.",
+    },
+    {
+      title: "Être prévenu par notification",
+      text: "Si vous autorisez les notifications du navigateur, le script vous prévient quand vous avez beaucoup de paquets à ouvrir, ou juste avant la fin d'une de vos enchères.",
+    },
+    {
+      title: "Ouvrir ses paquets au clavier",
+      text: "En train d'ouvrir des paquets sur /pulls ? Utilisez les flèches pour changer de carte, Espace pour ouvrir ou fermer le paquet, E pour voir une carte en grand, et V pour la mettre en vente.",
+    },
+    {
+      title: "Enchérir plus vite",
+      text: "Dans votre collection, tapez une mise puis appuyez sur Entrée : l'enchère démarre directement, sans avoir à cliquer sur un bouton.",
+    },
+    {
+      title: "Sélectionner ses cartes sans étiquette",
+      text: "Dans votre collection, un bouton sélectionne en un clic toutes les cartes qui n'ont pas encore d'étiquette.",
+    },
+    {
+      title: "Savoir si un prix est bon",
+      text: "Sur une page d'enchère, une petite étiquette de couleur vous dit si le prix est intéressant ou non, en le comparant aux ventes précédentes de cette carte. Si c'est vous qui vendez, elle vous dit à la place si votre vente est bonne.",
+    },
+    {
+      title: "Le prix estimé d'une carte",
+      text: "Une fois qu'une carte a été estimée sur /pulls ou dans la collection, son prix est retenu et réaffiché à côté d'elle. Dans la collection, des boutons permettent d'estimer plusieurs cartes d'un coup, ou de les trier du prix le plus élevé au plus bas.",
+    },
+    {
+      title: "Réclamer ses récompenses",
+      text: "Sur la page des hauts faits, un bouton récupère en une seule fois toutes les récompenses en attente.",
+    },
+    {
+      title: "Accéder à un profil en un clic",
+      text: "Un petit « @ » à côté d'un pseudo (sur une page d'enchère, ou à côté du nom d'un ami dans la liste de souhaits) ouvre directement son profil.",
+    },
+  ];
+
+  function buildTutorialModal() {
+    const overlay = document.createElement("div");
+    overlay.className = "wm-settings-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "wm-settings-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Tutoriels de Wiki-MasterBetter");
+
+    const header = document.createElement("div");
+    header.className = "wm-settings-header";
+
+    const title = document.createElement("h2");
+    title.className = "wm-settings-title";
+    title.textContent = "❓ Tutoriels";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "wm-settings-close";
+    closeBtn.setAttribute("aria-label", "Fermer");
+    closeBtn.textContent = "✕";
+
+    header.append(title, closeBtn);
+
+    const hint = document.createElement("p");
+    hint.className = "wm-settings-hint";
+    hint.textContent =
+      "Un petit guide pour les fonctionnalités les moins évidentes du script.";
+
+    const list = document.createElement("div");
+    list.className = "wm-tutorial-list";
+
+    TUTORIAL_ENTRIES.forEach(({ title: entryTitle, text }) => {
+      const item = document.createElement("div");
+      item.className = "wm-tutorial-item";
+
+      const itemTitle = document.createElement("h3");
+      itemTitle.className = "wm-tutorial-item-title";
+      itemTitle.textContent = entryTitle;
+
+      const itemText = document.createElement("p");
+      itemText.className = "wm-tutorial-item-text";
+      itemText.textContent = text;
+
+      item.append(itemTitle, itemText);
+      list.appendChild(item);
+    });
+
+    modal.append(header, hint, list);
+    overlay.appendChild(modal);
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeydown);
+    };
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", onKeydown);
+
+    return overlay;
+  }
+
+  function setupTutorialButton() {
+    const nav = document.querySelector("nav h1")?.closest("nav");
+    if (!nav) return;
+
+    const row = ensureToggleRow(nav);
+    if (row.querySelector(":scope > .wm-tutorial-toggle")) return;
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "wm-fold-toggle wm-tutorial-toggle";
+    toggle.title = "Tutoriels des fonctionnalités de Wiki-MasterBetter";
+    toggle.setAttribute("aria-haspopup", "dialog");
+
+    const icon = document.createElement("span");
+    icon.className = "wm-fold-toggle-icon";
+    icon.textContent = "❓";
+    toggle.appendChild(icon);
+
+    toggle.addEventListener("click", () => {
+      if (document.querySelector(".wm-settings-overlay")) return;
+      document.body.appendChild(buildTutorialModal());
+    });
+
+    const settingsToggle = row.querySelector(":scope > .wm-settings-toggle");
+    if (settingsToggle) {
+      settingsToggle.after(toggle);
+    } else {
+      row.insertBefore(toggle, row.firstChild);
+    }
+  }
+
+  function watchTutorialButton() {
+    GM_addStyle(`
+      .wm-tutorial-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        overflow-y: auto;
+        padding-right: 0.25rem;
+      }
+      .wm-tutorial-item {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid rgba(128, 128, 128, 0.4);
+        border-radius: 0.5rem;
+      }
+      .wm-tutorial-item-title {
+        margin: 0 0 0.25rem 0;
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+      .wm-tutorial-item-text {
+        margin: 0;
+        font-size: 0.85rem;
+        opacity: 0.85;
+        line-height: 1.4;
+      }
+    `);
+
+    setupTutorialButton();
+
+    const observer = new MutationObserver(() => setupTutorialButton());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Rule 19: a single pass over every <p> in the notification display
   // (div.card-frame.shadow-xl.overflow-hidden) rewrites whichever of these three notification types it matches:
   //   - the fixed phrase "Votre carte vous est rendue." — with no name in it, that phrase is only how this
@@ -2835,7 +3175,8 @@ const MY_USERNAME = "onohunt";
   //     « » guillemets). Rewritten to "Personne n'a enchéri pour votre carte « {name} »"
   //   - an outbid refund notification, "{username} a misé {bid} wikibidous sur « {card} ». Vos {refund}
   //     wikibidous vous ont été remboursés.", rewritten to "Enchère pour « {card} » : {bid} > {refund}.
-  //     Réenchérissez pour gagner la carte.", with the "{bid}" segment in a gentle yellow
+  //     Renchérissez pour gagner la carte.", with the "{bid}" segment in a gentle yellow; {card} itself is
+  //     truncated to 42 characters (plus "...") if longer
   //   - "Votre carte « {card} » a été vendue pour {amount} wikibidous." rewritten to "+{amount} wb pour
   //     avoir vendu « {card} »" (green); "Vous avez remporté « {card} » pour {amount} wikibidous." rewritten to
   //     "-{amount} wb pour avoir acheté « {card} »" (gentle red)
@@ -2882,7 +3223,7 @@ const MY_USERNAME = "onohunt";
     p.append(
       `Enchère pour « ${formattedCardName} » : `,
       bidComparisonSpan,
-      `. Réenchérissez pour gagner la carte.`,
+      `. Renchérissez pour gagner la carte.`,
     );
     return true;
   }
@@ -3055,12 +3396,16 @@ const MY_USERNAME = "onohunt";
   // ============================================================
   // Feature EBC: on /collection, add three buttons as the last children of div.flex-wrap.gap-2 (rarity filter
   // buttons): "Réévaluer toute la page" (re-evaluates every card), "Évaluer les cartes non évaluées" (only cards
-  // whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker), and "Ordonner la page
-  // par prix décroissant" (reorders the grid by each card's raw eval value, unknowns last). The two evaluation
+  // whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker — hidden outright once
+  // that count reaches 0 on the current page), and "Ordonner la page par prix décroissant" (reorders the grid by
+  // each card's raw eval value, unknowns last). The two evaluation
   // buttons show a fixed "Arrêter la reconnaissance" button and, for each targeted card, click its
   // .wm-quick-action button, wait for Feature ETS to record a fresh value under its "eval-{name}" localStorage
   // key, then press Escape to close the modal before moving to the next card. The stop button cancels the run
-  // after the current card; the two evaluation buttons disable each other while either is running
+  // after the current card; the two evaluation buttons disable each other while either is running. Whenever a
+  // native rarity filter button (button.px-3.py-1.transition-colors) shows up after "Réévaluer toute la page" —
+  // e.g. a new rarity tier's filter button getting appended past our own controls — it's moved back in front of
+  // it, keeping the site's own filter buttons grouped together ahead of ours.
   // ============================================================
   function getAllCollectionCards() {
     const grid = document.querySelector("div.gap-3.justify-center");
@@ -3135,16 +3480,21 @@ const MY_USERNAME = "onohunt";
   }
 
   // Measured: evaluating 50 cards takes about 68 seconds
-  const EVALUATION_SECONDS_PER_CARD = 68 / 50;
+  const EVALUATION_SECONDS_PER_CARD__BEST = 68 / 50;
+  const EVALUATION_SECONDS_PER_CARD__WORST = 237 / 50;
 
   function updateEvaluateUnratedButtonLabel(btn) {
     if (btn.disabled) return;
 
     const cards = getUnevaluatedCollectionCards();
+
+    // Nothing left to evaluate on this page — no point offering the button at all.
+    btn.style.display = cards !== null && cards.length === 0 ? "none" : "";
+
     const label =
       cards === null
         ? "Évaluer les cartes non évaluées (chargement...)"
-        : `Évaluer les cartes non évaluées (≃ ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD)} s)`;
+        : `Évaluer les cartes non évaluées (${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__BEST)} – ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__WORST)} s)`;
 
     if (btn.textContent === label) return;
     btn.textContent = label;
@@ -3208,15 +3558,19 @@ const MY_USERNAME = "onohunt";
   // Reads a card's raw eval value straight from localStorage (not its
   // formatted rarity-tag appendix, which loses precision to "💩"/"X K"),
   // returning null when it's missing or the "?" unknown marker
-  function getCardEvalValue(card) {
-    const cardName = card.querySelector("h3")?.textContent.trim();
-    if (!cardName) return null;
-
+  function getCardEvalValueByName(cardName) {
     const raw = localStorage.getItem(`eval-${cardName}`);
     if (raw === null || raw === UNKNOWN_EVAL_VALUE) return null;
 
     const num = parseFloat(raw.replace(/\s/g, "").replace(",", "."));
     return Number.isNaN(num) ? null : num;
+  }
+
+  function getCardEvalValue(card) {
+    const cardName = card.querySelector("h3")?.textContent.trim();
+    if (!cardName) return null;
+
+    return getCardEvalValueByName(cardName);
   }
 
   function sortCollectionByPriceDescending() {
@@ -3290,6 +3644,26 @@ const MY_USERNAME = "onohunt";
     }
 
     updateEvaluateUnratedButtonLabel(unratedBtn);
+
+    // The site's own rarity filter buttons (button.px-3.py-1.transition-colors) can be (re)inserted after ours —
+    // e.g. a new rarity tier showing up appends its filter button at the end of filterBar, past our controls.
+    // Move any such button back to where it belongs: grouped with the other filter buttons, ahead of "Réévaluer".
+    const reevaluateBtn = filterBar.querySelector(
+      ":scope > .wm-eval-reevaluate-all",
+    );
+    if (reevaluateBtn) {
+      Array.from(
+        filterBar.querySelectorAll(
+          ":scope > button.px-3.py-1.transition-colors",
+        ),
+      )
+        .filter(
+          (btn) =>
+            reevaluateBtn.compareDocumentPosition(btn) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        )
+        .forEach((btn) => filterBar.insertBefore(btn, reevaluateBtn));
+    }
   }
 
   function watchEvaluateUnratedButton() {
@@ -3371,7 +3745,9 @@ const MY_USERNAME = "onohunt";
   // p.leading-snug.text-[10px] (the legal mentions paragraph). Hidden via "display: none" rather than removed:
   // React still owns and re-renders this node, so actually detaching it (Node.remove()) races React's own
   // reconciliation and can throw "removeChild: the node to be removed is not a child of this node" the moment
-  // React tries to update/unmount it too — the same class of race already called out in Feature TMB.
+  // React tries to update/unmount it too — the same class of race already called out in Feature TMB. Also, with
+  // that paragraph gone, a.inline-flex (the link that used to sit right below it) is left with the gap that
+  // paragraph's own margin used to provide — replace it with "m-0 mt-5" so its spacing doesn't collapse.
   // ============================================================
   function hideCardModalLegalMentions() {
     if (
@@ -3390,6 +3766,9 @@ const MY_USERNAME = "onohunt";
         "p.leading-snug.text-\\[10px\\]",
       );
       if (legalMentions) legalMentions.style.display = "none";
+
+      const link = modal.querySelector("a.inline-flex");
+      if (link) link.classList.add("m-0", "mt-5");
     }, 250);
   }
 
@@ -3397,6 +3776,218 @@ const MY_USERNAME = "onohunt";
     hideCardModalLegalMentions();
 
     const observer = new MutationObserver(() => hideCardModalLegalMentions());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 22: on all pages, whenever div.animate-spin exists anywhere in the DOM, position it at the exact center
+  // of <main>. Also, on a bid page (/marketplace/{UUID}) specifically, whenever a div contains the text "Enchère
+  // introuvable", rewrite it (once) to add a line break and a hint to wait a few seconds or refresh the page, and
+  // center that div too. That message search used to run unscoped on every page — findInnermostDivContainingText
+  // scans the whole document — which meant a stale "Enchère introuvable" fragment left mounted elsewhere by the site's
+  // own router (e.g. during a page transition) could get rewritten/repositioned on top of totally unrelated pages,
+  // like /pulls. Either target is skipped if it carries the animate-fade-in-up class (the site's own page-entrance
+  // wrapper, which also picks up animate-spin during the /pulls loading transition): forcing it into position:absolute
+  // pulls it out of the layout it's meant to animate within.
+  // ============================================================
+  const AUCTION_NOT_FOUND_PHRASE = "Enchère introuvable";
+
+  function centerElementInMain(el) {
+    if (el.classList.contains("animate-fade-in-up")) return;
+
+    // Centering via `transform: translate(-50%, -50%)` would collide with
+    // div.animate-spin's own `transform: rotate(...)` keyframe animation: both
+    // write to the same `transform` property, so the browser interpolates
+    // from our translate to the keyframe's rotate instead of just spinning in
+    // place, dragging the element away from center over each animation cycle.
+    // Margins avoid touching `transform` altogether.
+    el.style.position = "absolute";
+    el.style.top = "50%";
+    el.style.left = "50%";
+    el.style.marginTop = `${-el.offsetHeight / 2}px`;
+    el.style.marginLeft = `${-el.offsetWidth / 2}px`;
+  }
+
+  function findInnermostDivContainingText(text) {
+    const matches = Array.from(document.querySelectorAll("div")).filter((div) =>
+      div.textContent.includes(text),
+    );
+    return matches.find(
+      (div) => !matches.some((other) => other !== div && div.contains(other)),
+    );
+  }
+
+  function centerSpinnerAndAuctionNotFoundInMain() {
+    const main = document.querySelector("main");
+    if (!main) return;
+
+    document
+      .querySelectorAll("div.animate-spin")
+      .forEach((spinner) => centerElementInMain(spinner));
+
+    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
+
+    const auctionNotFoundTextDiv = findInnermostDivContainingText(
+      AUCTION_NOT_FOUND_PHRASE,
+    );
+    if (auctionNotFoundTextDiv) {
+      centerElementInMain(auctionNotFoundTextDiv);
+
+      if (auctionNotFoundTextDiv.dataset.wmReloadHintAdded !== "true") {
+        auctionNotFoundTextDiv.dataset.wmReloadHintAdded = "true";
+        auctionNotFoundTextDiv.textContent = "";
+        auctionNotFoundTextDiv.append(
+          "Enchère introuvable.",
+          document.createElement("br"),
+          "Attendez quelques secondes ou rafraîchissez la page.",
+        );
+      }
+    }
+  }
+
+  function watchSpinnerAndAuctionNotFoundCentering() {
+    GM_addStyle(`
+      main {
+        position: relative;
+      }
+    `);
+
+    centerSpinnerAndAuctionNotFoundInMain();
+
+    const observer = new MutationObserver(() =>
+      centerSpinnerAndAuctionNotFoundInMain(),
+    );
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Feature FIS: on /pulls (div.text-center.animate-fade-in-up), /friends (div.flex.animate-fade-in-up), and
+  // /guild (div.animate-fade-in-up.justify-between) — same wrapper class, different companion class per page —
+  // the page's own load-transition wrapper keeps ending up with an inline style — not one this script
+  // deliberately sets on it (Rule 22's own centering logic explicitly skips this class) — so this clears whatever
+  // got set on it as soon as it shows up, rather than it drifting out of its normal layout flow. Split out from
+  // Rule 22 once the same drift showed up on /friends (then /guild) too: unlike Rule 22, this fix isn't "on all
+  // pages" and doesn't belong under its numbering.
+  // ============================================================
+  function clearFadeInUpInlineStyle() {
+    if (
+      !window.location.pathname.startsWith("/pulls") &&
+      !window.location.pathname.startsWith("/friends") &&
+      !window.location.pathname.startsWith("/guild")
+    )
+      return;
+
+    document
+      .querySelectorAll("div.animate-fade-in-up")
+      .forEach((el) => el.removeAttribute("style"));
+  }
+
+  function watchFadeInUpInlineStyleCleanup() {
+    clearFadeInUpInlineStyle();
+
+    const observer = new MutationObserver(() => clearFadeInUpInlineStyle());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 23: replace every link[rel~="icon"] in <head> with a custom favicon. The site keeps re-asserting its own
+  // favicon (on load and on route changes), so a one-shot apply gets silently overwritten — this observes <head>
+  // and reapplies FAVICON_URI whenever it drifts. Guarded by an equality check so our own href writes (which are
+  // themselves mutations) don't retrigger the observer in a loop.
+  // ============================================================
+  // Embedded as a base64 data URI (from wikimasterbetter-logo.svg) rather than a file:// path: browsers
+  // block loading local file:// resources as subresources of an https:// page, so that never actually works.
+  const FAVICON_URI =
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgMjAwIDIwMCIgeG1sbnM6YzJwYT0iaHR0cDovL2MycGEub3JnL21hbmlmZXN0Ij48bWV0YWRhdGE+PGMycGE6bWFuaWZlc3Q+QUFBV2dtcDFiV0lBQUFBZWFuVnRaR015Y0dFQUVRQVFnQUFBcWdBNG0zRURZekp3WVFBQUFCWmNhblZ0WWdBQUFFZHFkVzFrWXpKdFlRQVJBQkNBQUFDcUFEaWJjUU4xY200Nll6SndZVHBqWVRnMFpEazNOQzB5TVRNeUxUUTVNVGt0T0dJMU1DMWtNREExT1RCaU4yTTFNamtBQUFBRGwycDFiV0lBQUFBcGFuVnRaR015WVhNQUVRQVFnQUFBcWdBNG0zRURZekp3WVM1aGMzTmxjblJwYjI1ekFBQUFBTHhxZFcxaUFBQUFSR3AxYldSalltOXlBQkVBRUlBQUFLb0FPSnR4RTJNeWNHRXVhVzVuY21Wa2FXVnVkQzUyTXdBQUFBQVlZekp6YUhiU0VMWmswaWRjdUtuNEQwRlZlZ0VBQUFCd1kySnZjcU5wWkdNNlptOXliV0YwYldsdFlXZGxMM04yWnl0NGJXeHFhVzV6ZEdGdVkyVkpSSGdzZUcxd09tbHBaRG93TWpGa016VmtPUzB3TmpjNUxUUmlOREV0WWpnek15MHhZVGswT1dRellUVTBZV0pzY21Wc1lYUnBiMjV6YUdsd2FIQmhjbVZ1ZEU5bUFBQUI0bXAxYldJQUFBQkJhblZ0WkdOaWIzSUFFUUFRZ0FBQXFnQTRtM0VUWXpKd1lTNWhZM1JwYjI1ekxuWXlBQUFBQUJoak1uTm95TWcrZ3h3cTNocHRkSGNkMll2cjdRQUFBWmxqWW05eW9tZGhZM1JwYjI1emdxSm1ZV04wYVc5dWEyTXljR0V1YjNCbGJtVmthbkJoY21GdFpYUmxjbk9oYTJsdVozSmxaR2xsYm5SemdhSmpkWEpzZUMxelpXeG1JMnAxYldKbVBXTXljR0V1WVhOelpYSjBhVzl1Y3k5ak1uQmhMbWx1WjNKbFpHbGxiblF1ZGpOa2FHRnphRmdncmRzK2gxRlVraGR2K0JtTG1ab1JxcFlLOTZ2RWRrQmJhbEF5NzFDVTlVcWtabUZqZEdsdmJuZ2RZMjl0TG1GdWRHaHliM0JwWXk1amJHRjFaR1V1Y0hKdmRtbGtaV1JxY0dGeVlXMWxkR1Z5YzZGNEgyTnZiUzVoYm5Sb2NtOXdhV011YjNKcFoybHVMV052Ym1acFpHVnVZMlZuZFc1cmJtOTNibXRrWlhOamNtbHdkR2x2Ym5obVEyeGhkV1JsSUhCeWIzWnBaR1ZrSUhSb2FYTWdabWxzWlNCaGRDQjBhR1VnY21WeGRXVnpkQ0J2WmlCaElIVnpaWElnWVc1a0lHMWhlU0JvWVhabElHTnlaV0YwWldRZ2IzSWdiVzlrYVdacFpXUWdkR2hsSUdacGJHVWdZMjl1ZEdWdWRITXViWE52Wm5SM1lYSmxRV2RsYm5TaFpHNWhiV1ZtUTJ4aGRXUmxjbUZzYkVGamRHbHZibk5KYm1Oc2RXUmxaUFVBQUFESWFuVnRZZ0FBQUVCcWRXMWtZMkp2Y2dBUkFCQ0FBQUNxQURpYmNSTmpNbkJoTG1oaGMyZ3VaR0YwWVFBQUFBQVlZekp6YU02K3I0S200UE5wWWhGVXh5N3Q5d1FBQUFDQVkySnZjcVZqWVd4blpuTm9ZVEkxTm1Od1lXUk5BQUFBQUFBQUFBQUFBQUFBQUdSb1lYTm9XQ0FRWkN3WXo5cWNTSHM3bjZEd1B1ZWpWbEJDWjJUODFTN0gvTTMwdFZ2N3EyUnVZVzFsYm1wMWJXSm1JRzFoYm1sbVpYTjBhbVY0WTJ4MWMybHZibk9Cb21WemRHRnlkQmlXWm14bGJtZDBhQmtlQkFBQUFqNXFkVzFpQUFBQUoycDFiV1JqTW1Oc0FCRUFFSUFBQUtvQU9KdHhBMk15Y0dFdVkyeGhhVzB1ZGpJQUFBQUNEMk5pYjNLbFkyRnNaMlp6YUdFeU5UWnBjMmxuYm1GMGRYSmxlRTF6Wld4bUkycDFiV0ptUFM5ak1uQmhMM1Z5Ympwak1uQmhPbU5oT0RSa09UYzBMVEl4TXpJdE5Ea3hPUzA0WWpVd0xXUXdNRFU1TUdJM1l6VXlPUzlqTW5CaExuTnBaMjVoZEhWeVpXcHBibk4wWVc1alpVbEVlQ3g0YlhBNmFXbGtPbVprWm1Ka016UmlMVGt3TnpjdE5EUTRNeTFoTVRnMUxXTTFNVEJsTmpCaVltWTJNWEpqY21WaGRHVmtYMkZ6YzJWeWRHbHZibk9Eb21OMWNteDRMWE5sYkdZamFuVnRZbVk5WXpKd1lTNWhjM05sY25ScGIyNXpMMk15Y0dFdWFXNW5jbVZrYVdWdWRDNTJNMlJvWVhOb1dDQ3QyejZIVVZTU0YyLzRHWXVabWhHcWxncjNxOFIyUUZ0cVVETHZVSlQxU3FKamRYSnNlQ3B6Wld4bUkycDFiV0ptUFdNeWNHRXVZWE56WlhKMGFXOXVjeTlqTW5CaExtRmpkR2x2Ym5NdWRqSmthR0Z6YUZnZ3BxNTVNYlMzdDZsVDBEdjgxc25JbWs1dlRGanI5aDlXVU5IZnJVSkEyV2FpWTNWeWJIZ3BjMlZzWmlOcWRXMWlaajFqTW5CaExtRnpjMlZ5ZEdsdmJuTXZZekp3WVM1b1lYTm9MbVJoZEdGa2FHRnphRmdnZ1lCUlVyc1pGQ2FrVDBheUM2YisreGYvS1lqSmxxcmRBNGt1djgyTjlTUjBZMnhoYVcxZloyVnVaWEpoZEc5eVgybHVabStqWkc1aGJXVnZRVzUwYUhKdmNHbGpJRVpwYkdWelozWmxjbk5wYjI1bE1TNHdMakJyYzNCbFkxWmxjbk5wYjI1bE1pNDBMakFBQUJBNGFuVnRZZ0FBQUNocWRXMWtZekpqY3dBUkFCQ0FBQUNxQURpYmNRTmpNbkJoTG5OcFoyNWhkSFZ5WlFBQUFCQUlZMkp2Y3RLRVdRSVNvZ0VtR0NGWkFnb3dnZ0lHTUlJQmphQURBZ0VDQWhSQTVhQUs3c0k1MEw2NGcvb0dRZ1U5WjFVVEFEQUtCZ2dxaGtqT1BRUURBekJKTVJjd0ZRWURWUVFLRXc1QmJuUm9jbTl3YVdNc0lGQkNRekV1TUN3R0ExVUVBeE1sUVc1MGFISnZjR2xqSUVOdmJuUmxiblFnUTNKbFpHVnVkR2xoYkhNZ1VtOXZkQ0JEUVRBZUZ3MHlOakE0TURjeE9EUXpOVFphRncweU9EQTRNRFl4T1RRek5UWmFNRVF4RnpBVkJnTlZCQW9URGtGdWRHaHliM0JwWXl3Z1VFSkRNU2t3SndZRFZRUURFeUJCYm5Sb2NtOXdhV01nUTJ4aGRXUmxJRU52Ym5SbGJuUWdVMmxuYm1sdVp6QlpNQk1HQnlxR1NNNDlBZ0VHQ0NxR1NNNDlBd0VIQTBJQUJKaDZDbXZMVUJnRkZOVTB2VUtsT1Z0RTZkamQxN0w1U3V3WDBMZW1GaXNCTTNka2QvM2N5anhGQTNRbzVTNDZmWDAvaWhZMFZaN21mYjlLRjcwM3Q1T2pXREJXTUE0R0ExVWREd0VCL3dRRUF3SUhnREFWQmdOVkhTVUVEakFNQmdvckJnRUVBWVBvWGdJQk1Bd0dBMVVkRXdFQi93UUNNQUF3SHdZRFZSMGpCQmd3Rm9BVXpsSGlCSUZPWkZzaitPUEV6NW8rbk1IWFhNSXdDZ1lJS29aSXpqMEVBd01EWndBd1pBSXdNWE1kRko0QmV0TExWWTdPUnVFOW5vcWJiQVpPWm4vYUFyWHlUd0ZBWmZLclB6eEYydlBvSk5mMStVQ2RnMVhHQWpCd1gxemQ5V0dxWWtxbUw1U0ZxdzFReVNqcjF6SmZwSk05KzFyZER3U1BMTU9QT2pLdWlYam9VL3BVVWVHOVJ3bWhZM0JoWkZrTm5nQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBUFpZUU1qNXNvWmJVRjZ0djJ5Wkdob3VCV3dhbjFhdUVnMTlaYXIzMjlyYnVkVTRrRW4wZExrcEpRMzN5UEg5MklxZWhZVVBKSEVlNlpIQi9mMHl5ekF5ZytVPTwvYzJwYTptYW5pZmVzdD48L21ldGFkYXRhPgo8ZGVmcz48Y2xpcFBhdGggaWQ9ImMiPjxyZWN0IHg9IjQ1IiB5PSI0NSIgd2lkdGg9IjExMCIgaGVpZ2h0PSIxMTAiIHJ4PSI3Ij48L3JlY3Q+PGNpcmNsZSBjeD0iMTAwIiBjeT0iMzAiIHI9IjIwIj48L2NpcmNsZT48Y2lyY2xlIGN4PSIxMDAiIGN5PSIxNzAiIHI9IjIwIj48L2NpcmNsZT48Y2lyY2xlIGN4PSIzMCIgY3k9IjEwMCIgcj0iMjAiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjE3MCIgY3k9IjEwMCIgcj0iMjAiPjwvY2lyY2xlPjwvY2xpcFBhdGg+PC9kZWZzPgo8ZyBmaWxsPSIjYzc5YjQ1IiBzdHJva2U9IiNjNzliNDUiIHN0cm9rZS13aWR0aD0iMTIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHg9IjQ1IiB5PSI0NSIgd2lkdGg9IjExMCIgaGVpZ2h0PSIxMTAiIHJ4PSI3Ij48L3JlY3Q+PGNpcmNsZSBjeD0iMTAwIiBjeT0iMzAiIHI9IjIwIj48L2NpcmNsZT48Y2lyY2xlIGN4PSIxMDAiIGN5PSIxNzAiIHI9IjIwIj48L2NpcmNsZT48Y2lyY2xlIGN4PSIzMCIgY3k9IjEwMCIgcj0iMjAiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjE3MCIgY3k9IjEwMCIgcj0iMjAiPjwvY2lyY2xlPjwvZz4KPGcgZmlsbD0iIzBlMGUwZSIgc3Ryb2tlPSIjMGUwZTBlIiBzdHJva2Utd2lkdGg9IjMiPjxyZWN0IHg9IjQ1IiB5PSI0NSIgd2lkdGg9IjExMCIgaGVpZ2h0PSIxMTAiIHJ4PSI3Ij48L3JlY3Q+PGNpcmNsZSBjeD0iMTAwIiBjeT0iMzAiIHI9IjIwIj48L2NpcmNsZT48Y2lyY2xlIGN4PSIxMDAiIGN5PSIxNzAiIHI9IjIwIj48L2NpcmNsZT48Y2lyY2xlIGN4PSIzMCIgY3k9IjEwMCIgcj0iMjAiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjE3MCIgY3k9IjEwMCIgcj0iMjAiPjwvY2lyY2xlPjwvZz4KPGcgZmlsbD0iI2Y3ZjJlNyI+PHJlY3QgeD0iNDUiIHk9IjQ1IiB3aWR0aD0iMTEwIiBoZWlnaHQ9IjExMCIgcng9IjciPjwvcmVjdD48Y2lyY2xlIGN4PSIxMDAiIGN5PSIzMCIgcj0iMjAiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjEwMCIgY3k9IjE3MCIgcj0iMjAiPjwvY2lyY2xlPjxjaXJjbGUgY3g9IjMwIiBjeT0iMTAwIiByPSIyMCI+PC9jaXJjbGU+PGNpcmNsZSBjeD0iMTcwIiBjeT0iMTAwIiByPSIyMCI+PC9jaXJjbGU+PC9nPgo8ZyBjbGlwLXBhdGg9InVybCgjYykiIGZpbGw9IiMwZTBlMGUiIGZvbnQtZmFtaWx5PSInQm9kb25pIE1vZGEnLCAnQm9kb25pIDcyJywgRGlkb3QsICdUaW1lcyBOZXcgUm9tYW4nLCBzZXJpZiIgZm9udC13ZWlnaHQ9IjUwMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSI4MCI+PHRleHQgeD0iMTAwIiB5PSIxMDAiPlc8L3RleHQ+PHRleHQgeD0iMTAwIiB5PSIxNjQiPk08L3RleHQ+PC9nPgo8cGF0aCBkPSJNMCAtMjQgTDYgLTYgTDI0IDAgTDYgNiBMMCAyNCBMLTYgNiBMLTI0IDAgTC02IC02IFoiIGZpbGw9IiNjNzliNDUiIHN0cm9rZT0iI2Y3ZjJlNyIgc3Ryb2tlLXdpZHRoPSI1IiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBwYWludC1vcmRlcj0ic3Ryb2tlIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMDAgMTA0KSBzY2FsZSgwLjUpIj48L3BhdGg+Cjwvc3ZnPg==";
+
+  function replaceFavicon() {
+    const existingIcons = document.querySelectorAll("link[rel~='icon']");
+
+    if (!existingIcons.length) {
+      const link = document.createElement("link");
+      link.rel = "icon";
+      link.href = FAVICON_URI;
+      document.head.appendChild(link);
+      return;
+    }
+
+    existingIcons.forEach((link) => {
+      if (link.href !== FAVICON_URI) link.href = FAVICON_URI;
+    });
+  }
+
+  function watchFaviconReplacement() {
+    replaceFavicon();
+
+    const observer = new MutationObserver(() => replaceFavicon());
+    observer.observe(document.head, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["href", "rel"],
+    });
+  }
+
+  // ============================================================
+  // Rule 24: on /collection, whenever ul.rounded-xl (a card's tag list) enters the DOM, give it
+  // "width: auto; max-height: 80vh" so it sizes to its content instead of whatever fixed width it inherits, and
+  // stops overflowing the viewport once a card has a lot of tags. Each tag's usage count loads in asynchronously
+  // after the list itself renders, appended to its name in span > span.inline-flex > span.min-w-0.truncate as
+  // "{tag name} ({amount})" — that middle span.inline-flex (the tag's colored pill) is what distinguishes an
+  // actual tag <li> from the list's two non-tag entries ("Toutes les étiquettes" first, "Gérer les étiquettes…"
+  // last), which only nest two levels deep (span > span.block.min-w-0.truncate) and never carry a count — so
+  // they're excluded from consideration entirely, rather than forever blocking the "every entry has its count"
+  // check the way they used to. Once every actual tag has its count (i.e. the list is fully loaded), the tag
+  // <li>s are moved into sorted (descending amount) order via a placeholder anchor, leaving the two non-tag
+  // entries pinned in their original first/last spots. Guarded by a dataset flag so it isn't re-sorted on every
+  // later mutation (which would otherwise also just re-fire from our own reordering).
+  // ============================================================
+  const TAG_COUNT_REGEX = /\((\d+)\)\s*$/;
+
+  function sortUserTagListByCount(ul) {
+    if (ul.dataset.wmTagsSorted === "true") return;
+
+    const tagEntries = Array.from(ul.children)
+      .map((item) => {
+        const countEl = item.querySelector(
+          "span > span.inline-flex > span.min-w-0.truncate",
+        );
+        if (!countEl) return null;
+
+        const match = countEl.textContent.match(TAG_COUNT_REGEX);
+        return { item, count: match ? parseInt(match[1], 10) : null };
+      })
+      .filter((entry) => entry !== null);
+
+    if (!tagEntries.length || tagEntries.some(({ count }) => count === null))
+      return;
+
+    ul.dataset.wmTagsSorted = "true";
+
+    const anchor = document.createComment("wm-tags-sort-anchor");
+    ul.insertBefore(anchor, tagEntries[0].item);
+
+    tagEntries
+      .sort((a, b) => b.count - a.count)
+      .forEach(({ item }) => ul.insertBefore(item, anchor));
+
+    anchor.remove();
+  }
+
+  function styleUserTagList() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    document.querySelectorAll("ul.rounded-xl").forEach((el) => {
+      el.style.width = "auto";
+      el.style.maxHeight = "80vh";
+      sortUserTagListByCount(el);
+    });
+  }
+
+  function watchUserTagListSizing() {
+    styleUserTagList();
+
+    const observer = new MutationObserver(() => styleUserTagList());
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -3450,8 +4041,13 @@ const MY_USERNAME = "onohunt";
     run("rule-20", watchCardModalListScroll);
     run("feature-gcp", watchGlobalCollectionFriendProfileLinks);
     run("rule-21", watchCardModalLegalMentions);
+    run("rule-22", watchSpinnerAndAuctionNotFoundCentering);
+    run("rule-23", watchFaviconReplacement);
+    run("feature-fis", watchFadeInUpInlineStyleCleanup);
+    run("rule-24", watchUserTagListSizing);
 
     watchFeatureConfigButton();
+    watchTutorialButton();
   }
 
   main();
