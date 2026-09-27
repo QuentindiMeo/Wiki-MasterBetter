@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.15.18
+// @version      0.16.3
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -42,7 +42,7 @@
  * * Rule 15: on a marketplace item page, relabel the back button "Retour en arrière"
  * * Feature PLB: on a bid page, add an "@" profile link after each card-frame entry's name and the username
  * * Rule 16: smooth-scroll to the last unread notification when the card frame opens
- * * Feature BSP: record sold bids' prices in localStorage; flag the card on the marketplace depending on how good a deal it is; recorded data is dumped at /profile, with import/export
+ * * Feature BSP: record sold bids' prices in localStorage; flag the card on the marketplace depending on how good a deal it is (or, on the user's own completed sales, how good a sale it was); recorded data is dumped at /profile, with import/export
  * * Rule 17: bring "Mark all as read" notification button to the left
  * * Rule 18: on /collection and /pulls, focus tags input when the card modal opens; also focus the search input on arrival on /collection
  * * Feature ETS: on /pulls and /collection, store market value evaluation in localStorage; on /collection, append cached eval prices to each card's rarity tag
@@ -51,7 +51,10 @@
  * * Feature EBC: on /collection, add buttons to bulk-evaluate every card (or just those missing it); cancellable via a stop button; plus a button to sort the page by descending eval price
  * * Rule 20: on /collection and /pulls, the card modal's tag list scrolls to follow the keyboard-focused item
  * * Feature GCP: on /global-collection, clicking a card's friend-owner username opens that friend's profile
+ * * Rule 21: on /collection and /pulls, hide the legal mentions paragraph when the card modal opens
  */
+
+const MY_USERNAME = "onohunt";
 
 (function () {
   "use strict";
@@ -1540,16 +1543,32 @@
     return match?.[1]?.split("-")[1] ?? null;
   }
 
+  // The seller's username: on a bid page, the <span> inside p.text-sm.mt-1 (right after "Mis en vente par"),
+  // also used by Feature PLB to insert its "@" profile link.
+  function getBidPageSellerUsername() {
+    return (
+      document.querySelector("p.text-sm.mt-1 span")?.textContent.trim() ?? null
+    );
+  }
+
+  function findAuctionOutcomeSpan() {
+    return Array.from(document.querySelectorAll("span.font-medium")).find(
+      (span) => span.textContent.endsWith("endue"),
+    );
+  }
+
   function recordSoldBidPrice() {
     if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
     if (document.querySelector("div.animate-spin")) return;
 
-    const soldSpan = Array.from(
-      document.querySelectorAll("span.font-medium"),
-    ).find((span) => span.textContent.endsWith("endue"));
+    const soldSpan = findAuctionOutcomeSpan();
     if (!soldSpan || soldSpan.dataset.wmPriceStored === "true") return;
 
     if (document.querySelector("span.bg-emerald-600\\/90")) return;
+
+    // Feature BSP (cont'd) handles the seller's own completed sales instead (see updateSnipableBadge) — don't let them
+    // pollute the market-observed average.
+    if (getBidPageSellerUsername() === MY_USERNAME) return;
 
     const cardName = document.querySelector("h1.flex-1")?.textContent.trim();
     const priceText = document
@@ -1612,28 +1631,59 @@
   // ============================================================
   // Feature BSP (cont'd): on a bid page, flag the card name (h1.flex-1, given "display: contents") as "EXCELLENT" when
   // the current price (span.text-2xl) is below 80% of the average of that card's stored sold prices, "agréable" when
-  // it's between 80% and 100% of that average, "tolérable" when it's between 100% and 120%, or "overpriced" when it's
+  // it's between 80% and 100% of that average, "tolérable" when it's between 100% and 120%, or "excessive" when it's
   // above 120%; unflag it as soon as none of those is true. When this bid's own price is the only entry stored for
   // that card (a cache no-hit that this bid's end just filled), that lone entry trivially equals the current price
   // and would otherwise misleadingly compute as "tolérable" — flag it "NEW ENTRY" (white) instead, since there's no
   // real history yet to compare against. Skips while div.animate-spin is present (the page is still loading).
+  //
+  // Feature BSP (cont'd) — seller's own sale: when the auction just sold ("Vendue") and the seller (p.text-sm.mt-1's
+  // username) is MY_USERNAME, the tag instead grades how good a SALE it was — the mirror image of the buyer-facing
+  // grading: a price above 120% of the stored average is an "excellente" sale, above 100% "agréable", above 80%
+  // "tolérable", below that "décevante". With no stored average yet (this seller's sales are never themselves logged,
+  // see recordSoldBidPrice), it falls back to the same "NEW ENTRY" (white) tag, worded for a sale instead.
+  //
+  // Feature BSP (cont'd) — buyer's own win: when the auction just sold ("Vendue") and the owned card label
+  // (span.bg-emerald-600/90) is present — meaning this viewer is the one who just won it — the usual buyer-facing
+  // tag also appends the reference average it was compared against, as "(obj. {value})"
   // ============================================================
   const EXCELLENT_THRESHOLD_RATIO = 0.8;
   const TOLERABLE_THRESHOLD_RATIO = 1.0;
-  const OVERPRICED_THRESHOLD_RATIO = 1.2;
+  const EXCESSIVE_THRESHOLD_RATIO = 1.2;
   const BADGE_CLASSES = [
     "wm-excellent",
     "wm-agreeable",
     "wm-tolerable",
-    "wm-overpriced",
+    "wm-excessive",
     "wm-new-entry",
   ];
   const STATUS_LABELS = {
     excellent: "prix excellent",
     agreeable: "prix agréable",
     tolerable: "prix tolérable",
-    overpriced: "prix excessif",
+    excessive: "prix excessif",
   };
+  const SALE_STATUS_LABELS = {
+    excellent: "vente excellente",
+    agreeable: "vente agréable",
+    tolerable: "vente tolérable",
+    excessive: "vente décevante",
+  };
+
+  function setBadge(nameEl, existing, className, label) {
+    if (
+      existing?.classList.contains(className) &&
+      existing.textContent === label
+    )
+      return;
+
+    existing?.remove();
+
+    const badge = document.createElement("span");
+    badge.className = className;
+    badge.textContent = label;
+    nameEl.after(badge);
+  }
 
   function updateSnipableBadge() {
     if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
@@ -1659,25 +1709,26 @@
       return;
     }
 
+    const isSold = findAuctionOutcomeSpan()?.textContent.trim() === "Vendue";
+    const isMySoldAuction =
+      isSold && getBidPageSellerUsername() === MY_USERNAME;
+    const isMyWonAuction =
+      isSold && document.querySelector("span.bg-emerald-600\\/90") !== null;
+
     const stored = readBspEntries(cardName);
 
-    const currentTag = getBidTag();
-    const isFreshCacheEntry =
-      currentTag !== null &&
-      stored.length === 1 &&
-      typeof stored[0] === "string" &&
-      stored[0].endsWith(`-${currentTag}`);
+    if (!isMySoldAuction) {
+      const currentTag = getBidTag();
+      const isFreshCacheEntry =
+        currentTag !== null &&
+        stored.length === 1 &&
+        typeof stored[0] === "string" &&
+        stored[0].endsWith(`-${currentTag}`);
 
-    if (isFreshCacheEntry) {
-      if (existing?.classList.contains("wm-new-entry")) return;
-
-      existing?.remove();
-
-      const badge = document.createElement("span");
-      badge.className = "wm-new-entry";
-      badge.textContent = "Ajouté au registre des ventes observées";
-      nameEl.after(badge);
-      return;
+      if (isFreshCacheEntry) {
+        setBadge(nameEl, existing, "wm-new-entry", "désormais observé");
+        return;
+      }
     }
 
     const average = stored.length
@@ -1685,30 +1736,40 @@
         stored.length
       : null;
 
-    let status = null;
-    if (average !== null) {
-      if (price < average * EXCELLENT_THRESHOLD_RATIO) status = "excellent";
-      else if (price < average * TOLERABLE_THRESHOLD_RATIO)
-        status = "agreeable";
-      else if (price < average * OVERPRICED_THRESHOLD_RATIO)
-        status = "tolerable";
-      else status = "overpriced";
-    }
+    if (average === null) {
+      if (isMySoldAuction) {
+        setBadge(nameEl, existing, "wm-new-entry", "vente non comparable");
+        return;
+      }
 
-    if (!status) {
       existing?.remove();
       return;
     }
 
-    const className = `wm-${status}`;
-    if (existing?.classList.contains(className)) return;
+    let status;
+    if (isMySoldAuction) {
+      if (price > average * EXCESSIVE_THRESHOLD_RATIO) status = "excellent";
+      else if (price > average * TOLERABLE_THRESHOLD_RATIO)
+        status = "agreeable";
+      else if (price > average * EXCELLENT_THRESHOLD_RATIO)
+        status = "tolerable";
+      else status = "excessive";
+    } else {
+      if (price < average * EXCELLENT_THRESHOLD_RATIO) status = "excellent";
+      else if (price < average * TOLERABLE_THRESHOLD_RATIO)
+        status = "agreeable";
+      else if (price < average * EXCESSIVE_THRESHOLD_RATIO)
+        status = "tolerable";
+      else status = "excessive";
+    }
 
-    existing?.remove();
-
-    const badge = document.createElement("span");
-    badge.className = className;
-    badge.textContent = STATUS_LABELS[status];
-    nameEl.after(badge);
+    let label = isMySoldAuction
+      ? SALE_STATUS_LABELS[status]
+      : STATUS_LABELS[status];
+    if (isMyWonAuction) {
+      label += ` (obj. ${Math.round(average)})`;
+    }
+    setBadge(nameEl, existing, `wm-${status}`, label);
   }
 
   function watchSnipableBadge() {
@@ -1719,7 +1780,7 @@
       .wm-excellent,
       .wm-agreeable,
       .wm-tolerable,
-      .wm-overpriced,
+      .wm-excessive,
       .wm-new-entry {
         margin-left: 0.5rem;
         font-weight: 600;
@@ -1739,7 +1800,7 @@
         color: #fbbf24;
         background-color: rgba(251, 191, 36, 0.15);
       }
-      .wm-overpriced {
+      .wm-excessive {
         color: #ef2222;
         background-color: rgba(239, 34, 34, 0.15);
       }
@@ -2455,7 +2516,8 @@
     { id: "feature-ets", label: "Mémorisation des estimations de cartes" },
     {
       id: "rule-19",
-      label: "Reformuler la notification « Votre carte vous est rendue »",
+      label:
+        "Reformuler les notifications (carte rendue, remboursement, vente)",
     },
     {
       id: "feature-ebc",
@@ -2466,16 +2528,12 @@
       label: "Scroll suit la sélection clavier dans la modale de carte",
     },
     {
-      id: "rule-21",
-      label: "Reformuler la notification de remboursement après surenchère",
-    },
-    {
-      id: "rule-22",
-      label: "Reformuler la notification de vente de carte",
-    },
-    {
       id: "feature-gcp",
       label: "Lien de profil sur le nom des amis (souhaits globaux)",
+    },
+    {
+      id: "rule-21",
+      label: "Masquer les mentions légales de la modale de carte",
     },
   ];
 
@@ -3248,16 +3306,18 @@
         padding: 0.5rem 1rem;
         border: none;
         border-radius: 0.5rem;
-        background: #dc2626;
+        background: #dc26265f;
         color: #fff;
         font-size: 0.875rem;
         font-weight: 600;
         cursor: pointer;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-        transition: background-color 0.2s ease;
+        opacity: 0.8;
+        transition: background-color 0.2s ease, opacity 0.2s ease;
       }
       .wm-eval-stop:hover {
         background: #b91c1c;
+        opacity: 1;
       }
       .wm-eval-stop-note {
         font-size: 0.7rem;
@@ -3304,6 +3364,40 @@
       attributeFilter: ["aria-selected"],
       subtree: true,
     });
+  }
+
+  // ============================================================
+  // Rule 21: on /collection and /pulls, when the card modal (div.card-frame.p-6) opens, hide
+  // p.leading-snug.text-[10px] (the legal mentions paragraph). Hidden via "display: none" rather than removed:
+  // React still owns and re-renders this node, so actually detaching it (Node.remove()) races React's own
+  // reconciliation and can throw "removeChild: the node to be removed is not a child of this node" the moment
+  // React tries to update/unmount it too — the same class of race already called out in Feature TMB.
+  // ============================================================
+  function hideCardModalLegalMentions() {
+    if (
+      !window.location.pathname.startsWith("/collection") &&
+      !window.location.pathname.startsWith("/pulls")
+    )
+      return;
+
+    const modal = document.querySelector("div.card-frame.p-6");
+    if (!modal || modal.dataset.wmLegalHidden === "true") return;
+
+    modal.dataset.wmLegalHidden = "true";
+
+    setTimeout(() => {
+      const legalMentions = modal.querySelector(
+        "p.leading-snug.text-\\[10px\\]",
+      );
+      if (legalMentions) legalMentions.style.display = "none";
+    }, 250);
+  }
+
+  function watchCardModalLegalMentions() {
+    hideCardModalLegalMentions();
+
+    const observer = new MutationObserver(() => hideCardModalLegalMentions());
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ============================================================
@@ -3355,6 +3449,7 @@
     run("feature-ebc", watchEvaluateUnratedButton);
     run("rule-20", watchCardModalListScroll);
     run("feature-gcp", watchGlobalCollectionFriendProfileLinks);
+    run("rule-21", watchCardModalLegalMentions);
 
     watchFeatureConfigButton();
   }
