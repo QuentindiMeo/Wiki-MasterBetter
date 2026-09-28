@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.17.18
+// @version      0.19.5
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -54,13 +54,17 @@
  * * Rule 21: on /collection and /pulls, hide the legal mentions paragraph of the card modal
  * * Rule 22: on all pages, center loading spinner; on a bid page, also rewrite and center the "Enchère introuvable" message
  * * Rule 23: replace the site's favicon
- * * Feature FIS: on /pulls, /friends, /guild and /achievements, clear the inline style the page's own load-transition wrapper keeps ending up with
+ * * Feature FIS: center the loading spinner
  * * Feature TUT: a "❓" button next to the settings wheel opens a modal with short tutorials for the script's less-obvious features
  * * Rule 24: enlarge tag list on collection page; sort the list by descending count
- * * Rule 25: on /global-collection, add a button to bulk-remove every owned card from the wishlist
+ * * Rule 25: add a button to bulk-remove every owned card from the wishlist
+ * * Feature CNC: add a copy-to-clipboard button next to the card name, in the card modal (/pulls, /collection, /global-collection) and the auction modal (/pulls, /collection)
+ * * Rule 26: show trade history as a two-column grid
+ * * Rule 27: filter trades history by trading partner
+ * * Rule 28: add a clear button inside the collection search field
  */
 
-const MY_USERNAME = "onohunt";
+const MY_USERNAME = "xxx";
 
 (function () {
   "use strict";
@@ -1556,6 +1560,26 @@ const MY_USERNAME = "onohunt";
     return JSON.parse(raw ?? "[]");
   }
 
+  // Feature BSP (cont'd): the reference price averaged from stored entries is weighted rather than plain —
+  // out of N prices, the lowest weighs N, the second-lowest N-1, ... the highest weighs 1 — so a single high
+  // outlier among mostly-low sales pulls the reference up less than an unweighted average would.
+  function computeWeightedAveragePrice(numericPrices) {
+    if (!numericPrices.length) return null;
+
+    const sorted = [...numericPrices].sort((a, b) => a - b);
+    const n = sorted.length;
+
+    let weightedSum = 0;
+    let weightTotal = 0;
+    sorted.forEach((price, index) => {
+      const weight = n - index;
+      weightedSum += price * weight;
+      weightTotal += weight;
+    });
+
+    return weightedSum / weightTotal;
+  }
+
   function getBidTag() {
     const match = window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX);
     return match?.[1]?.split("-")[1] ?? null;
@@ -1651,11 +1675,14 @@ const MY_USERNAME = "onohunt";
 
   // ============================================================
   // Feature BSP (cont'd): on a bid page, flag the card name (h1.flex-1, given "display: contents") as "EXCELLENT" when
-  // the current price (input.min-w-0) is below 80% of the average of that card's stored sold prices, "agréable" when
+  // the current price (input.min-w-0) is below 80% of the weighted average of that card's stored sold prices
+  // (computeWeightedAveragePrice: out of N prices, the lowest weighs N, the second-lowest N-1, ... the highest
+  // weighs 1, so a single high outlier pulls the reference up less than a plain average would), "agréable" when
   // it's between 80% and 100% of that average, "tolérable" when it's between 100% and 120%, or "excessive" when it's
   // above 120%; unflag it as soon as none of those is true. Below 50% of that average, with at least 5 stored sold
   // prices backing it — i.e. that card's cache is at its full MAX_STORED_PRICES capacity, so the average is
-  // actually meaningful — it's flagged "prix extraordinaire" instead of "EXCELLENT". When this bid's own price is
+  // actually meaningful — it's flagged "prix extraordinaire" instead of "EXCELLENT"; below 20%, with that same
+  // 5-entry restriction, it's flagged "prix légendaire" instead. When this bid's own price is
   // the only entry stored for that card (a cache no-hit that this bid's
   // end just filled), that lone entry trivially equals the current price and would otherwise misleadingly compute
   // as "tolérable" — flag it "NEW ENTRY" (white) instead, since there's no real history yet to compare against.
@@ -1676,12 +1703,14 @@ const MY_USERNAME = "onohunt";
   // Feature BSP (cont'd) — cancelled auction: when any span.font-medium reads "Annulée", no tag is shown at all,
   // buyer- or seller-facing — a cancelled auction has no real sale or final bid worth grading or comparing to.
   // ============================================================
+  const LEGENDARY_THRESHOLD_RATIO = 0.2;
   const EXTRAORDINARY_THRESHOLD_RATIO = 0.5;
   const EXTRAORDINARY_MIN_OBSERVED_ENTRIES = 5;
   const EXCELLENT_THRESHOLD_RATIO = 0.8;
   const TOLERABLE_THRESHOLD_RATIO = 1.0;
   const EXCESSIVE_THRESHOLD_RATIO = 1.2;
   const BADGE_CLASSES = [
+    "wm-legendary",
     "wm-extraordinary",
     "wm-excellent",
     "wm-agreeable",
@@ -1690,6 +1719,7 @@ const MY_USERNAME = "onohunt";
     "wm-new-entry",
   ];
   const BUY_STATUS_LABELS = {
+    legendary: "prix légendaire",
     extraordinary: "prix extraordinaire",
     excellent: "prix excellent",
     agreeable: "prix agréable",
@@ -1841,10 +1871,9 @@ const MY_USERNAME = "onohunt";
         return;
       }
 
-      referenceValue = stored.length
-        ? stored.reduce((sum, entry) => sum + parseInt(entry, 10), 0) /
-          stored.length
-        : null;
+      referenceValue = computeWeightedAveragePrice(
+        stored.map((entry) => parseInt(entry, 10)),
+      );
     }
 
     if (referenceValue === null) {
@@ -1870,6 +1899,11 @@ const MY_USERNAME = "onohunt";
       else status = "excessive";
     } else {
       if (
+        price < referenceValue * LEGENDARY_THRESHOLD_RATIO &&
+        observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES
+      )
+        status = "legendary";
+      else if (
         price < referenceValue * EXTRAORDINARY_THRESHOLD_RATIO &&
         observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES
       )
@@ -1914,6 +1948,7 @@ const MY_USERNAME = "onohunt";
         align-items: center;
         margin-left: 0.5rem;
       }
+      .wm-legendary,
       .wm-extraordinary,
       .wm-excellent,
       .wm-agreeable,
@@ -1925,6 +1960,23 @@ const MY_USERNAME = "onohunt";
         font-size: 0.85rem;
         border-radius: 0.375rem;
         padding: 0.1rem 0.4rem;
+      }
+      .wm-legendary {
+        color: #fff4cc;
+        background-color: rgba(255, 215, 0, 0.2);
+        border: 1px solid rgba(255, 215, 0, 0.6);
+        animation: wm-legendary-glow 3s ease-in-out infinite;
+      }
+      @keyframes wm-legendary-glow {
+        0%, 100% {
+          box-shadow: 0 0 3px rgba(255, 215, 0, 0.5), 0 0 6px rgba(255, 215, 0, 0.25);
+          text-shadow: 0 0 3px rgba(255, 215, 0, 0.6);
+        }
+        50% {
+          box-shadow: 0 0 9px rgba(255, 215, 0, 1), 0 0 18px rgba(255, 195, 0, 0.75),
+            0 0 28px rgba(255, 215, 0, 0.4);
+          text-shadow: 0 0 6px rgba(255, 240, 150, 1), 0 0 14px rgba(255, 215, 0, 0.9);
+        }
       }
       .wm-extraordinary {
         color: #22d3ee;
@@ -2186,12 +2238,9 @@ const MY_USERNAME = "onohunt";
       pricesCell.className = "wm-bsp-dump-prices";
 
       const numericPrices = prices.map((entry) => parseInt(entry, 10));
-      const average = numericPrices.length
-        ? Math.round(
-            numericPrices.reduce((sum, entry) => sum + entry, 0) /
-              numericPrices.length,
-          )
-        : null;
+      const weightedAverage = computeWeightedAveragePrice(numericPrices);
+      const average =
+        weightedAverage !== null ? Math.round(weightedAverage) : null;
 
       const averageCell = document.createElement("span");
       averageCell.className = "wm-bsp-dump-target";
@@ -2402,7 +2451,9 @@ const MY_USERNAME = "onohunt";
   // Feature ETS: on /pulls and /collection, once span.tabular-nums appears, store its value in localStorage
   // under "eval-{name}", name being the text content of p.truncate. If it's missing but div.mb-5 p.mt-1\.5 reads
   // "Aucune vente" (no sales recorded yet for that card), stores the "?" placeholder (UNKNOWN_EVAL_VALUE) instead
-  // of leaving that card unrecorded.
+  // of leaving that card unrecorded. p.truncate's own text node is read directly (rather than its full
+  // textContent) since Feature CNC prepends a 📋 button inside that same element — including it here would
+  // corrupt the cache key with a stray emoji.
   // ============================================================
   const UNKNOWN_EVAL_VALUE = "?";
 
@@ -2414,7 +2465,14 @@ const MY_USERNAME = "onohunt";
       return;
 
     const valueEl = document.querySelector("span.tabular-nums");
-    const cardName = document.querySelector("p.truncate")?.textContent.trim();
+    const cardNameEl = document.querySelector("p.truncate");
+    const cardName = cardNameEl
+      ? Array.from(cardNameEl.childNodes)
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent)
+          .join("")
+          .trim()
+      : undefined;
     let value = valueEl?.textContent.trim().replace(/\s/g, "");
 
     if (!value) {
@@ -2698,6 +2756,10 @@ const MY_USERNAME = "onohunt";
       label: "Masquer les mentions légales de la modale de carte",
     },
     {
+      id: "feature-cnc",
+      label: "Copier le nom de la carte depuis sa modale",
+    },
+    {
       id: "rule-22",
       label: "Centrer le chargement / « Enchère introuvable » dans la page",
     },
@@ -2714,6 +2776,18 @@ const MY_USERNAME = "onohunt";
     {
       id: "rule-25",
       label: "Retirer les cartes possédées de la liste de souhaits",
+    },
+    {
+      id: "rule-26",
+      label: "Historique des échanges sur deux colonnes",
+    },
+    {
+      id: "rule-27",
+      label: "Filtrer l'historique des échanges par utilisateur",
+    },
+    {
+      id: "rule-28",
+      label: "Bouton pour effacer la recherche de collection",
     },
   ];
 
@@ -3552,7 +3626,7 @@ const MY_USERNAME = "onohunt";
       button.textContent = `Retrait des cartes possédées... (${removed + 1})`;
       (card.querySelector("div.inset-0") ?? card).click();
 
-      const unwishBtn = await waitForElement("button.w-full.transition-colors");
+      const unwishBtn = await waitForElement("button.transition-colors.border");
       unwishBtn?.click();
       removed++;
 
@@ -3594,7 +3668,8 @@ const MY_USERNAME = "onohunt";
     // Same styling approach as Feature EBC's own buttons: clone a native button's className
     // (here, the toggle itself) so ours blends in with the site's own look, rather than
     // custom-styling it from scratch.
-    const referenceBtn = toggle.parentElement?.querySelector("button") ?? toggle;
+    const referenceBtn =
+      toggle.parentElement?.querySelector("button") ?? toggle;
 
     btn = document.createElement("button");
     btn.type = "button";
@@ -3662,6 +3737,173 @@ const MY_USERNAME = "onohunt";
       attributes: true,
       attributeFilter: ["class"],
     });
+  }
+
+  // ============================================================
+  // Rule 26: on /trades, once the "Historique" tab (identified by which tab button currently carries the active
+  // class, button.border-\[var\(--color-accent\)\]) is selected and its list (div.space-y-3.animate-fade-in-up)
+  // has loaded (i.e. has at least one child), rearrange it into two flexible columns — not a strict grid (equal
+  // row heights) nor CSS multi-column (which would fill the whole first column before spilling into the second,
+  // i.e. items 1-N/2 then N/2+1-N). Instead, items are read in their original top-to-bottom order and each one
+  // is placed into whichever column is currently shorter, so the reading order still goes roughly left-to-right,
+  // top-to-bottom despite every item's height being different. Applied once per list (dataset flag, cleared when
+  // the list empties out so a fresh one gets reprocessed) rather than on every mutation, since re-measuring and
+  // reshuffling an already-arranged list on unrelated mutations would fight the layout it just built.
+  // ============================================================
+  function buildTradesHistoryColumns(list) {
+    const items = Array.from(list.children);
+    const heights = items.map((item) => item.offsetHeight);
+
+    const columns = [
+      document.createElement("div"),
+      document.createElement("div"),
+    ];
+    columns.forEach((column) =>
+      column.classList.add("wm-trades-history-column"),
+    );
+    const columnHeights = [0, 0];
+
+    items.forEach((item, i) => {
+      const target = columnHeights[0] <= columnHeights[1] ? 0 : 1;
+      columns[target].appendChild(item);
+      columnHeights[target] += heights[i];
+    });
+
+    list.classList.add("wm-trades-history-grid");
+    list.append(...columns);
+  }
+
+  function updateTradesHistoryGrid() {
+    if (!window.location.pathname.startsWith("/trades")) return;
+
+    const list = document.querySelector("div.space-y-3.animate-fade-in-up");
+    if (!list) return;
+
+    if (list.children.length === 0) {
+      delete list.dataset.wmMasonryApplied;
+      return;
+    }
+
+    if (list.dataset.wmMasonryApplied === "true") return;
+
+    const activeTab = document.querySelector(
+      "button.border-\\[var\\(--color-accent\\)\\]",
+    );
+    if (activeTab?.textContent.trim() !== "Historique") return;
+
+    list.dataset.wmMasonryApplied = "true";
+    buildTradesHistoryColumns(list);
+  }
+
+  function watchTradesHistoryGrid() {
+    GM_addStyle(`
+      .wm-trades-history-grid {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+      }
+      .wm-trades-history-column {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+    `);
+
+    updateTradesHistoryGrid();
+
+    const observer = new MutationObserver(() => updateTradesHistoryGrid());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+
+  // ============================================================
+  // Rule 27: on /trades, once Rule 26's div.wm-trades-history-grid exists, insert a text input right before it
+  // to filter the "Historique" list by trading partner. Each trade instance (div.card-frame.p-4) carries its
+  // partner's name in span.text-sm, prefixed with "De " (they initiated it) or "À " (you did) — stripped before
+  // matching. Items whose partner name doesn't contain the (case-insensitive) filter text are hidden via
+  // "display: none"; an empty filter shows everything again.
+  // ============================================================
+  const TRADE_PARTNER_PREFIX_REGEX = /^(De |À )/;
+
+  function getTradePartnerName(item) {
+    const span = item.querySelector("span.text-sm");
+    if (!span) return null;
+
+    return span.textContent
+      .trim()
+      .replace(TRADE_PARTNER_PREFIX_REGEX, "")
+      .trim();
+  }
+
+  function filterTradesHistoryByPartner(grid, query) {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    grid.querySelectorAll(".card-frame.p-4").forEach((item) => {
+      const partnerName = getTradePartnerName(item) ?? "";
+      const matches =
+        !normalizedQuery || partnerName.toLowerCase().includes(normalizedQuery);
+      item.style.display = matches ? "" : "none";
+    });
+  }
+
+  function insertTradesHistoryFilterInput(grid) {
+    if (
+      grid.previousElementSibling?.classList.contains(
+        "wm-trades-history-filter",
+      )
+    ) {
+      return grid.previousElementSibling;
+    }
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "wm-trades-history-filter";
+    input.placeholder = "Filtrer par nom d'utilisateur...";
+
+    input.addEventListener("input", () => {
+      filterTradesHistoryByPartner(grid, input.value);
+    });
+
+    grid.before(input);
+    return input;
+  }
+
+  function updateTradesHistoryFilter() {
+    if (!window.location.pathname.startsWith("/trades")) return;
+
+    const grid = document.querySelector("div.wm-trades-history-grid");
+    if (!grid) return;
+
+    const input = insertTradesHistoryFilterInput(grid);
+    filterTradesHistoryByPartner(grid, input.value);
+  }
+
+  function watchTradesHistoryFilter() {
+    GM_addStyle(`
+      .wm-trades-history-filter {
+        display: block;
+        margin-inline: auto;
+        width: 25%;
+        margin-bottom: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--color-border);
+        background: transparent;
+        color: inherit;
+        font-size: 0.875rem;
+      }
+    `);
+
+    updateTradesHistoryFilter();
+
+    const observer = new MutationObserver(() => updateTradesHistoryFilter());
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ============================================================
@@ -4051,6 +4293,92 @@ const MY_USERNAME = "onohunt";
   }
 
   // ============================================================
+  // Feature CNC: append a small copy-to-clipboard button right inside a card name element, in two contexts:
+  //   - the card modal (div.card-frame.p-6)'s own name heading (h2.text-xl), on /pulls, /collection and
+  //     /global-collection
+  //   - the auction modal's name (p.truncate — the same element Feature ETS already reads the card name from),
+  //     on /pulls and /collection only
+  // Clicking either copies that card's name to the clipboard and briefly swaps the icon for a checkmark as
+  // feedback. The card modal's button goes at the end of the heading; the auction modal's goes at the start of
+  // p.truncate instead, ahead of the (often long, truncated) name. Re-inserted on every mutation rather than
+  // guarded by a one-time flag: navigating between cards inside an already-open modal (Rule 20's keyboard
+  // navigation) re-renders its name element's own children, which would otherwise silently drop our button.
+  // ============================================================
+  function insertCopyButtonInto(nameEl, position = "end") {
+    if (nameEl.querySelector(":scope > .wm-copy-name")) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-copy-name";
+    btn.textContent = "📋";
+    btn.title = "Copier le nom de la carte";
+
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const cardName = Array.from(nameEl.childNodes)
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent)
+        .join("")
+        .trim();
+      navigator.clipboard.writeText(cardName).then(() => {
+        btn.textContent = "✅";
+        setTimeout(() => {
+          btn.textContent = "📋";
+        }, 1000);
+      });
+    });
+
+    if (position === "start") {
+      nameEl.prepend(btn);
+    } else {
+      nameEl.appendChild(btn);
+    }
+  }
+
+  function insertCardNameCopyButtons() {
+    const onPulls = window.location.pathname.startsWith("/pulls");
+    const onCollection = window.location.pathname.startsWith("/collection");
+    const onGlobalCollection =
+      window.location.pathname.startsWith("/global-collection");
+
+    if (onPulls || onCollection || onGlobalCollection) {
+      const modalName = document.querySelector("div.card-frame.p-6 h2.text-xl");
+      if (modalName) insertCopyButtonInto(modalName, "end");
+    }
+
+    if (onPulls || onCollection) {
+      const auctionModalName = document.querySelector("p.truncate");
+      if (auctionModalName) insertCopyButtonInto(auctionModalName, "start");
+    }
+  }
+
+  function watchCardModalNameCopyButton() {
+    GM_addStyle(`
+      .wm-copy-name {
+        margin-right: 0.125rem;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+        opacity: 0.7;
+        vertical-align: middle;
+        transition: opacity 0.15s ease;
+      }
+      .wm-copy-name:hover {
+        opacity: 1;
+      }
+    `);
+
+    insertCardNameCopyButtons();
+
+    const observer = new MutationObserver(() => insertCardNameCopyButtons());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Rule 22: on all pages, whenever div.animate-spin exists anywhere in the DOM, position it at the exact center
   // of <main>. Also, on a bid page (/marketplace/{UUID}) specifically, whenever a div contains the text "Enchère
   // introuvable", rewrite it (once) to add a line break and a hint to wait a few seconds or refresh the page, and
@@ -4283,6 +4611,108 @@ const MY_USERNAME = "onohunt";
   }
 
   // ============================================================
+  // Rule 28: on /collection, embed a "✕" button inside the card search field (input.rounded-lg) to clear its
+  // value. The input is moved into a new wrapper div (position: relative) placed right where the input used to
+  // sit, and the clear button is appended into that wrapper, absolutely positioned over the input's right edge,
+  // shown only while the input holds text. Clearing goes through HTMLInputElement.prototype's native value
+  // setter — bypassing the site's own controlled-input setter — before dispatching an "input" event, so the
+  // site's own filtering logic picks up the change exactly like a real keystroke would.
+  // ============================================================
+  const NATIVE_INPUT_VALUE_SETTER = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value",
+  ).set;
+
+  function clearCollectionSearchInput(input) {
+    NATIVE_INPUT_VALUE_SETTER.call(input, "");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function insertCollectionSearchClearButton(input) {
+    if (input.dataset.wmClearButtonInserted === "true") return;
+    input.dataset.wmClearButtonInserted = "true";
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "wm-search-clear-wrapper";
+    input.replaceWith(wrapper);
+    wrapper.appendChild(input);
+    input.classList.add("wm-search-clear-padding");
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "wm-search-clear-btn";
+    clearBtn.textContent = "✕";
+    clearBtn.title = "Effacer la recherche";
+
+    const updateVisibility = () => {
+      clearBtn.classList.toggle("wm-search-clear-btn-visible", !!input.value);
+    };
+
+    clearBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearCollectionSearchInput(input);
+      input.focus();
+      updateVisibility();
+    });
+
+    input.addEventListener("input", updateVisibility);
+    updateVisibility();
+
+    wrapper.appendChild(clearBtn);
+  }
+
+  function updateCollectionSearchClearButton() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    const input = document.querySelector("input.rounded-lg");
+    if (!input) return;
+
+    insertCollectionSearchClearButton(input);
+  }
+
+  function watchCollectionSearchClearButton() {
+    GM_addStyle(`
+      .wm-search-clear-wrapper {
+        position: relative;
+        width: 100%;
+      }
+      .wm-search-clear-padding {
+        padding-right: 1.75rem;
+      }
+      .wm-search-clear-btn {
+        position: absolute;
+        top: 50%;
+        right: 0.75rem;
+        transform: translateY(-50%);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        cursor: pointer;
+        opacity: 0.5;
+        font-size: 0.8rem;
+        line-height: 1;
+        padding: 0;
+      }
+      .wm-search-clear-btn:hover {
+        opacity: 1;
+      }
+      .wm-search-clear-btn-visible {
+        display: flex;
+      }
+    `);
+
+    updateCollectionSearchClearButton();
+
+    const observer = new MutationObserver(() =>
+      updateCollectionSearchClearButton(),
+    );
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -4337,6 +4767,10 @@ const MY_USERNAME = "onohunt";
     run("feature-fis", watchFadeInUpInlineStyleCleanup);
     run("rule-24", watchUserTagListSizing);
     run("rule-25", watchWishlistOwnedCardCount);
+    run("rule-26", watchTradesHistoryGrid);
+    run("rule-27", watchTradesHistoryFilter);
+    run("feature-cnc", watchCardModalNameCopyButton);
+    run("rule-28", watchCollectionSearchClearButton);
 
     watchFeatureConfigButton();
     watchTutorialButton();

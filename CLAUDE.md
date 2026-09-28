@@ -1,6 +1,6 @@
 ## Principles
 
-Don't include in the README:
+### READMEignore
 
 - **Affichage progressif** : Une fois toutes les notifications lues, seules les premières restent affichées — les suivantes chargent en faisant défiler jusqu'en bas
 - **Fermeture au clavier** : Échap ferme la modale de notification (ou toute autre modale ouverte sur `/pulls` et `/collection`)
@@ -12,6 +12,15 @@ Don't include in the README:
 - **Favicon personnalisé** : L'onglet du navigateur affiche le logo Wiki-MasterBetter à la place du favicon du site
 - **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
 - **Modale de carte épurée** : Sur `/collection` et `/pulls`, les mentions légales n'apparaissent plus dans la modale d'une carte, laissant plus de place à l'essentiel
+
+### Docs
+
+Every new rule/feature must be appended the documentation block near the top of the file, once its development is complete.
+DO NOT move an existing rule/feature upon modification.
+The same principle applies to the main() function and TUTORIAL_ENTRIES.
+
+The docblock in the JS file is the primary source of truth for feature description to put in the README.
+Each rule/feature also has a docblock near its implementation: look there if you want details.
 
 ### Metadata for development
 

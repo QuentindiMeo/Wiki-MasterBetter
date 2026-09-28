@@ -65,9 +65,17 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Actions rapides** : Un bouton pour ouvrir directement la modale d'enchère sur chaque carte
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
-- **Estimations mémorisées** : Le prix d'estimation vu sur `/pulls` ou `/collection` est mémorisé et affiché à côté de la rareté de chaque carte de la collection
-- **Évaluation en masse** : Trois boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation (avec une estimation du temps restant), réévaluer toute la page, ou trier la page par prix décroissant ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours
+- **Estimations mémorisées** : Les estimations du marché dans la modale de vente sont mémorisées et affichées à côté de la rareté dans votre collection
+- **Évaluation en masse** : Deux boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation, réévaluer toute la page ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours
+- **Tri par prix décroissant** : Un bouton permet de trier les cartes de la page par prix décroissant, pour repérer rapidement les plus chères
 - **Liste d'étiquettes plus lisible** : Plus de place pour afficher les étiquettes, et la liste se trie par ordre décroissant dès que les compteurs sont chargés
+- **Copier le nom d'une carte** : Un bouton 📋 à côté du nom, dans la modale de carte comme dans la modale d'enchère
+- **Effacer la recherche** : Un bouton ✕ dans le champ de recherche de la collection vide son contenu
+
+### 🔄 Échanges
+
+- **Historique en deux colonnes** : L'onglet « Historique » s'affiche en deux colonnes flexibles qui s'adaptent à la hauteur de chaque échange, plutôt qu'une seule liste
+- **Filtrer par partenaire** : Un champ de recherche au-dessus de l'historique filtre les échanges par nom de partenaire
 
 ### 💰 Marché & Enchères
 
@@ -75,11 +83,16 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Regroupement des enchères** : Bascule pour séparer « Mes enchères » en groupes « Surenchéri » / « Vous menez »
 - **Alertes d'expiration** : Une notification push se déclenche quand il reste 30 secondes sur une enchère
 - **Liens de profil de la salle de vente** : Un lien « @ » à côté du nom de chaque enchérisseur, et du vendeur
-- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
+- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
-  - Les prix enregistrés sont listés dans une grille effaçable sur votre propre profil
+  - Un indice de fiabilité accompagne le tag
+  - Les prix enregistrés sont listés dans une grille sur votre propre profil
   - Un bouton Exporter/Importer permet de copier-coller ce cache (prix de vente et estimations) vers un autre navigateur ou appareil
+
+### 📦 Toutes les cartes
+
+- **Nettoyage de la liste de souhaits** : Quand le filtre « uniquement les cartes de ma liste de souhaits » est actif, un bouton retire d'un coup toutes celles que vous possédez déjà
 
 ### 👤 Profil & Amis
 

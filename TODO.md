@@ -10,8 +10,6 @@
 - Observer une enchère
 - Historique des achats / gros achats
 - Filter historique des échanges
-- Copier le titre d'une carte au presse-papiers
-- dans wishlist - délister les possédées
 - historique des ventes impressionnantes / des grosses ventes / ventes ratées
 
 ---
