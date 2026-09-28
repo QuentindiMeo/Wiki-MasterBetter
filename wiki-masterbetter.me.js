@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.19.5
+// @version      0.19.8
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -75,7 +75,7 @@ const MY_USERNAME = "xxx";
   function applyCardFrameMaxHeight() {
     GM_addStyle(`
       div.overflow-hidden.card-frame.shadow-xl {
-        max-height: 80vh !important;
+        max-height: 60vh !important;
         width: 50vw !important;
       }
     `);
@@ -773,8 +773,68 @@ const MY_USERNAME = "xxx";
   // Feature PNP: on /pulls, once div.text-lg > span.text-[var(--color-accent)]'s count reaches ~69% of the max
   // pile size (10), send a push notification on every further increase; once it hits the max, re-send every 10
   // minutes for as long as it stays full instead of only once. Drops back below that ~69% floor resets tracking.
+  //
+  // Feature PNP (cont'd): a 🔔/🔕 toggle appended into div.gap-1.flex-col mutes this notification — off
+  // (muted) by default. Unlike Feature PNB's own toggle, the choice is stored in localStorage rather than
+  // sessionStorage: it applies across every tab and persists after they're closed, same reach as GM_setValue's
+  // other cross-tab settings elsewhere in the script. Re-appended on every checkPullsCounter tick rather than
+  // guarded by a one-time flag, since that container can be re-rendered independently of our button; the
+  // :scope > check keeps this a no-op once it's already there. A muted check still updates
+  // lastNotifiedValue/lastNotifiedAt, so unmuting later doesn't immediately fire for a pile size that was
+  // already tracked.
   // ============================================================
+  const PNP_MUTE_KEY = "wm-pnp-muted";
+
+  function isPullsNotificationMuted() {
+    return localStorage.getItem(PNP_MUTE_KEY) !== "false";
+  }
+
+  function ensurePullsMuteToggle(container) {
+    if (container.querySelector(":scope > .wm-pnp-mute-toggle")) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-pnp-mute-toggle";
+
+    const applyState = (muted) => {
+      btn.textContent = muted ? "🔕" : "🔔";
+      btn.setAttribute("aria-pressed", String(muted));
+      btn.title = muted
+        ? "Notifications de paquets accumulés désactivées (cliquer pour les réactiver)"
+        : "Notifications de paquets accumulés activées (cliquer pour les désactiver)";
+    };
+    applyState(isPullsNotificationMuted());
+
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const next = !isPullsNotificationMuted();
+      localStorage.setItem(PNP_MUTE_KEY, String(next));
+      applyState(next);
+    });
+
+    container.appendChild(btn);
+  }
+
   function watchPullsCounterNotification() {
+    GM_addStyle(`
+      .wm-pnp-mute-toggle {
+        align-self: flex-start;
+        margin-inline: auto;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+        opacity: 0.5;
+        transition: opacity 0.15s ease;
+      }
+      .wm-pnp-mute-toggle:hover {
+        opacity: 1;
+      }
+    `);
+
     const MAX_PILE_SIZE = 10;
     const TIME_TO_RELOAD__MIN = 10;
     const RESEND_INTERVAL_MS = 10 * 60 * 1000;
@@ -782,6 +842,11 @@ const MY_USERNAME = "xxx";
     let lastNotifiedAt = 0;
 
     function sendPullsNotification(newPackageCount) {
+      lastNotifiedValue = newPackageCount;
+      lastNotifiedAt = Date.now();
+
+      if (isPullsNotificationMuted()) return;
+
       const TIME_UNTIL_FULL__MIN =
         (MAX_PILE_SIZE - newPackageCount) * TIME_TO_RELOAD__MIN;
       const fullPileText = `\nVotre pile sera pleine dans ${TIME_UNTIL_FULL__MIN} minutes.`;
@@ -793,12 +858,13 @@ const MY_USERNAME = "xxx";
         text: notificationText,
         timeout: 595000, //? 9 minutes 55 seconds
       });
-      lastNotifiedValue = newPackageCount;
-      lastNotifiedAt = Date.now();
     }
 
     function checkPullsCounter() {
       if (!window.location.pathname.startsWith("/pulls")) return;
+
+      const toggleContainer = document.querySelector("div.px-6.gap-1");
+      if (toggleContainer) ensurePullsMuteToggle(toggleContainer);
 
       const span = document.querySelector(
         "div.text-lg > span.text-\\[var\\(--color-accent\\)\\]",
@@ -1163,9 +1229,71 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Feature PNB: on a bid page (/marketplace/{UUID}), send a push notification when
   // span.tabular-nums.font-medium's text ends with "dans 30s"
+  //
+  // Feature PNB (cont'd): a 🔔/🔕 toggle inserted right before that same span mutes this notification for the
+  // current tab only — off (muted) by default, since a per-tab affordance this easy to miss shouldn't opt
+  // anyone into pushes they didn't ask for. The choice lives in sessionStorage rather than GM_setValue (used
+  // elsewhere for cross-tab settings) precisely because it's per-tab: sessionStorage is isolated per tab and
+  // cleared when it closes, so unmuting in one tab never affects another. Re-inserted on every checkBidTimer
+  // tick rather than guarded by a one-time flag — same reasoning as Feature CNC's copy button — since the
+  // countdown re-rendering can replace the span (and drop our button along with it); the previousElementSibling
+  // check keeps this a no-op once it's already there. A muted timer still marks notifiedForPath as handled —
+  // unmuting mid-countdown shouldn't fire a notification for a moment that's already passed.
   // ============================================================
   const BID_PAGE_REGEX = /^\/marketplace\/[0-9a-f]+/i;
+  const PNB_TAB_MUTE_KEY = "wm-pnb-tab-muted";
+
+  function isBidTimerNotificationMuted() {
+    return sessionStorage.getItem(PNB_TAB_MUTE_KEY) !== "false";
+  }
+
+  function ensureBidTimerMuteToggle(span) {
+    if (span.previousElementSibling?.classList.contains("wm-pnb-mute-toggle"))
+      return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-pnb-mute-toggle";
+
+    const applyState = (muted) => {
+      btn.textContent = muted ? "🔕" : "🔔";
+      btn.setAttribute("aria-pressed", String(muted));
+      btn.title = muted
+        ? "Notifications de fin d'enchère désactivées pour cet onglet (cliquer pour les réactiver)"
+        : "Notifications de fin d'enchère activées (cliquer pour les désactiver sur cet onglet)";
+    };
+    applyState(isBidTimerNotificationMuted());
+
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const next = !isBidTimerNotificationMuted();
+      sessionStorage.setItem(PNB_TAB_MUTE_KEY, String(next));
+      applyState(next);
+    });
+
+    span.before(btn);
+  }
+
   function watchBidTimerNotification() {
+    GM_addStyle(`
+      .wm-pnb-mute-toggle {
+        margin-right: 0.35rem;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+        opacity: 0.5;
+        vertical-align: middle;
+        transition: opacity 0.15s ease;
+      }
+      .wm-pnb-mute-toggle:hover {
+        opacity: 1;
+      }
+    `);
+
     let notifiedForPath = null;
 
     function checkBidTimer() {
@@ -1175,10 +1303,16 @@ const MY_USERNAME = "xxx";
       }
 
       const span = document.querySelector("span.tabular-nums.font-medium");
-      if (!span || !span.textContent.trim().endsWith("dans 30s")) return;
+      if (!span) return;
+
+      ensureBidTimerMuteToggle(span);
+
+      if (!span.textContent.trim().endsWith("dans 30s")) return;
 
       if (notifiedForPath === window.location.pathname) return;
       notifiedForPath = window.location.pathname;
+
+      if (isBidTimerNotificationMuted()) return;
 
       const cardNameEl = document.querySelector("h1.min-w-0");
       const cardName = cardNameEl ? cardNameEl.textContent.trim() : null;
@@ -1792,6 +1926,7 @@ const MY_USERNAME = "xxx";
       tag.innerHTML = `<span class="wm-check-icon">✓</span> indice fiable`;
     } else {
       tag.textContent = "⚠️ indice peu fiable";
+      tag.title = "Observez cette vente pour améliorer la qualité de l'indice";
     }
     group?.appendChild(tag);
   }
@@ -4767,9 +4902,9 @@ const MY_USERNAME = "xxx";
     run("feature-fis", watchFadeInUpInlineStyleCleanup);
     run("rule-24", watchUserTagListSizing);
     run("rule-25", watchWishlistOwnedCardCount);
+    run("feature-cnc", watchCardModalNameCopyButton);
     run("rule-26", watchTradesHistoryGrid);
     run("rule-27", watchTradesHistoryFilter);
-    run("feature-cnc", watchCardModalNameCopyButton);
     run("rule-28", watchCollectionSearchClearButton);
 
     watchFeatureConfigButton();

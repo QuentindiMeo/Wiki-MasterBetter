@@ -1,3 +1,5 @@
+scripts/
+
 # Context for Claude
 *.html
 *.json

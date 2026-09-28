@@ -59,7 +59,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🎁 Pulls
 
 - **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées (gauche, droite / début, fin), Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente
-- **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent
+- **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent ; un interrupteur 🔔/🔕 permet de la désactiver
 
 ### 📦 Collection
 
@@ -81,7 +81,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Onglet « Mes enchères » par défaut** : L'arrivée sur le marché ouvre automatiquement cet onglet
 - **Regroupement des enchères** : Bascule pour séparer « Mes enchères » en groupes « Surenchéri » / « Vous menez »
-- **Alertes d'expiration** : Une notification push se déclenche quand il reste 30 secondes sur une enchère
+- **Alertes d'expiration** : Une notification push prévient qu'il reste 30 secondes sur une enchère ; un interrupteur 🔔/🔕 permet de la désactiver (par onglet)
 - **Liens de profil de la salle de vente** : Un lien « @ » à côté du nom de chaque enchérisseur, et du vendeur
 - **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**

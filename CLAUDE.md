@@ -21,6 +21,7 @@ The same principle applies to the main() function and TUTORIAL_ENTRIES.
 
 The docblock in the JS file is the primary source of truth for feature description to put in the README.
 Each rule/feature also has a docblock near its implementation: look there if you want details.
+When updating the README, check ALL rules/features — some might have been enhanced since the last version
 
 ### Metadata for development
 
