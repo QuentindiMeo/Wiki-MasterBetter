@@ -67,8 +67,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
 - **Estimations mémorisées** : Le prix d'estimation vu sur `/pulls` ou `/collection` est mémorisé et affiché à côté de la rareté de chaque carte de la collection
 - **Évaluation en masse** : Trois boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation (avec une estimation du temps restant), réévaluer toute la page, ou trier la page par prix décroissant ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours
-- **Modale de carte épurée** : Sur `/collection` et `/pulls`, les mentions légales n'apparaissent plus dans la modale d'une carte, laissant plus de place à l'essentiel
-- **Liste d'étiquettes plus lisible** : La liste des étiquettes d'une carte s'adapte à son contenu au lieu d'une largeur fixe, et se trie automatiquement par nombre de cartes décroissant dès que les compteurs sont chargés
+- **Liste d'étiquettes plus lisible** : Plus de place pour afficher les étiquettes, et la liste se trie par ordre décroissant dès que les compteurs sont chargés
 
 ### 💰 Marché & Enchères
 

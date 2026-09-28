@@ -11,6 +11,7 @@ Don't include in the README:
 - **Vente et achat de cartes mis en évidence** : les notifications de carte vendue ou remportée affichent le montant en couleur — vert pour une vente, rouge pour un achat
 - **Favicon personnalisé** : L'onglet du navigateur affiche le logo Wiki-MasterBetter à la place du favicon du site
 - **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
+- **Modale de carte épurée** : Sur `/collection` et `/pulls`, les mentions légales n'apparaissent plus dans la modale d'une carte, laissant plus de place à l'essentiel
 
 ### Metadata for development
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.17.11
+// @version      0.17.18
 // @description  A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -38,7 +38,7 @@
  * * Feature AKP: give control to keyboard hits on /pulls
  * * Feature SAT: add a "select all except tagged" button next to "Tout sélectionner (page)" on /collection
  * * Feature LBD: on /collection, pressing Enter inside the minimal bid input launches the auction
- * * Rule 14: wrap the card name in « » on "added to wishlist" notifications
+ * * Rule 14: rewrite wishlist'ed item on auction notifications
  * * Rule 15: on a marketplace item page, relabel the back button "Retour en arrière"
  * * Feature PLB: on a bid page, add an "@" profile link after each card-frame entry's name and the username
  * * Rule 16: smooth-scroll to the last unread notification when the card frame opens
@@ -54,9 +54,10 @@
  * * Rule 21: on /collection and /pulls, hide the legal mentions paragraph of the card modal
  * * Rule 22: on all pages, center loading spinner; on a bid page, also rewrite and center the "Enchère introuvable" message
  * * Rule 23: replace the site's favicon
- * * Feature FIS: on /pulls, /friends and /guild, clear the inline style the page's own load-transition wrapper keeps ending up with
+ * * Feature FIS: on /pulls, /friends, /guild and /achievements, clear the inline style the page's own load-transition wrapper keeps ending up with
  * * Feature TUT: a "❓" button next to the settings wheel opens a modal with short tutorials for the script's less-obvious features
  * * Rule 24: enlarge tag list on collection page; sort the list by descending count
+ * * Rule 25: on /global-collection, add a button to bulk-remove every owned card from the wishlist
  */
 
 const MY_USERNAME = "onohunt";
@@ -1702,7 +1703,35 @@ const MY_USERNAME = "onohunt";
     excessive: "vente décevante",
   };
 
-  function setBadge(nameEl, existing, className, label) {
+  // The buy/sale status badge and the reliability tag are grouped into a single wrapper div (nameEl's actual
+  // next sibling) so they move and get cleaned up together, rather than tracking each as its own sibling.
+  function findBadgeGroup(nameEl) {
+    return nameEl.nextElementSibling?.classList.contains("wm-badge-group")
+      ? nameEl.nextElementSibling
+      : null;
+  }
+
+  function getOrCreateBadgeGroup(nameEl) {
+    return (
+      findBadgeGroup(nameEl) ??
+      (() => {
+        const group = document.createElement("div");
+        group.className = "wm-badge-group";
+        nameEl.after(group);
+        return group;
+      })()
+    );
+  }
+
+  function findBadgeIn(group) {
+    return (
+      Array.from(group?.children ?? []).find((el) =>
+        BADGE_CLASSES.some((cls) => el.classList.contains(cls)),
+      ) ?? null
+    );
+  }
+
+  function setBadge(group, existing, className, label) {
     if (
       existing?.classList.contains(className) &&
       existing.textContent === label
@@ -1714,7 +1743,27 @@ const MY_USERNAME = "onohunt";
     const badge = document.createElement("span");
     badge.className = className;
     badge.textContent = label;
-    nameEl.after(badge);
+    group.prepend(badge);
+  }
+
+  function removeReliabilityTag(group) {
+    group?.querySelector(".wm-unreliable, .wm-reliable")?.remove();
+  }
+
+  function setReliabilityTag(group, kind) {
+    const className = kind === "reliable" ? "wm-reliable" : "wm-unreliable";
+    const existingTag = group?.querySelector(".wm-unreliable, .wm-reliable");
+    if (existingTag?.classList.contains(className)) return;
+
+    existingTag?.remove();
+    const tag = document.createElement("span");
+    tag.className = className;
+    if (kind === "reliable") {
+      tag.innerHTML = `<span class="wm-check-icon">✓</span> indice fiable`;
+    } else {
+      tag.textContent = "⚠️ indice peu fiable";
+    }
+    group?.appendChild(tag);
   }
 
   function updateSnipableBadge() {
@@ -1724,11 +1773,8 @@ const MY_USERNAME = "onohunt";
     const nameEl = document.querySelector("h1.flex-1");
     if (!nameEl) return;
 
-    const existing = BADGE_CLASSES.some((cls) =>
-      nameEl.nextElementSibling?.classList.contains(cls),
-    )
-      ? nameEl.nextElementSibling
-      : null;
+    let group = findBadgeGroup(nameEl);
+    const existing = findBadgeIn(group);
 
     // A cancelled auction ("Annulée") isn't a real outcome to price against — no sale, no legitimate final bid —
     // so no tag at all, buyer- or seller-facing. findAuctionOutcomeSpan only matches text ending in "endue" and
@@ -1737,7 +1783,7 @@ const MY_USERNAME = "onohunt";
       document.querySelectorAll("span.font-medium"),
     ).some((span) => span.textContent.trim() === "Annulée");
     if (isCancelled) {
-      existing?.remove();
+      group?.remove();
       return;
     }
 
@@ -1760,7 +1806,7 @@ const MY_USERNAME = "onohunt";
     }
 
     if (!cardName || Number.isNaN(price)) {
-      existing?.remove();
+      group?.remove();
       return;
     }
 
@@ -1789,7 +1835,9 @@ const MY_USERNAME = "onohunt";
         stored[0].endsWith(`-${currentTag}`);
 
       if (isFreshCacheEntry) {
-        setBadge(nameEl, existing, "wm-new-entry", "désormais observé");
+        group = getOrCreateBadgeGroup(nameEl);
+        setBadge(group, existing, "wm-new-entry", "désormais observé");
+        removeReliabilityTag(group);
         return;
       }
 
@@ -1801,11 +1849,13 @@ const MY_USERNAME = "onohunt";
 
     if (referenceValue === null) {
       if (isMySoldAuction) {
-        setBadge(nameEl, existing, "wm-new-entry", "vente non comparable");
+        group = getOrCreateBadgeGroup(nameEl);
+        setBadge(group, existing, "wm-new-entry", "vente non comparable");
+        removeReliabilityTag(group);
         return;
       }
 
-      existing?.remove();
+      group?.remove();
       return;
     }
 
@@ -1839,7 +1889,18 @@ const MY_USERNAME = "onohunt";
     if (isMyWonAuction) {
       label += ` (obj. ${Math.round(referenceValue)})`;
     }
-    setBadge(nameEl, existing, `wm-${status}`, label);
+    group = getOrCreateBadgeGroup(nameEl);
+    setBadge(group, existing, `wm-${status}`, label);
+
+    if (isMySoldAuction) {
+      removeReliabilityTag(group);
+    } else if (observedEntryCount <= 2) {
+      setReliabilityTag(group, "unreliable");
+    } else if (observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES) {
+      setReliabilityTag(group, "reliable");
+    } else {
+      removeReliabilityTag(group);
+    }
   }
 
   function watchSnipableBadge() {
@@ -1847,13 +1908,19 @@ const MY_USERNAME = "onohunt";
       h1.flex-1 {
         display: contents;
       }
+      .wm-badge-group {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        margin-left: 0.5rem;
+      }
       .wm-extraordinary,
       .wm-excellent,
       .wm-agreeable,
       .wm-tolerable,
       .wm-excessive,
       .wm-new-entry {
-        margin-left: 0.5rem;
+        width: max-content;
         font-weight: 600;
         font-size: 0.85rem;
         border-radius: 0.375rem;
@@ -1882,6 +1949,18 @@ const MY_USERNAME = "onohunt";
       .wm-new-entry {
         color: #ffffff;
         background-color: rgba(255, 255, 255, 0.15);
+      }
+      .wm-unreliable,
+      .wm-reliable {
+        position: absolute;
+        bottom: 1.5rem;
+        width: max-content;
+        font-size: 0.7rem;
+        color: rgba(255, 255, 255, 0.5);
+      }
+      .wm-check-icon {
+        color: #4ade80;
+        font-weight: 700;
       }
     `);
 
@@ -2632,6 +2711,10 @@ const MY_USERNAME = "onohunt";
       id: "rule-24",
       label: "Ajuster la taille de la liste d'étiquettes et la trier par usage",
     },
+    {
+      id: "rule-25",
+      label: "Retirer les cartes possédées de la liste de souhaits",
+    },
   ];
 
   function readFeatureFlags() {
@@ -3172,7 +3255,7 @@ const MY_USERNAME = "onohunt";
   //   - the fixed phrase "Votre carte vous est rendue." — with no name in it, that phrase is only how this
   //     notification type is identified. The card name isn't in that <p>: it's found by scanning the enclosing
   //     notification item (button.w-full.items-start)'s whole text content for a quoted segment (straight quotes or
-  //     « » guillemets). Rewritten to "Personne n'a enchéri pour votre carte « {name} »"
+  //     « » guillemets). Rewritten to "Personne n'a enchéri pour votre carte « {name} »", tinted light orange
   //   - an outbid refund notification, "{username} a misé {bid} wikibidous sur « {card} ». Vos {refund}
   //     wikibidous vous ont été remboursés.", rewritten to "Enchère pour « {card} » : {bid} > {refund}.
   //     Renchérissez pour gagner la carte.", with the "{bid}" segment in a gentle yellow; {card} itself is
@@ -3200,7 +3283,13 @@ const MY_USERNAME = "onohunt";
     if (!match) return false;
 
     const cardName = match[1].trim();
-    p.textContent = `Personne n'a enchéri pour votre carte « ${cardName} ».`;
+
+    const noBidderSpan = document.createElement("span");
+    noBidderSpan.className = "wm-returned-card-message";
+    noBidderSpan.textContent = "Personne";
+
+    p.textContent = "";
+    p.append(noBidderSpan, ` n'a enchéri pour votre carte « ${cardName} ».`);
     return true;
   }
 
@@ -3281,6 +3370,10 @@ const MY_USERNAME = "onohunt";
 
   function watchNotificationRewrites() {
     GM_addStyle(`
+      .wm-returned-card-message {
+        color: #fdba74;
+      }
+
       .wm-outbid-refund-other-bid {
         color: #facc15;
         font-weight: 600;
@@ -3394,6 +3487,184 @@ const MY_USERNAME = "onohunt";
   }
 
   // ============================================================
+  // Rule 25: on /global-collection, once the "wishlist only" toggle (button.gap-1\.5) is checked (class ring-2),
+  // add a button next to it — much like Feature EBC's own bulk-action buttons — offering to remove every card
+  // showing the "Possédée" tag (span.bg-emerald-600\/90 inside its description, div.top-\[45\%\]) from the
+  // wishlist. Removing one is: click the card (opens its modal), click button.w-full.transition-colors (the
+  // modal's "unwish" button), then Escape to close it before moving to the next; cancellable via a fixed stop
+  // button, same pattern as Feature EBC's own. Once the run ends (naturally or stopped), div.backdrop-blur-sm
+  // is clicked to dismiss whatever card modal is left open. The container itself is always present — only its cards are
+  // (re)populated after the toggle is flipped — so rather than watching for the container's arrival, every
+  // mutation restarts a short debounce (same rationale as Feature BSP's own scheduleUpdate: avoid reading a
+  // still-repopulating list) and the button's label only updates once the DOM has settled.
+  // ============================================================
+  function getWishlistOwnedCards(cardList) {
+    return Array.from(cardList.children).filter((card) =>
+      card
+        .querySelector("div.top-\\[45\\%\\]")
+        ?.querySelector("span.bg-emerald-600\\/90"),
+    );
+  }
+
+  function waitForElement(selector, timeout = 4000, interval = 100) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        const el = document.querySelector(selector);
+        if (el) {
+          resolve(el);
+          return;
+        }
+        if (Date.now() - start >= timeout) {
+          resolve(null);
+          return;
+        }
+        setTimeout(check, interval);
+      };
+      check();
+    });
+  }
+
+  function insertStopWishlistCleanupButton(state) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-wishlist-cleanup-stop";
+    btn.textContent = "Arrêter le retrait";
+
+    btn.addEventListener("click", () => {
+      state.stopped = true;
+    });
+
+    document.body.appendChild(btn);
+    return btn;
+  }
+
+  async function removeWishlistOwnedCards(button) {
+    const state = { stopped: false };
+    const stopBtn = insertStopWishlistCleanupButton(state);
+
+    let removed = 0;
+    while (!state.stopped) {
+      const cardList = document.querySelector("div.gap-3.justify-center");
+      const card = cardList ? getWishlistOwnedCards(cardList)[0] : null;
+      if (!card) break;
+
+      button.textContent = `Retrait des cartes possédées... (${removed + 1})`;
+      (card.querySelector("div.inset-0") ?? card).click();
+
+      const unwishBtn = await waitForElement("button.w-full.transition-colors");
+      unwishBtn?.click();
+      removed++;
+
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+
+      // Give the list a moment to drop the card before re-scanning for the next one.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    // Whether the run finished naturally or was stopped early, make sure no card modal is
+    // left open behind it — clicking the backdrop dismisses it the same way a manual click
+    // outside the modal would.
+    document.querySelector("div.backdrop-blur-sm")?.click();
+
+    stopBtn.remove();
+    button.disabled = false;
+    updateWishlistCleanupButtonLabel(button);
+  }
+
+  function updateWishlistCleanupButtonLabel(button) {
+    if (button.disabled) return;
+
+    const cardList = document.querySelector("div.gap-3.justify-center");
+    const ownedCount = cardList ? getWishlistOwnedCards(cardList).length : 0;
+
+    button.style.display = ownedCount === 0 ? "none" : "";
+    button.textContent =
+      ownedCount > 1
+        ? `Retirer les ${ownedCount} cartes possédées`
+        : `Retirer la carte possédée`;
+  }
+
+  function insertWishlistCleanupButton(toggle) {
+    let btn = document.querySelector(".wm-wishlist-cleanup");
+    if (btn) return btn;
+
+    // Same styling approach as Feature EBC's own buttons: clone a native button's className
+    // (here, the toggle itself) so ours blends in with the site's own look, rather than
+    // custom-styling it from scratch.
+    const referenceBtn = toggle.parentElement?.querySelector("button") ?? toggle;
+
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${referenceBtn.className} wm-wishlist-cleanup`;
+
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      removeWishlistOwnedCards(btn);
+    });
+
+    toggle.after(btn);
+    return btn;
+  }
+
+  function watchWishlistOwnedCardCount() {
+    GM_addStyle(`
+      .wm-wishlist-cleanup-stop {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        z-index: 999;
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 0.5rem;
+        background: #dc26265f;
+        color: #fff;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        opacity: 0.8;
+        transition: background-color 0.2s ease, opacity 0.2s ease;
+      }
+      .wm-wishlist-cleanup-stop:hover {
+        background: #b91c1c;
+        opacity: 1;
+      }
+    `);
+
+    const evaluate = () => {
+      if (!window.location.pathname.startsWith("/global-collection")) return;
+
+      const toggle = document.querySelector("button.gap-1\\.5");
+      const existingBtn = document.querySelector(".wm-wishlist-cleanup");
+      if (!toggle?.classList.contains("ring-2")) {
+        if (existingBtn) existingBtn.style.display = "none";
+        return;
+      }
+
+      const btn = insertWishlistCleanupButton(toggle);
+      updateWishlistCleanupButtonLabel(btn);
+    };
+
+    let debounceId = null;
+    const scheduleEvaluate = () => {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(evaluate, 300);
+    };
+
+    const observer = new MutationObserver(scheduleEvaluate);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+
+  // ============================================================
   // Feature EBC: on /collection, add three buttons as the last children of div.flex-wrap.gap-2 (rarity filter
   // buttons): "Réévaluer toute la page" (re-evaluates every card), "Évaluer les cartes non évaluées" (only cards
   // whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker — hidden outright once
@@ -3479,8 +3750,8 @@ const MY_USERNAME = "onohunt";
     return btn;
   }
 
-  // Measured: evaluating 50 cards takes about 68 seconds
-  const EVALUATION_SECONDS_PER_CARD__BEST = 68 / 50;
+  // Measured: evaluating 50 cards takes about 27 seconds in best case scenario, 237 at usual times
+  const EVALUATION_SECONDS_PER_CARD__BEST = 27 / 50;
   const EVALUATION_SECONDS_PER_CARD__WORST = 237 / 50;
 
   function updateEvaluateUnratedButtonLabel(btn) {
@@ -3861,19 +4132,21 @@ const MY_USERNAME = "onohunt";
   }
 
   // ============================================================
-  // Feature FIS: on /pulls (div.text-center.animate-fade-in-up), /friends (div.flex.animate-fade-in-up), and
-  // /guild (div.animate-fade-in-up.justify-between) — same wrapper class, different companion class per page —
-  // the page's own load-transition wrapper keeps ending up with an inline style — not one this script
-  // deliberately sets on it (Rule 22's own centering logic explicitly skips this class) — so this clears whatever
-  // got set on it as soon as it shows up, rather than it drifting out of its normal layout flow. Split out from
-  // Rule 22 once the same drift showed up on /friends (then /guild) too: unlike Rule 22, this fix isn't "on all
-  // pages" and doesn't belong under its numbering.
+  // Feature FIS: on /pulls (div.text-center.animate-fade-in-up), /friends (div.flex.animate-fade-in-up),
+  // /guild (div.animate-fade-in-up.justify-between), and /achievements (div.animate-fade-in-up, no companion
+  // class) — same wrapper class, different companion class per page — the page's own load-transition wrapper
+  // keeps ending up with an inline style — not one this script deliberately sets on it (Rule 22's own centering
+  // logic explicitly skips this class) — so this clears whatever got set on it as soon as it shows up, rather
+  // than it drifting out of its normal layout flow. Split out from Rule 22 once the same drift showed up on
+  // /friends (then /guild, then /achievements) too: unlike Rule 22, this fix isn't "on all pages" and doesn't
+  // belong under its numbering.
   // ============================================================
   function clearFadeInUpInlineStyle() {
     if (
       !window.location.pathname.startsWith("/pulls") &&
       !window.location.pathname.startsWith("/friends") &&
-      !window.location.pathname.startsWith("/guild")
+      !window.location.pathname.startsWith("/guild") &&
+      !window.location.pathname.startsWith("/achievements")
     )
       return;
 
@@ -3941,8 +4214,20 @@ const MY_USERNAME = "onohunt";
   // <li>s are moved into sorted (descending amount) order via a placeholder anchor, leaving the two non-tag
   // entries pinned in their original first/last spots. Guarded by a dataset flag so it isn't re-sorted on every
   // later mutation (which would otherwise also just re-fire from our own reordering).
+  //
+  // Rule 24 (cont'd): once the page has loaded, every span.truncate.leading-none on /collection gets
+  // "line-height: initial" (its own line-height was clipping). The tags list's pill text
+  // (span.min-w-0.truncate inside each tag's span.inline-flex, and the two non-tag entries' text) doesn't
+  // carry the leading-none class, so it's missed by that broad rule — the same fix is applied to it directly,
+  // as soon as the list itself enters the DOM.
   // ============================================================
   const TAG_COUNT_REGEX = /\((\d+)\)\s*$/;
+
+  function fixTruncateLineHeight() {
+    document.querySelectorAll("span.truncate.leading-none").forEach((el) => {
+      el.style.lineHeight = "initial";
+    });
+  }
 
   function sortUserTagListByCount(ul) {
     if (ul.dataset.wmTagsSorted === "true") return;
@@ -3977,10 +4262,16 @@ const MY_USERNAME = "onohunt";
   function styleUserTagList() {
     if (!window.location.pathname.startsWith("/collection")) return;
 
+    fixTruncateLineHeight();
+
     document.querySelectorAll("ul.rounded-xl").forEach((el) => {
       el.style.width = "auto";
       el.style.maxHeight = "80vh";
       sortUserTagListByCount(el);
+
+      el.querySelectorAll("span.truncate").forEach((textEl) => {
+        textEl.style.lineHeight = "initial";
+      });
     });
   }
 
@@ -4045,6 +4336,7 @@ const MY_USERNAME = "onohunt";
     run("rule-23", watchFaviconReplacement);
     run("feature-fis", watchFadeInUpInlineStyleCleanup);
     run("rule-24", watchUserTagListSizing);
+    run("rule-25", watchWishlistOwnedCardCount);
 
     watchFeatureConfigButton();
     watchTutorialButton();
