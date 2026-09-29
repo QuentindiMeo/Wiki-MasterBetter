@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.20.7
+// @version      0.20.8
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -1579,9 +1579,12 @@ const MY_USERNAME = "xxx";
         background: rgba(0, 0, 0, 0.5);
         border-radius: 0.5rem;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-        opacity: 0.7;
+        opacity: 0.25;
         pointer-events: none;
         transition: top 0.15s ease, left 0.15s ease;
+      }
+      .wm-akp-tutorial:hover {
+        opacity: 1;
       }
       .wm-akp-tutorial-row {
         display: flex;
@@ -2377,9 +2380,9 @@ const MY_USERNAME = "xxx";
   }
 
   // Feature BSP/ETS (cont'd): an import/export pill next to "Vider le cache" carries every "observed-" (Feature
-  // BSP) and "eval-" (Feature ETS) localStorage entry as one JSON blob, so that cache can be moved to another
-  // browser/device. Values are copied as their raw stored strings (not re-parsed), since Feature BSP's entries are
-  // JSON-encoded arrays while Feature ETS's are plain strings.
+  // BSP) and "eval-" (Feature ETS) localStorage entry as a downloadable "key,value" CSV file, so that cache can be
+  // moved to another browser/device. Values are carried as their raw stored strings (not re-parsed), since Feature
+  // BSP's entries are JSON-encoded arrays while Feature ETS's are plain strings; both are CSV-quoted as needed.
   const TAGGED_CACHE_PREFIXES = [BSP_KEY_PREFIX, "eval-"];
 
   function collectTaggedCacheEntries() {
@@ -2400,59 +2403,134 @@ const MY_USERNAME = "xxx";
     return entries;
   }
 
+  // RFC 4180-ish: wraps a field in quotes (doubling any inner quote) whenever it contains a comma, quote or
+  // line break; left as-is otherwise.
+  function csvEscapeField(field) {
+    const str = String(field);
+    if (/[",\r\n]/.test(str)) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  }
+
+  function buildTaggedCacheCsv(entries) {
+    const rows = [["key", "value"], ...Object.entries(entries)];
+    return rows
+      .map((row) => row.map(csvEscapeField).join(","))
+      .join("\r\n");
+  }
+
+  // Minimal RFC 4180 parser: handles quoted fields, doubled-quote escapes, and commas/line breaks inside quotes.
+  function parseCsvRows(text) {
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      if (inQuotes) {
+        if (char === '"' && text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else if (char === '"') {
+          inQuotes = false;
+        } else {
+          field += char;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inQuotes = true;
+      } else if (char === ",") {
+        row.push(field);
+        field = "";
+      } else if (char === "\n" || char === "\r") {
+        if (char === "\r" && text[i + 1] === "\n") i++;
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      } else {
+        field += char;
+      }
+    }
+
+    if (field !== "" || row.length > 0) {
+      row.push(field);
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
   function exportTaggedCacheEntries() {
     const entries = collectTaggedCacheEntries();
-    const json = JSON.stringify(entries);
     const count = Object.keys(entries).length;
+    const csv = buildTaggedCacheCsv(entries);
 
-    navigator.clipboard
-      ?.writeText(json)
-      .then(() => {
-        GM_notification({
-          title: "Wiki-Masters",
-          text: `${count} entrée(s) copiée(s) dans le presse-papiers.`,
-          timeout: 4000,
-        });
-      })
-      .catch(() => {
-        prompt(`Copiez ce texte pour exporter ${count} entrée(s) :`, json);
-      });
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `wiki-masterbetter-cache-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+
+    GM_notification({
+      title: "Wiki-Masters",
+      text: `${count} entrée(s) exportée(s) en CSV.`,
+      timeout: 4000,
+    });
   }
 
   function importTaggedCacheEntries() {
-    const json = prompt("Collez le texte précédemment exporté :");
-    if (!json) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,text/csv";
+    input.style.display = "none";
+    document.body.appendChild(input);
 
-    let entries;
-    try {
-      entries = JSON.parse(json);
-    } catch {
-      alert("Le texte collé n'est pas un export valide.");
-      return;
-    }
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
 
-    if (
-      typeof entries !== "object" ||
-      entries === null ||
-      Array.isArray(entries)
-    ) {
-      alert("Le texte collé n'est pas un export valide.");
-      return;
-    }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const rows = parseCsvRows(String(reader.result ?? ""));
+        let importedCount = 0;
 
-    let importedCount = 0;
-    Object.entries(entries).forEach(([key, value]) => {
-      if (typeof value !== "string") return;
-      if (!TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix)))
-        return;
+        rows.forEach(([key, value]) => {
+          if (typeof key !== "string" || typeof value !== "string") return;
+          if (!TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix)))
+            return;
 
-      localStorage.setItem(key, value);
-      importedCount++;
+          localStorage.setItem(key, value);
+          importedCount++;
+        });
+
+        if (importedCount === 0) {
+          alert("Le fichier n'est pas un export valide.");
+          return;
+        }
+
+        alert(
+          `${importedCount} entrée(s) importée(s). Rechargez la page pour les voir.`,
+        );
+      };
+      reader.onerror = () => {
+        alert("Le fichier n'a pas pu être lu.");
+      };
+      reader.readAsText(file);
     });
 
-    alert(
-      `${importedCount} entrée(s) importée(s). Rechargez la page pour les voir.`,
-    );
+    input.click();
   }
 
   function renderStoredBidPricesGrid() {
@@ -4585,7 +4663,7 @@ const MY_USERNAME = "xxx";
   //     on /pulls and /collection only
   //   - the bid page's own name heading (h1.flex-1 — the same element Feature BSP's badge group hangs off of),
   //     on /marketplace/{UUID}
-  // Clicking either copies that card's name to the clipboard and briefly swaps the icon for a checkmark as
+  // Clicking either copies that card's name to the clipboard and briefly swaps the icon for a check mark as
   // feedback. The button is always prepended into its name element, ahead of the (often long, truncated) name
   // text. Re-inserted on every mutation rather than guarded by a one-time flag: navigating between cards inside
   // an already-open modal (Rule 20's keyboard navigation), or between bid pages, re-renders the name element's

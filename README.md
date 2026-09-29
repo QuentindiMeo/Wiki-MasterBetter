@@ -9,9 +9,7 @@
   <a href="#-installation">Installation</a> &#xa0; | &#xa0;
   <a href="#-fonctionnalités">Fonctionnalités</a> &#xa0; | &#xa0;
   <a href="#-utilisation">Utilisation</a>
-</div>
-
-&#xa0;
+</div>&#xa0;
 
 <div align="center">
   <a href="https://github.com/QuentindiMeo/Wiki-MasterBetter/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/QuentindiMeo/Wiki-MasterBetter?style=flat&color=%23ffe937&logo=github" /></a>
@@ -23,13 +21,10 @@
 <div align="center">
   <b>Si ce script vous est utile, laissez une ⭐ sur le repo — ça aide à le faire connaître !</b>
   <br />
-  Et si vous voulez m'offrir un café :&nbsp;
   <a href="https://ko-fi.com/quentindimeo">
     <img alt="ko-fi tip button" src="https://storage.ko-fi.com/cdn/brandasset/v2/support_me_on_kofi_blue.png" height="32px" />
   </a>
-</div>
-
-&#xa0;
+</div>&#xa0;
 
 ## 📝 Description
 
@@ -88,7 +83,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Un indice de fiabilité accompagne le tag
   - Les prix enregistrés sont listés dans une grille sur votre propre profil
-  - Un bouton Exporter/Importer permet de copier-coller ce cache (prix de vente et estimations) vers un autre navigateur ou appareil
+  - Un bouton Exporter/Importer permet de télécharger ce cache (prix de vente et estimations) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil
 
 ### 📦 Catalogue
 

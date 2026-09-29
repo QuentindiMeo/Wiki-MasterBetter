@@ -87,8 +87,8 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Feature BSP — Track and grade sale prices.** Remembers how much each card has previously sold for (stored in
   your browser, not on the server) and uses that history to flag whether the current asking price looks like a
   good deal — or, on a sale you make yourself, how good that sale was. Every price it has recorded is listed in a
-  table on your own profile page, along with export/import buttons so you can carry that history over to another
-  browser or device.
+  table on your own profile page, along with export/import buttons — export downloads a CSV file and import reads
+  one back — so you can carry that history over to another browser or device.
 - **Rule 17 — Reposition "mark all as read".** Moves the "mark all as read" notifications button to the left side
   of the notifications panel, instead of wherever the site puts it by default.
 - **Rule 18 — Auto-focus useful inputs.** Opening a card's modal automatically puts your cursor in the tags input

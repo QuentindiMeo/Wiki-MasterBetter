@@ -21,6 +21,7 @@
 - panneau de hotkeys sur pulls
 - afficher EVAL sur la collection globale
 - profil -> 50rem liste de tags
+- mettre la gestion de cache dans la danger zone
 
 ---
 
