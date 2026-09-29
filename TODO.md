@@ -11,6 +11,11 @@
 - Historique des achats / gros achats
 - Filter historique des échanges
 - historique des ventes impressionnantes / des grosses ventes / ventes ratées
+- si notif d'échange/ami non lue -> badge notif dans la navbar
+- griser le bouton de miser si le miseur actuelle est l'utilisateur
+- agrandir Gérer les étiquettes, modale étiquette en masse
+- proofread les tutos
+- red glow on "Se termine dans <10s"
 
 ---
 

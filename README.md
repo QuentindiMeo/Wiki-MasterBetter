@@ -56,10 +56,10 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Suivi de lecture intelligent** : Cliquer sur une notification marque aussi toutes celles plus anciennes comme lues, met à jour le compteur
 - **Suffixe de titre d'onglet** : Le titre de l'onglet du navigateur reflète le contenu de la page visitée
 
-### 🎁 Pulls
+### 🎁 Paquets
 
 - **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées (gauche, droite / début, fin), Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente
-- **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent ; un interrupteur 🔔/🔕 permet de la désactiver
+- **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut)
 
 ### 📦 Collection
 
@@ -81,7 +81,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Onglet « Mes enchères » par défaut** : L'arrivée sur le marché ouvre automatiquement cet onglet
 - **Regroupement des enchères** : Bascule pour séparer « Mes enchères » en groupes « Surenchéri » / « Vous menez »
-- **Alertes d'expiration** : Une notification push prévient qu'il reste 30 secondes sur une enchère ; un interrupteur 🔔/🔕 permet de la désactiver (par onglet)
+- **Alertes d'expiration** : Une notification push prévient qu'il reste 30 secondes sur une enchère ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut, par onglet)
 - **Liens de profil de la salle de vente** : Un lien « @ » à côté du nom de chaque enchérisseur, et du vendeur
 - **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
@@ -90,7 +90,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Les prix enregistrés sont listés dans une grille sur votre propre profil
   - Un bouton Exporter/Importer permet de copier-coller ce cache (prix de vente et estimations) vers un autre navigateur ou appareil
 
-### 📦 Toutes les cartes
+### 📦 Catalogue
 
 - **Nettoyage de la liste de souhaits** : Quand le filtre « uniquement les cartes de ma liste de souhaits » est actif, un bouton retire d'un coup toutes celles que vous possédez déjà
 
@@ -99,7 +99,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits à leur icône
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 
-### 🏆 Hauts faits
+### 🏆 Succès
 
 - **Tout réclamer** : Un bouton additionne toutes les récompenses non réclamées et les réclame en une fois
 
