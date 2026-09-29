@@ -16,6 +16,11 @@
 - agrandir Gérer les étiquettes, modale étiquette en masse
 - proofread les tutos
 - red glow on "Se termine dans <10s"
+- ranger désétiquetage par ordre décroissant
+- filtrer les notifs par type
+- panneau de hotkeys sur pulls
+- afficher EVAL sur la collection globale
+- profil -> 50rem liste de tags
 
 ---
 

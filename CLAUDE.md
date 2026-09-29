@@ -1,27 +1,16 @@
 ## Principles
 
-### READMEignore
-
-- **Affichage progressif** : Une fois toutes les notifications lues, seules les premières restent affichées — les suivantes chargent en faisant défiler jusqu'en bas
-- **Fermeture au clavier** : Échap ferme la modale de notification (ou toute autre modale ouverte sur `/pulls` et `/collection`)
-- **Lancer l'enchère au clavier** : Appuyer sur Entrée dans le champ de mise de départ lance directement l'enchère
-- **Focus automatique** : L'ouverture de la modale d'une carte place le curseur dans son champ de mise
-- **Notification de carte rendue clarifiée** : « Votre carte "{nom}" vous est rendue. » devient « Personne n'a enchéri pour votre carte « {nom} ». »
-- **Enchère perdue clarifiée** : « {enchérisseur} a misé {mise} wikibidous sur « {carte} ». Vos {remise} wikibidous vous ont été remboursés. » devient « Enchère pour « {carte} » : {mise} > {remise}. Réenchérissez pour gagner la carte. », avec la mise adverse mise en évidence en jaune
-- **Vente et achat de cartes mis en évidence** : les notifications de carte vendue ou remportée affichent le montant en couleur — vert pour une vente, rouge pour un achat
-- **Favicon personnalisé** : L'onglet du navigateur affiche le logo Wiki-MasterBetter à la place du favicon du site
-- **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
-- **Modale de carte épurée** : Sur `/collection` et `/pulls`, les mentions légales n'apparaissent plus dans la modale d'une carte, laissant plus de place à l'essentiel
-
 ### Docs
 
-Every new rule/feature must be appended the documentation block near the top of the file, once its development is complete.
+NEVER bump the version in the docblock at the top of the JS file.
+
+Every new rule/feature must be appended the documentation file `DOCS.md`, once its development is complete.
 DO NOT move an existing rule/feature upon modification.
 The same principle applies to the main() function and TUTORIAL_ENTRIES.
 
-The docblock in the JS file is the primary source of truth for feature description to put in the README.
-Each rule/feature also has a docblock near its implementation: look there if you want details.
-When updating the README, check ALL rules/features — some might have been enhanced since the last version
+The documentation file is the primary source of truth for feature description to put in the README.
+Implementation (JS file) also has a docblock near each rule/feature: look there if you want details.
+When updating the README, check ALL rules/features (both from the documentation file and the JS file) — some might have been enhanced since the last version
 
 ### Metadata for development
 
@@ -42,3 +31,20 @@ When updating the README, check ALL rules/features — some might have been enha
 | Owned card label        | span.bg-emerald-600/90                   | No                      |
 | Bid card price          | span.text-2xl                            | No                      |
 | Owned card modal        | div.card-frame.p-6                       | Yes                     |
+
+### READMEignore
+
+- **Affichage progressif** : Une fois toutes les notifications lues, seules les premières restent affichées — les suivantes chargent en faisant défiler jusqu'en bas
+- **Fermeture au clavier** : Échap ferme la modale de notification (ou toute autre modale ouverte sur `/pulls` et `/collection`)
+- **Lancer l'enchère au clavier** : Appuyer sur Entrée dans le champ de mise de départ lance directement l'enchère
+- **Focus automatique** : L'ouverture de la modale d'une carte place le curseur dans son champ de mise
+- **Notification de carte rendue clarifiée** : « Votre carte "{nom}" vous est rendue. » devient « Personne n'a enchéri pour votre carte « {nom} ». »
+- **Enchère perdue clarifiée** : « {enchérisseur} a misé {mise} wikibidous sur « {carte} ». Vos {remise} wikibidous vous ont été remboursés. » devient « Enchère pour « {carte} » : {mise} > {remise}. Réenchérissez pour gagner la carte. », avec la mise adverse mise en évidence en jaune
+- **Vente et achat de cartes mis en évidence** : les notifications de carte vendue ou remportée affichent le montant en couleur — vert pour une vente, rouge pour un achat
+- **Favicon personnalisé** : L'onglet du navigateur affiche le logo Wiki-MasterBetter à la place du favicon du site
+- **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
+- **Modale de carte épurée** : Sur `/collection` et `/pulls`, les mentions légales n'apparaissent plus dans la modale d'une carte, laissant plus de place à l'essentiel
+- **Bouton « tout marquer comme lu » à gauche** : Repositionné du côté gauche du panneau de notifications
+- **Boutons de profil plus lisibles** : Meilleur contraste pour les boutons d'action affichés sur les pages de profil
+- **Liste d'étiquettes qui suit le clavier** : Dans la modale de carte, la liste défile automatiquement pour garder l'étiquette sélectionnée au clavier visible
+- **Bannière d'achat estompée** : Une fois qu'il ne vous reste plus aucun paquet à ouvrir, la bannière qui vous encourage à en acheter s'estompe

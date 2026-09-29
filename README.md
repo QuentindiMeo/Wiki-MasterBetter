@@ -58,7 +58,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 ### 🎁 Paquets
 
-- **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées (gauche, droite / début, fin), Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente
+- **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées (gauche-droite, début-fin), Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente, W ouvre la page Wikipédia de la carte
 - **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut)
 
 ### 📦 Collection

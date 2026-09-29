@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.19.10
+// @version      0.20.7
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -11,58 +11,6 @@
 // @grant        GM_notification
 // ==/UserScript==
 //! Regarde Naïm, c'est comme ça qu'on vibe-claude.
-
-/**
- * ? DOCUMENTATION - Overview of rules and features implemented in the script | by order of first introduction
- * * Rule 1a: make the notifications list larger
- * * Rule 1b: hide the market analysis button
- * * Rule 2: mark all notifications earlier than the one that's clicked as read
- * * Rule 3: append a suffix to the page title
- * * Rule 4: arrange friends list into a 3-column grid
- * * Rule 5: reduce message/trade buttons on friends grid
- * * Rule 6: navbar is folded by default, expanded on hover
- * * Feature NPN: the navbar can be pinned (expands on hover vs. always expanded)
- * * Rule 7: clicking the first notification marks all as read
- * . Rule 8 was merged into feature NPN
- * * Rule 9: auto-click the "Mes enchères" market tab on arrival on marketplace
- * * Feature TBC: add a trading button to the cards on collection page
- * * Rule 10: clicking a notification updates the counter accordingly
- * * Rule 11: reduce opacity of Pro incentive when 0 pack left to open
- * * Rule 12: improve visibility of action buttons on user profiles
- * * Feature PNP: send push notifications when there are a lot of packs to open
- * * Rule 13: if all notifications are read, only display 20; display all on scroll to bottom
- * * Feature TMB: add a toggler to group market bids by status
- * * Feature CME: allow the Escape key to close modals
- * * Feature PNB: send a push notification when a bid is about to expire (30 seconds left)
- * * Feature CAR: add a "claim all" button summing unclaimed achievement rewards
- * * Feature AKP: give control to keyboard hits on /pulls
- * * Feature SAT: add a "select all except tagged" button next to "Tout sélectionner (page)" on /collection
- * * Feature LBD: on /collection, pressing Enter inside the minimal bid input launches the auction
- * * Rule 14: rewrite wishlist'ed item on auction notifications
- * * Rule 15: on a marketplace item page, relabel the back button "Retour en arrière"
- * * Feature PLB: on a bid page, add an "@" profile link after each card-frame entry's name and the username
- * * Rule 16: smooth-scroll to the last unread notification when the card frame opens
- * * Feature BSP: record sold bids' prices in localStorage; flag the card on the marketplace depending on how good a deal it is (or, on the user's own completed sales, how good a sale it was); recorded data is dumped at /profile, with import/export
- * * Rule 17: bring "Mark all as read" notification button to the left
- * * Rule 18: on /collection and /pulls, focus tags input when the card modal opens; also focus the search input on arrival on /collection
- * * Feature ETS: on /pulls and /collection, store market value evaluation in localStorage; on /collection, append cached eval prices to each card's rarity tag
- * * Feature FCP: feature flipping is available through the button near the navbar pin; choices stored in localStorage, applies after a page reload
- * * Rule 19: single-pass rewrite of notification labels
- * * Feature EBC: on /collection, add buttons to bulk-evaluate every card (or just those missing it); cancellable via a stop button; plus a button to sort the page by descending eval price; keeps the site's own rarity filter buttons grouped ahead of these when one is (re)inserted
- * * Rule 20: on /collection and /pulls, the card modal's tag list scrolls to follow the keyboard-focused item
- * * Feature GCP: on /global-collection, clicking a card's friend-owner username opens that friend's profile
- * * Rule 21: on /collection and /pulls, hide the legal mentions paragraph of the card modal
- * * Rule 22: on all pages, center loading spinner; on a bid page, also rewrite and center the "Enchère introuvable" message
- * * Rule 23: replace the site's favicon
- * * Feature FIS: center the loading spinner
- * * Feature TUT: a "❓" button next to the settings wheel opens a modal with short tutorials for the script's less-obvious features
- * * Rule 24: enlarge tag list on collection page; sort the list by descending count
- * * Rule 25: add a button to bulk-remove every owned card from the wishlist
- * * Feature CNC: add a copy-to-clipboard button next to the card name, in the card modal, the auction modal and the bid page
- * * Rule 26: show trade history as a two-column grid
- * * Rule 27: filter trades history by trading partner
- * * Rule 28: add a clear button inside the collection search field
- */
 
 const MY_USERNAME = "xxx";
 
@@ -76,7 +24,7 @@ const MY_USERNAME = "xxx";
     GM_addStyle(`
       div.overflow-hidden.card-frame.shadow-xl {
         max-height: 75vh !important;
-        width: 40vw !important;
+        width: 42vw !important;
       }
     `);
   }
@@ -155,7 +103,16 @@ const MY_USERNAME = "xxx";
         MARKETPLACE_BID_PATH_REGEX,
       );
       if (bidMatch) {
-        let itemLabel = document.querySelector("h1.flex-1")?.textContent.trim();
+        // Read h1.flex-1's own text node directly (rather than its full textContent) since Feature CNC prepends
+        // a 📋 button inside that same element — including it here would leak a stray emoji into the page title.
+        const nameEl = document.querySelector("h1.flex-1");
+        let itemLabel = nameEl
+          ? Array.from(nameEl.childNodes)
+              .filter((node) => node.nodeType === Node.TEXT_NODE)
+              .map((node) => node.textContent)
+              .join("")
+              .trim()
+          : undefined;
         if (itemLabel) {
           if (itemLabel.length > MAX_ITEM_LABEL_LENGTH) {
             itemLabel = itemLabel.slice(0, MAX_ITEM_LABEL_LENGTH) + "...";
@@ -912,6 +869,36 @@ const MY_USERNAME = "xxx";
     setInterval(checkPullsCounter, 60000); //? 1 minute
   }
 
+  const PULLS_RELOAD_INTERVAL_MS = 600000; // 10 minutes
+  let pullsReloadTimerId = null;
+
+  function updatePullsReloadTimer() {
+    const onPulls = window.location.pathname.startsWith("/pulls");
+
+    if (!onPulls) {
+      if (pullsReloadTimerId !== null) {
+        clearInterval(pullsReloadTimerId);
+        pullsReloadTimerId = null;
+      }
+      return;
+    }
+
+    if (pullsReloadTimerId !== null) return;
+
+    pullsReloadTimerId = setInterval(() => {
+      if (window.location.pathname.startsWith("/pulls")) {
+        window.location.reload();
+      }
+    }, PULLS_RELOAD_INTERVAL_MS);
+  }
+
+  function watchPullsReloadTimer() {
+    updatePullsReloadTimer();
+
+    const observer = new MutationObserver(() => updatePullsReloadTimer());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   // ============================================================
   // Rule 13: when div.card-frame.shadow-xl.overflow-hidden enters the DOM and there's no span.absolute anywhere in the
   // document, keep only the first N children of div.min-h-0.flex-1; scrolling that container to the bottom restores
@@ -1282,7 +1269,7 @@ const MY_USERNAME = "xxx";
   function watchBidTimerNotification() {
     GM_addStyle(`
       .wm-pnb-mute-toggle {
-        margin-right: 0.35rem;
+        margin-inline: 0.25rem auto;
         background: none;
         border: none;
         cursor: pointer;
@@ -1507,6 +1494,125 @@ const MY_USERNAME = "xxx";
 
       clickPullsNavButton(event.key === "ArrowLeft" ? "left" : "right");
     });
+  }
+
+  // ============================================================
+  // Feature AKP (cont'd): on /pulls, while a pulled card is shown large (same guard as the E/V shortcuts above:
+  // main div.relative.inline-flex is present), dock a small legend in the space to the left of the card listing
+  // its keyboard shortcuts — ←/→ for Précédent/Suivant, Home/End for Début/Fin. Précédent/Suivant already mirror
+  // the on-screen chevron buttons, but Home/End have no visual hint otherwise. Positioned from
+  // main div.relative.inline-flex's own getBoundingClientRect(), same anchor and same self-healing pattern
+  // (mutation observer + 200ms fallback timer, since navigating between cards doesn't reliably fire a mutation
+  // these are watching for) as Feature OWL's own button, which it sits directly above so the two read as one
+  // continuous list. Purely informational — pointer-events: none — so it never intercepts clicks.
+  // ============================================================
+  let pullsTutorialPanel = null;
+
+  function ensurePullsTutorialPanel() {
+    if (pullsTutorialPanel && document.body.contains(pullsTutorialPanel))
+      return pullsTutorialPanel;
+
+    const panel = document.createElement("div");
+    panel.className = "wm-akp-tutorial";
+
+    [
+      ["←", "Carte précédente"],
+      ["→", "Carte suivante"],
+      ["Home", "Première carte"],
+      ["End", "Dernière carte"],
+      ["E", "Ouvrir la carte"],
+      ["V", "Ouvrir la vente"],
+      ["W", "Ouvrir la page Wikipédia"],
+      ["Space", "Ouvrir/Fermer le paquet"],
+    ].forEach(([key, label]) => {
+      const row = document.createElement("div");
+      row.className = "wm-akp-tutorial-row";
+
+      const keyEl = document.createElement("span");
+      keyEl.className = "wm-akp-tutorial-key";
+      keyEl.textContent = key;
+
+      row.append(keyEl, document.createTextNode(label));
+      panel.appendChild(row);
+    });
+
+    document.body.appendChild(panel);
+    pullsTutorialPanel = panel;
+    return panel;
+  }
+
+  function updatePullsTutorialPanel() {
+    if (!window.location.pathname.startsWith("/pulls")) {
+      if (pullsTutorialPanel) pullsTutorialPanel.style.display = "none";
+      return;
+    }
+
+    const hasCardSpan = Array.from(document.querySelectorAll("main span")).some(
+      (span) => span.textContent.trim() === "Carte",
+    );
+    const cardEl = hasCardSpan
+      ? document.querySelector("main div.relative.inline-flex")
+      : null;
+    const rect = cardEl?.getBoundingClientRect();
+
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      if (pullsTutorialPanel) pullsTutorialPanel.style.display = "none";
+      return;
+    }
+
+    const panel = ensurePullsTutorialPanel();
+    panel.style.display = "";
+    panel.style.top = `${rect.top * 2 + rect.height / 2}px`;
+    panel.style.left = `${rect.left}px`;
+  }
+
+  function watchPullsTutorialPanel() {
+    GM_addStyle(`
+      .wm-akp-tutorial {
+        position: fixed;
+        transform: translate(-100%, calc(-100% - 1.5rem));
+        margin-left: -0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        padding: 0.4rem 0.55rem;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        opacity: 0.7;
+        pointer-events: none;
+        transition: top 0.15s ease, left 0.15s ease;
+      }
+      .wm-akp-tutorial-row {
+        display: flex;
+        flex-direction: row-reverse;
+        align-items: center;
+        gap: 0.4rem;
+        white-space: nowrap;
+        font-size: 0.78rem;
+        color: #fff;
+      }
+      .wm-akp-tutorial-key {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 2.75rem;
+        padding: 0.05rem 0.3rem;
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        border-radius: 0.25rem;
+        font-size: 0.68rem;
+        font-weight: 600;
+      }
+    `);
+
+    updatePullsTutorialPanel();
+
+    const observer = new MutationObserver(() => updatePullsTutorialPanel());
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Same self-heal rationale as Feature OWL's own button: navigating between revealed cards doesn't reliably
+    // fire a mutation the observer above catches in time (or at all).
+    setInterval(updatePullsTutorialPanel, 200);
   }
 
   // ============================================================
@@ -1749,7 +1855,16 @@ const MY_USERNAME = "xxx";
     // pollute the market-observed average.
     if (getBidPageSellerUsername() === MY_USERNAME) return;
 
-    const cardName = document.querySelector("h1.flex-1")?.textContent.trim();
+    // Read h1.flex-1's own text node directly (rather than its full textContent) since Feature CNC prepends a
+    // 📋 button inside that same element — including it here would corrupt the "observed-{cardName}" cache key.
+    const nameEl = document.querySelector("h1.flex-1");
+    const cardName = nameEl
+      ? Array.from(nameEl.childNodes)
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent)
+          .join("")
+          .trim()
+      : undefined;
     const priceText = document
       .querySelector("span.text-2xl")
       ?.textContent.replace(/\s/g, "");
@@ -1955,7 +2070,14 @@ const MY_USERNAME = "xxx";
       return;
     }
 
-    const cardName = nameEl.textContent.trim();
+    // Read nameEl's own text nodes directly (rather than its full textContent) since Feature CNC prepends a 📋
+    // button inside that same element — including it here would corrupt the "observed-"/"eval-" cache lookups
+    // this cardName feeds into below.
+    const cardName = Array.from(nameEl.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join("")
+      .trim();
     const isSold = findAuctionOutcomeSpan()?.textContent.trim() === "Vendue";
 
     // Once an auction is terminated — sold OR "Non vendue" — the bid input is gone (bidding's over either way),
@@ -2663,7 +2785,7 @@ const MY_USERNAME = "xxx";
   // 1000, it's abbreviated to "{X,X} K" (French decimal comma); otherwise it's shown as stored, including the "?"
   // placeholder for a card with no recorded sales.
   // ============================================================
-  const WORTHLESS_THRESHOLD = 15;
+  const WORTHLESS_THRESHOLD = 10;
   function formatEvalValue(rawValue) {
     const num = parseFloat(rawValue.replace(/\s/g, "").replace(",", "."));
     if (Number.isNaN(num)) return rawValue;
@@ -2935,6 +3057,15 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-28",
       label: "Bouton pour effacer la recherche de collection",
+    },
+    {
+      id: "feature-owl",
+      label: "Lien direct vers la page Wikipédia d'une carte tirée",
+    },
+    {
+      id: "rule-29",
+      label:
+        "Recharger automatiquement la page toutes les 10 minutes sur /pulls",
     },
   ];
 
@@ -3334,6 +3465,10 @@ const MY_USERNAME = "xxx";
     {
       title: "Accéder à un profil en un clic",
       text: "Un petit « @ » à côté d'un pseudo (sur une page d'enchère, ou à côté du nom d'un ami dans la liste de souhaits) ouvre directement son profil.",
+    },
+    {
+      title: "Voir la page Wikipédia d'une carte tirée",
+      text: "Sur /pulls, tant qu'une carte est affichée en grand, la touche W ouvre directement sa page Wikipédia, sans passer par sa modale.",
     },
   ];
 
@@ -4428,7 +4563,10 @@ const MY_USERNAME = "xxx";
       if (legalMentions) legalMentions.style.display = "none";
 
       const link = modal.querySelector("a.inline-flex");
-      if (link) link.classList.add("m-0", "mt-5");
+      if (link) {
+        link.classList.add("m-0", "mt-5");
+        link.parentElement?.classList.add("mt-auto");
+      }
     }, 250);
   }
 
@@ -4863,6 +5001,37 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Feature OWL: on /pulls, while a pulled card is shown large (guarded the same way as Feature AKP's E shortcut:
+  // a span reading "Carte" is present in main), pressing W (ignored while focus is inside an <input>, same guard
+  // as Feature AKP's E/V) does what E followed by clicking the card's Wikipedia link would: opens the card modal
+  // (by clicking main img.scale-[1.8], same as E) then, 50ms later — the same delay Feature AKP already uses for
+  // its own V shortcut's sell button, to let the modal render — clicks its outward link (a.inline-flex) for you.
+  // No on-screen button any more: Feature AKP's own legend (its "W" row) explains the shortcut instead.
+  // ============================================================
+  function watchPulledCardWikiLinkShortcut() {
+    document.addEventListener("keydown", (event) => {
+      if (!window.location.pathname.startsWith("/pulls")) return;
+      if (event.key !== "w" && event.key !== "W") return;
+      if (event.target instanceof HTMLInputElement) return;
+
+      const hasCardSpan = Array.from(
+        document.querySelectorAll("main span"),
+      ).some((span) => span.textContent.trim() === "Carte");
+      if (!hasCardSpan) return;
+
+      const cardImg = document.querySelector("main img.scale-\\[1\\.8\\]");
+      if (!cardImg) return;
+
+      event.preventDefault();
+      cardImg.click();
+
+      setTimeout(() => {
+        document.querySelector("div.card-frame.p-6 a.inline-flex")?.click();
+      }, 50);
+    });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -4894,6 +5063,7 @@ const MY_USERNAME = "xxx";
     run("feature-pnb", watchBidTimerNotification);
     run("feature-car", watchClaimAllButton);
     run("feature-akp", watchPullsArrowNavigation);
+    run("feature-akp", watchPullsTutorialPanel);
     run("feature-sat", watchSelectUntaggedButton);
     run("feature-lbd", watchStartingBidEnterKey);
     run("rule-14", watchWishlistToastWrap);
@@ -4921,6 +5091,8 @@ const MY_USERNAME = "xxx";
     run("rule-26", watchTradesHistoryGrid);
     run("rule-27", watchTradesHistoryFilter);
     run("rule-28", watchCollectionSearchClearButton);
+    run("feature-owl", watchPulledCardWikiLinkShortcut);
+    run("rule-29", watchPullsReloadTimer);
 
     watchFeatureConfigButton();
     watchTutorialButton();
