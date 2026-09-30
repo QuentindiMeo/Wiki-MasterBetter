@@ -133,3 +133,11 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Feature OWL — Jump straight to a pulled card's Wikipedia page.** While opening packs on `/pulls`, pressing the
   W key opens the revealed card's Wikipedia page directly, without you needing to first open the card's modal and
   find the link yourself. (Feature AKP's own on-screen legend documents the shortcut.)
+- **Rule 29 — Automatic page reloads when stuck.** On `/pulls`, once your pack pile has reached the maximum size,
+  the page reloads every 10 minutes for as long as it stays full — opening packs cancels the timer instead of
+  letting it reload mid-session. On a card's bidding page, if Rule 22's "Auction not found" message is showing, the
+  page reloads itself once automatically, shortly after.
+- **Rule 30 — Bigger, reorganized bulk-tagging modal.** Widens the "apply a tag" / "remove a tag" modal on your
+  collection page and lays its tag list out as a wrapping grid instead of one narrow column, so more tags fit on
+  screen at once. On the removal variant specifically, the list is also sorted so the tags affecting the most of
+  your selected cards appear first.

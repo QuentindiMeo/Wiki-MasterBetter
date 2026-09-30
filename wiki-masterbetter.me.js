@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.20.11
+// @version      0.20.14
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -45,24 +45,46 @@ const MY_USERNAME = "xxx";
   // bg-[var(--color-accent)]/5 styling:
   //   - strip that class from all of its NEXT siblings (previous siblings are untouched)
   //   - hide (display: none) every div.w-2.h-2 found inside those next siblings
+  //
+  // Rule 2 (cont'd) — perf: originally walked every qualifying button's own full suffix of siblings
+  // (O(buttons) × O(siblings), quadratic on a long notification list — the prime suspect behind reported
+  // page hangs/crashes on opening a big notification board). Since "next siblings" are cumulative in document
+  // order, the union of every qualifying button's suffix is just the single suffix starting at the FIRST
+  // unaccented button: once that one is found, every sibling after it needs the same treatment regardless of
+  // which button originally triggered it. So each distinct parent (buttons can, in theory, live under more than
+  // one container) is now walked exactly once, flipping a "past the first unaccented button" flag forward —
+  // same end result, O(siblings) instead of O(buttons × siblings).
   // ============================================================
   const ACCENT_CLASS = "bg-[var(--color-accent)]/5";
   function stripAccentFromFollowingSiblings() {
+    const parents = new Set();
     document.querySelectorAll("button.w-full.items-start").forEach((btn) => {
-      if (btn.classList.contains(ACCENT_CLASS)) return;
+      if (btn.parentElement) parents.add(btn.parentElement);
+    });
 
-      let sibling = btn.nextElementSibling;
-      while (sibling) {
-        if (sibling.classList && sibling.classList.contains(ACCENT_CLASS)) {
-          sibling.classList.remove(ACCENT_CLASS);
+    parents.forEach((parent) => {
+      let pastUnaccented = false;
+
+      Array.from(parent.children).forEach((child) => {
+        if (
+          !pastUnaccented &&
+          child.matches("button.w-full.items-start") &&
+          !child.classList.contains(ACCENT_CLASS)
+        ) {
+          pastUnaccented = true;
+          return;
         }
 
-        sibling.querySelectorAll("div.w-2.h-2").forEach((dot) => {
+        if (!pastUnaccented) return;
+
+        if (child.classList.contains(ACCENT_CLASS)) {
+          child.classList.remove(ACCENT_CLASS);
+        }
+
+        child.querySelectorAll("div.w-2.h-2").forEach((dot) => {
           dot.style.display = "none";
         });
-
-        sibling = sibling.nextElementSibling;
-      }
+      });
     });
   }
 
@@ -463,9 +485,23 @@ const MY_USERNAME = "xxx";
 
   // ============================================================
   // Rule 7: clicking the first <button> inside div.min-h-0.flex-1 also clicks the button labelled "Tout marquer lu"
+  //
+  // Rule 7 (hotfix) — perf: findMarkAllReadButton used to scan every <button> in the entire document. Its style
+  // variant below runs from a MutationObserver on document.body with no page/container guard at all, so that full
+  // scan re-ran on every single DOM mutation anywhere on the site — one of the prime suspects behind reported
+  // page hangs/crashes when the notifications board (which can hold hundreds of <button> notification items)
+  // opens. The "Tout marquer lu" button only ever lives inside the notifications panel itself
+  // (div.card-frame.shadow-xl.overflow-hidden — see Rule 17, which targets that same container's first child), so
+  // the search is now scoped to it: bounded by the panel's own size instead of the whole page, and skipped
+  // entirely (no scan at all) whenever the panel isn't even open.
   // ============================================================
   function findMarkAllReadButton() {
-    return Array.from(document.querySelectorAll("button")).find(
+    const container = document.querySelector(
+      "div.card-frame.shadow-xl.overflow-hidden",
+    );
+    if (!container) return undefined;
+
+    return Array.from(container.querySelectorAll("button")).find(
       (btn) =>
         btn.textContent.trim() === "Tout marquer lu" ||
         btn.getAttribute("aria-label") === "Tout marquer lu",
@@ -884,14 +920,30 @@ const MY_USERNAME = "xxx";
   // Rule 29: on /pulls, once div.text-lg > span.text-[var(--color-accent)]'s count has reached the max pile size
   // (10, see Feature PNP), reload the page every 10 minutes for as long as it stays at that count. Dropping below
   // the max (e.g. the player opens packs) cancels the timer instead of letting it reload mid-session.
+  //
+  // Rule 29 (cont'd): on a bid page (/marketplace/{UUID}), Rule 22 already detects the "Enchère introuvable"
+  // scenario (centerSpinnerAndAuctionNotFoundInMain, which locates that div via findInnermostDivContainingText)
+  // and hints the player to wait or refresh. This automates that hint: once that div is showing, reload once
+  // after 5 seconds — a one-shot timeout rather than a repeating interval, since a reload either fixes the page
+  // (nothing left to reload for) or shows the same message again, which simply re-arms the timeout from scratch.
+  // The div disappearing (auction loads, or navigating away) before the 5 seconds are up cancels it.
   // ============================================================
   const PULLS_RELOAD_INTERVAL_MS = 600000; // 10 minutes
+  const AUCTION_NOT_FOUND_RELOAD_DELAY_MS = 1000; // 1 second
   let pullsReloadTimerId = null;
+  let auctionNotFoundReloadTimerId = null;
 
   function isPullsPileFull() {
     return (
       window.location.pathname.startsWith("/pulls") &&
       getCurrentPacksToOpen() === MAX_PILE_SIZE
+    );
+  }
+
+  function isAuctionNotFoundShowing() {
+    return (
+      MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname) &&
+      findInnermostDivContainingText(AUCTION_NOT_FOUND_PHRASE) !== undefined
     );
   }
 
@@ -913,10 +965,33 @@ const MY_USERNAME = "xxx";
     }, PULLS_RELOAD_INTERVAL_MS);
   }
 
+  function updateAuctionNotFoundReloadTimer() {
+    if (!isAuctionNotFoundShowing()) {
+      if (auctionNotFoundReloadTimerId !== null) {
+        clearTimeout(auctionNotFoundReloadTimerId);
+        auctionNotFoundReloadTimerId = null;
+      }
+      return;
+    }
+
+    if (auctionNotFoundReloadTimerId !== null) return;
+
+    auctionNotFoundReloadTimerId = setTimeout(() => {
+      auctionNotFoundReloadTimerId = null;
+      if (isAuctionNotFoundShowing()) {
+        window.location.reload();
+      }
+    }, AUCTION_NOT_FOUND_RELOAD_DELAY_MS);
+  }
+
   function watchPullsReloadTimer() {
     updatePullsReloadTimer();
+    updateAuctionNotFoundReloadTimer();
 
-    const observer = new MutationObserver(() => updatePullsReloadTimer());
+    const observer = new MutationObserver(() => {
+      updatePullsReloadTimer();
+      updateAuctionNotFoundReloadTimer();
+    });
     observer.observe(document.body, {
       childList: true,
       subtree: true,
@@ -3175,7 +3250,7 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-29",
       label:
-        "Recharger automatiquement la page toutes les 10 minutes sur /pulls",
+        "Recharger automatiquement la page (pile de paquets pleine, enchère introuvable)",
     },
     {
       id: "rule-30",
@@ -4142,9 +4217,10 @@ const MY_USERNAME = "xxx";
   // row heights) nor CSS multi-column (which would fill the whole first column before spilling into the second,
   // i.e. items 1-N/2 then N/2+1-N). Instead, items are read in their original top-to-bottom order and each one
   // is placed into whichever column is currently shorter, so the reading order still goes roughly left-to-right,
-  // top-to-bottom despite every item's height being different. Applied once per list (dataset flag, cleared when
-  // the list empties out so a fresh one gets reprocessed) rather than on every mutation, since re-measuring and
-  // reshuffling an already-arranged list on unrelated mutations would fight the layout it just built.
+  // top-to-bottom despite every item's height being different. Skipped once every current child already carries
+  // "wm-trades-history-item" (i.e. this has already run for exactly this set of children), rather than on every
+  // mutation, since re-measuring and reshuffling an already-arranged list on unrelated mutations would fight the
+  // layout it just built.
   // ============================================================
   // Rule 26 (hotfix): the two columns are laid out with absolute positioning on each item, in place, rather than
   // reparenting items into two wrapper divs like the original implementation did. Leaving /trades re-renders the
@@ -4153,19 +4229,43 @@ const MY_USERNAME = "xxx";
   // already documented on Rule 4. Only setting each item's own inline position never changes anyone's parent, so
   // React's own re-render (or unmount, when switching tabs) stays consistent with the real DOM no matter what we
   // did to it.
+  //
+  // Rule 26 (hotfix 2): each item's height is measured AFTER its width is narrowed down to the column width, not
+  // before. An item can wrap onto extra lines once narrowed (e.g. a trade listing several cards per side), so
+  // measuring at the list's original full width undercounted its real (post-resize) height — the next item placed
+  // below it then overlapped instead of being pushed down.
+  //
+  // Rule 26 (hotfix 3): a dataset flag on the list used to guard against reprocessing, cleared only once the list's
+  // children count reached 0. But leaving /trades and coming back can swap in a fresh batch of "Historique" items
+  // without ever passing through that empty state (the site replaces the old children directly), so the flag stayed
+  // "true" from the very first run and every later visit's fresh, unstyled items were left un-arranged. Checking
+  // each current child directly (do they already carry our class?) instead of a one-shot flag re-arranges every
+  // time a set of children hasn't been processed yet, no matter how it got there. This same layout routine is also
+  // reused by Rule 27 to re-pack the list around whatever is currently visible after a filter change, so it only
+  // ever lays out children whose "display" isn't "none" — a hidden item keeps whatever stale position it had, which
+  // is harmless since it isn't shown anyway.
   // ============================================================
-  function buildTradesHistoryColumns(list) {
-    const items = Array.from(list.children);
-    const heights = items.map((item) => item.offsetHeight);
-
+  function layoutTradesHistoryColumns(list) {
+    const items = Array.from(list.children).filter(
+      (item) => item.style.display !== "none",
+    );
     const gap = 12;
     const columnWidth = (list.clientWidth - gap) / 2;
+
+    // Width has to be applied before measuring height: an item can wrap onto extra lines once narrowed down to a
+    // column's width (e.g. a trade with several cards per side), so measuring offsetHeight at the list's original
+    // full width undercounts how tall it actually ends up once placed in a column — the next item placed below it
+    // then overlaps it instead of being pushed down.
+    items.forEach((item) => {
+      item.classList.add("wm-trades-history-item");
+      item.style.width = `${columnWidth}px`;
+    });
+
+    const heights = items.map((item) => item.offsetHeight);
     const columnHeights = [0, 0];
 
     items.forEach((item, i) => {
       const target = columnHeights[0] <= columnHeights[1] ? 0 : 1;
-      item.classList.add("wm-trades-history-item");
-      item.style.width = `${columnWidth}px`;
       item.style.left = target === 0 ? "0" : `${columnWidth + gap}px`;
       item.style.top = `${columnHeights[target]}px`;
       columnHeights[target] += heights[i] + gap;
@@ -4179,22 +4279,19 @@ const MY_USERNAME = "xxx";
     if (!window.location.pathname.startsWith("/trades")) return;
 
     const list = document.querySelector("div.space-y-3.animate-fade-in-up");
-    if (!list) return;
+    if (!list || list.children.length === 0) return;
 
-    if (list.children.length === 0) {
-      delete list.dataset.wmMasonryApplied;
-      return;
-    }
-
-    if (list.dataset.wmMasonryApplied === "true") return;
+    const alreadyLaidOut = Array.from(list.children).every((item) =>
+      item.classList.contains("wm-trades-history-item"),
+    );
+    if (alreadyLaidOut) return;
 
     const activeTab = document.querySelector(
       "button.border-\\[var\\(--color-accent\\)\\]",
     );
     if (activeTab?.textContent.trim() !== "Historique") return;
 
-    list.dataset.wmMasonryApplied = "true";
-    buildTradesHistoryColumns(list);
+    layoutTradesHistoryColumns(list);
   }
 
   function watchTradesHistoryGrid() {
@@ -4223,7 +4320,10 @@ const MY_USERNAME = "xxx";
   // to filter the "Historique" list by trading partner. Each trade instance (div.card-frame.p-4) carries its
   // partner's name in span.text-sm, prefixed with "De " (they initiated it) or "À " (you did) — stripped before
   // matching. Items whose partner name doesn't contain the (case-insensitive) filter text are hidden via
-  // "display: none"; an empty filter shows everything again.
+  // "display: none"; an empty filter shows everything again. Rule 26's own column layout is then re-run so the
+  // remaining visible items re-pack into two tight columns instead of keeping the positions they had among the
+  // full, unfiltered list — which would otherwise leave them floating in place with gaps where hidden items used
+  // to be.
   // ============================================================
   const TRADE_PARTNER_PREFIX_REGEX = /^(De |À )/;
 
@@ -4246,6 +4346,8 @@ const MY_USERNAME = "xxx";
         !normalizedQuery || partnerName.toLowerCase().includes(normalizedQuery);
       item.style.display = matches ? "" : "none";
     });
+
+    layoutTradesHistoryColumns(grid);
   }
 
   function insertTradesHistoryFilterInput(grid) {
