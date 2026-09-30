@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.20.8
+// @version      0.20.11
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -730,6 +730,22 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Shared by Feature PNP and Rule 29: the max pile size (10) that div.text-lg > span.text-[var(--color-accent)]'s
+  // count caps out at, and a helper to read that count.
+  // ============================================================
+  const MAX_PILE_SIZE = 10;
+
+  function getCurrentPacksToOpen() {
+    const span = document.querySelector(
+      "div.text-lg > span.text-\\[var\\(--color-accent\\)\\]",
+    );
+    if (!span) return null;
+
+    const value = parseInt(span.textContent.trim(), 10);
+    return Number.isNaN(value) ? null : value;
+  }
+
+  // ============================================================
   // Feature PNP: on /pulls, once div.text-lg > span.text-[var(--color-accent)]'s count reaches ~69% of the max
   // pile size (10), send a push notification on every further increase; once it hits the max, re-send every 10
   // minutes for as long as it stays full instead of only once. Drops back below that ~69% floor resets tracking.
@@ -795,7 +811,7 @@ const MY_USERNAME = "xxx";
       }
     `);
 
-    const MAX_PILE_SIZE = 10;
+    const PILE_PROPORTION_NOTIFICATION_LIMIT = 0.9 - 0.01; // % of the max pile size, minus floating point uncertainty
     const TIME_TO_RELOAD__MIN = 10;
     const RESEND_INTERVAL_MS = 10 * 60 * 1000;
     let lastNotifiedValue = null;
@@ -826,15 +842,10 @@ const MY_USERNAME = "xxx";
       const toggleContainer = document.querySelector("div.px-6.gap-1");
       if (toggleContainer) ensurePullsMuteToggle(toggleContainer);
 
-      const span = document.querySelector(
-        "div.text-lg > span.text-\\[var\\(--color-accent\\)\\]",
-      );
-      if (!span) return;
-
-      const currentPacksToOpen = parseInt(span.textContent.trim(), 10);
+      const currentPacksToOpen = getCurrentPacksToOpen();
       if (
-        Number.isNaN(currentPacksToOpen) ||
-        currentPacksToOpen < MAX_PILE_SIZE * 0.69
+        currentPacksToOpen === null ||
+        currentPacksToOpen < MAX_PILE_SIZE * PILE_PROPORTION_NOTIFICATION_LIMIT
       ) {
         lastNotifiedValue = null;
         lastNotifiedAt = 0;
@@ -869,13 +880,23 @@ const MY_USERNAME = "xxx";
     setInterval(checkPullsCounter, 60000); //? 1 minute
   }
 
+  // ============================================================
+  // Rule 29: on /pulls, once div.text-lg > span.text-[var(--color-accent)]'s count has reached the max pile size
+  // (10, see Feature PNP), reload the page every 10 minutes for as long as it stays at that count. Dropping below
+  // the max (e.g. the player opens packs) cancels the timer instead of letting it reload mid-session.
+  // ============================================================
   const PULLS_RELOAD_INTERVAL_MS = 600000; // 10 minutes
   let pullsReloadTimerId = null;
 
-  function updatePullsReloadTimer() {
-    const onPulls = window.location.pathname.startsWith("/pulls");
+  function isPullsPileFull() {
+    return (
+      window.location.pathname.startsWith("/pulls") &&
+      getCurrentPacksToOpen() === MAX_PILE_SIZE
+    );
+  }
 
-    if (!onPulls) {
+  function updatePullsReloadTimer() {
+    if (!isPullsPileFull()) {
       if (pullsReloadTimerId !== null) {
         clearInterval(pullsReloadTimerId);
         pullsReloadTimerId = null;
@@ -886,7 +907,7 @@ const MY_USERNAME = "xxx";
     if (pullsReloadTimerId !== null) return;
 
     pullsReloadTimerId = setInterval(() => {
-      if (window.location.pathname.startsWith("/pulls")) {
+      if (isPullsPileFull()) {
         window.location.reload();
       }
     }, PULLS_RELOAD_INTERVAL_MS);
@@ -896,7 +917,11 @@ const MY_USERNAME = "xxx";
     updatePullsReloadTimer();
 
     const observer = new MutationObserver(() => updatePullsReloadTimer());
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
   }
 
   // ============================================================
@@ -2415,9 +2440,7 @@ const MY_USERNAME = "xxx";
 
   function buildTaggedCacheCsv(entries) {
     const rows = [["key", "value"], ...Object.entries(entries)];
-    return rows
-      .map((row) => row.map(csvEscapeField).join(","))
-      .join("\r\n");
+    return rows.map((row) => row.map(csvEscapeField).join(",")).join("\r\n");
   }
 
   // Minimal RFC 4180 parser: handles quoted fields, doubled-quote escapes, and commas/line breaks inside quotes.
@@ -2800,7 +2823,9 @@ const MY_USERNAME = "xxx";
   // "Aucune vente" (no sales recorded yet for that card), stores the "?" placeholder (UNKNOWN_EVAL_VALUE) instead
   // of leaving that card unrecorded. p.truncate's own text node is read directly (rather than its full
   // textContent) since Feature CNC prepends a 📋 button inside that same element — including it here would
-  // corrupt the cache key with a stray emoji.
+  // corrupt the cache key with a stray emoji. Never overwrites an already-stored genuine (numeric) eval with the
+  // "?" placeholder — a transient DOM state during a page/modal transition (span.tabular-nums briefly gone while
+  // a stale "Aucune vente" is still on screen) must not erase a value this already recorded correctly.
   // ============================================================
   const UNKNOWN_EVAL_VALUE = "?";
 
@@ -2832,7 +2857,14 @@ const MY_USERNAME = "xxx";
     if (!cardName || !value) return;
 
     const key = `eval-${cardName}`;
-    if (localStorage.getItem(key) === value) return;
+    const existingValue = localStorage.getItem(key);
+    if (existingValue === value) return;
+    if (
+      value === UNKNOWN_EVAL_VALUE &&
+      existingValue !== null &&
+      existingValue !== UNKNOWN_EVAL_VALUE
+    )
+      return;
 
     localStorage.setItem(key, value);
   }
@@ -3144,6 +3176,10 @@ const MY_USERNAME = "xxx";
       id: "rule-29",
       label:
         "Recharger automatiquement la page toutes les 10 minutes sur /pulls",
+    },
+    {
+      id: "rule-30",
+      label: "Agrandir et réorganiser la modale d'étiquetage en masse",
     },
   ];
 
@@ -5079,6 +5115,96 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 30: on /collection, whenever the multi-tagging modal ("Appliquer une étiquette", div.max-w-md) enters the
+  // DOM, widen it from max-w-md to max-w-xl for more room, then on its tag list (the modal's max-h-64 child) give
+  // it the "wm-multi-tag-list" class — CSS-driven (rather than inline styles) so the layout is easy to tweak in
+  // one place — which forces "max-height: 50vh" (taller than the site's own fixed max-h-64) and turns it from a
+  // single vertical column into a wrapped flex list. Each tag is rendered as a <button> that otherwise carries its
+  // own "width: 100%" utility class, which would still stack them one per row even once their container wraps —
+  // so every button under that class is forced to "width: auto" too, letting them actually flow left-to-right.
+  // Renaming the modal's own class away from "max-w-md" doubles as the guard against re-processing it on every
+  // later mutation, since it then stops matching the selector this runs on.
+  //
+  // Rule 30 (cont'd): the same tag list is reused for the bulk UN-tagging modal, distinguishable by each of its
+  // buttons carrying a span.text-[var(--color-foreground)]/45 with a number (how many of the selected cards
+  // currently carry that tag). When every direct <button> child has one, the list is re-sorted (descending by that
+  // number) — the tags affecting the most selected cards surface first. Guarded by a dataset flag so it isn't
+  // re-sorted on every later mutation (which would otherwise also just re-fire from our own reordering); until
+  // every button has a computable count (they can load in after the list itself renders) or on the "Appliquer une
+  // étiquette" variant (which never carries that span), it's simply left in the site's own order.
+  // ============================================================
+  function styleMultiTagModal() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    document.querySelectorAll("div.max-w-md").forEach((modal) => {
+      modal.classList.remove("max-w-md");
+      modal.classList.add("max-w-xl");
+
+      modal.querySelector(".max-h-64")?.classList.add("wm-multi-tag-list");
+    });
+  }
+
+  function sortUntagButtonsByCount(tagList) {
+    if (tagList.dataset.wmUntagSorted === "true") return;
+
+    const buttons = Array.from(tagList.querySelectorAll(":scope > button"));
+    if (buttons.length === 0) return;
+
+    const entries = buttons.map((button) => {
+      const countEl = button.querySelector(
+        "span.text-\\[var\\(--color-foreground\\)\\]\\/45",
+      );
+      if (!countEl) return null;
+
+      const count = parseInt(countEl.textContent.trim(), 10);
+      return Number.isNaN(count) ? null : { button, count };
+    });
+
+    if (entries.some((entry) => entry === null)) return;
+
+    tagList.dataset.wmUntagSorted = "true";
+
+    const anchor = document.createComment("wm-untag-sort-anchor");
+    tagList.insertBefore(anchor, buttons[0]);
+
+    entries
+      .sort((a, b) => b.count - a.count)
+      .forEach(({ button }) => tagList.insertBefore(button, anchor));
+
+    anchor.remove();
+  }
+
+  function processMultiTagModal() {
+    styleMultiTagModal();
+
+    document
+      .querySelectorAll(".wm-multi-tag-list")
+      .forEach((tagList) => sortUntagButtonsByCount(tagList));
+  }
+
+  function watchMultiTagModalSizing() {
+    GM_addStyle(`
+      .wm-multi-tag-list {
+        max-height: 50vh !important;
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-content: flex-start !important;
+        gap: 0.5rem !important;
+      }
+
+      .wm-multi-tag-list button {
+        width: auto !important;
+        flex: 0 0 auto !important;
+      }
+    `);
+
+    processMultiTagModal();
+
+    const observer = new MutationObserver(() => processMultiTagModal());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Feature OWL: on /pulls, while a pulled card is shown large (guarded the same way as Feature AKP's E shortcut:
   // a span reading "Carte" is present in main), pressing W (ignored while focus is inside an <input>, same guard
   // as Feature AKP's E/V) does what E followed by clicking the card's Wikipedia link would: opens the card modal
@@ -5171,6 +5297,7 @@ const MY_USERNAME = "xxx";
     run("rule-28", watchCollectionSearchClearButton);
     run("feature-owl", watchPulledCardWikiLinkShortcut);
     run("rule-29", watchPullsReloadTimer);
+    run("rule-30", watchMultiTagModalSizing);
 
     watchFeatureConfigButton();
     watchTutorialButton();
