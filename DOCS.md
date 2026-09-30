@@ -54,7 +54,8 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Rule 11 — Dim the "buy packs" banner.** Once you have zero packs left to open, the site's promotional banner
   encouraging you to get more is faded down instead of staying at full visibility.
 - **Rule 12 — Clearer profile action buttons.** Improves the visibility/contrast of the action buttons shown on
-  user profile pages.
+  user profile pages. On your own profile page, also caps the width of the tag-count list so it doesn't stretch
+  the full width of the page.
 - **Feature PNP — Pack pile-up notifications.** Sends a browser push notification when you're accumulating a lot
   of unopened card packs, as a reminder to go open them.
 - **Rule 13 — Trim long, fully-read notification lists.** Once every notification has been read, only the 20 most
@@ -77,7 +78,8 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Feature LBD — Enter key starts a bid.** On your collection page, typing an amount into the quick-bid field and
   pressing Enter starts the auction immediately, without needing to click a separate button.
 - **Rule 14 — Clearer wishlist auction notifications.** Rewrites the wording of notifications about auctions for
-  cards on your wishlist so they read more clearly.
+  cards on your wishlist so they read more clearly, wrapping the card's name in guillemets and tinting "mise en
+  vente" pink.
 - **Rule 15 — Relabel the back button.** On a card's bidding page, renames the back button to a clearer French
   label ("Retour en arrière") instead of the site's default wording.
 - **Feature PLB — Quick profile links on bid pages.** Adds a small "@" link right after each bidder's name (and
@@ -141,3 +143,12 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   collection page and lays its tag list out as a wrapping grid instead of one narrow column, so more tags fit on
   screen at once. On the removal variant specifically, the list is also sorted so the tags affecting the most of
   your selected cards appear first.
+- **Rule 31 — Filter notifications by type.** Adds toggle buttons to the notifications panel's header — one each
+  for sold cards, bought cards, bidding-related notifications (outbid refunds and unsold "returned to you" cards),
+  and wishlist listings — that show only notifications of that type and hide the rest. Only one filter can be
+  active at a time; pressing the active button again clears it. The chosen filter is remembered between visits.
+- **Rule 32 — Red glow on an almost-finished auction.** On a card's bidding page, the "Se termine dans…" countdown
+  glows red, the same pulsing effect Feature BSP gives a legendary price (in gold), once less than 10 seconds
+  remain.
+- **Rule 33 — Warn when you're already the highest bidder.** On a card's bidding page, the "place a bid" button
+  turns light red when the current highest bidder is you, as a reminder you don't need to bid again.

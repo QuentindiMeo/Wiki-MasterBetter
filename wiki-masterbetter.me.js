@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.20.14
+// @version      0.20.20
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -486,6 +486,11 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Rule 7: clicking the first <button> inside div.min-h-0.flex-1 also clicks the button labelled "Tout marquer lu"
   //
+  // Rule 7 (cont'd) — Rule 31 compatibility: "first" here means the first button not hidden by Rule 31's type
+  // filter (display: none), not simply the first in DOM order — otherwise, while a filter is active, clicking the
+  // visually-first (but DOM-later) notification wouldn't match the DOM-first (but hidden) one and this would
+  // silently do nothing.
+  //
   // Rule 7 (hotfix) — perf: findMarkAllReadButton used to scan every <button> in the entire document. Its style
   // variant below runs from a MutationObserver on document.body with no page/container guard at all, so that full
   // scan re-ran on every single DOM mutation anywhere on the site — one of the prime suspects behind reported
@@ -513,7 +518,9 @@ const MY_USERNAME = "xxx";
       const container = document.querySelector("div.min-h-0.flex-1");
       if (!container) return;
 
-      const firstButton = container.querySelector("button");
+      const firstButton = Array.from(container.querySelectorAll("button")).find(
+        (btn) => btn.style.display !== "none",
+      );
       if (!firstButton) return;
       if (event.target !== firstButton && !firstButton.contains(event.target))
         return;
@@ -744,6 +751,8 @@ const MY_USERNAME = "xxx";
 
   // ============================================================
   // Rule 12: on /profile/*, give buttons inside div.-mt-0\.5 a color of #ccc, but only while they're not hovered
+  //
+  // Rule 12 (cont'd): on /profile (the user's own profile page), give div.mt-2 a max-width of 50rem.
   // ============================================================
   function updateProfileButtonColor() {
     const onProfile = window.location.pathname.startsWith("/profile/");
@@ -752,16 +761,31 @@ const MY_USERNAME = "xxx";
     });
   }
 
+  function updateOwnProfileTagListWidth() {
+    const onOwnProfile = window.location.pathname === "/profile";
+    document.querySelectorAll("div.mt-2").forEach((div) => {
+      div.classList.toggle("wm-own-profile-tag-list", onOwnProfile);
+    });
+  }
+
   function watchProfileButtonColor() {
     GM_addStyle(`
       .wm-profile-btn:not(:hover) {
         color: #ccc;
       }
+
+      .wm-own-profile-tag-list {
+        max-width: 50rem;
+      }
     `);
 
     updateProfileButtonColor();
+    updateOwnProfileTagListWidth();
 
-    const observer = new MutationObserver(() => updateProfileButtonColor());
+    const observer = new MutationObserver(() => {
+      updateProfileButtonColor();
+      updateOwnProfileTagListWidth();
+    });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -1430,6 +1454,68 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 32: on a bid page (/marketplace/{UUID}, same BID_PAGE_REGEX as Feature PNB), give span.tabular-nums.font-
+  // medium ("Se termine dans {time left}", the same span Feature PNB watches) a red glow — the same pulsing
+  // box-shadow/text-shadow treatment Feature BSP's wm-legendary badge gets, just in red instead of gold — once the
+  // time remaining drops under 10 seconds. The countdown's own text is parsed rather than assumed to always carry
+  // a "30s"-style suffix like Feature PNB checks for, since anywhere from 1 to 9 seconds left is also possible.
+  // ============================================================
+  const BID_TIMER_URGENT_THRESHOLD_SECONDS = 10;
+  const BID_TIMER_REMAINING_REGEX = /dans\s+(?:(\d+)h\s*)?(?:(\d+)m\s*)?(\d+)s/;
+
+  function getBidTimerRemainingSeconds(text) {
+    const match = text.match(BID_TIMER_REMAINING_REGEX);
+    if (!match) return null;
+
+    const hours = parseInt(match[1] ?? "0", 10);
+    const minutes = parseInt(match[2] ?? "0", 10);
+    const seconds = parseInt(match[3], 10);
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+
+  function updateBidTimerUrgency() {
+    if (!BID_PAGE_REGEX.test(window.location.pathname)) return;
+
+    const span = document.querySelector("span.tabular-nums.font-medium");
+    if (!span) return;
+
+    const remaining = getBidTimerRemainingSeconds(span.textContent.trim());
+    const isUrgent =
+      remaining !== null && remaining < BID_TIMER_URGENT_THRESHOLD_SECONDS;
+
+    span.classList.toggle("wm-bid-timer-urgent", isUrgent);
+  }
+
+  function watchBidTimerUrgency() {
+    GM_addStyle(`
+      .wm-bid-timer-urgent {
+        color: #ef4444;
+        animation: wm-bid-timer-urgent-glow 1s ease-in-out infinite;
+      }
+      @keyframes wm-bid-timer-urgent-glow {
+        0%, 100% {
+          text-shadow: 0 0 3px rgba(220, 38, 38, 0.6), 0 0 6px rgba(220, 38, 38, 0.3);
+        }
+        50% {
+          text-shadow: 0 0 6px rgba(255, 60, 60, 1), 0 0 14px rgba(220, 38, 38, 0.9),
+            0 0 22px rgba(220, 38, 38, 0.6);
+        }
+      }
+    `);
+
+    updateBidTimerUrgency();
+
+    const observer = new MutationObserver(() => updateBidTimerUrgency());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    setInterval(updateBidTimerUrgency, 1000);
+  }
+
+  // ============================================================
   // Feature CAR: on /achievements, when div.grid contains "Réclamer" buttons, add a button before the grid that sums
   // up the reward amounts (from the <p> just before each button) and claims all
   // ============================================================
@@ -1722,7 +1808,16 @@ const MY_USERNAME = "xxx";
   // Rule 14: wherever div.min-h-0.overflow-y-auto is in the DOM (it only exists after a user action), for each of its
   // children that contains a <p> reading "Liste de souhaits", find the <p> that contains "vient d'être" and wrap the
   // text preceding that segment in « » guillemets
+  //
+  // Rule 14 (cont'd): that same <p> also contains the substring "en vente" right after "vient d'être" —
+  // wrapped in its own span and tinted pink, the same treatment Rule 19 gives other notification types' key detail.
+  //
+  // Rule 14 (cont'd): the trailing " sur le marché" is also dropped — redundant with the "Liste de souhaits"
+  // label right above it on the same notification.
   // ============================================================
+  const WISHLIST_LISTED_PHRASE = "en vente";
+  const WISHLIST_MARKETPLACE_SUFFIX = " sur le marché";
+
   function wrapWishlistToastCardName() {
     const list = document.querySelector("div.min-h-0.overflow-y-auto");
     if (!list) return;
@@ -1741,14 +1836,40 @@ const MY_USERNAME = "xxx";
 
       const idx = messageP.textContent.indexOf("vient d'être");
       const cardName = messageP.textContent.slice(0, idx).trim();
-      const rest = messageP.textContent.slice(idx);
+      const rest = messageP.textContent
+        .slice(idx)
+        .replace(WISHLIST_MARKETPLACE_SUFFIX, "");
 
-      messageP.textContent = `« ${cardName} » ${rest}`;
+      const listedIdx = rest.indexOf(WISHLIST_LISTED_PHRASE);
+
+      messageP.textContent = `La carte « ${cardName} » `;
+      if (listedIdx === -1) {
+        messageP.append(rest);
+      } else {
+        messageP.append(rest.slice(0, listedIdx));
+
+        const listedSpan = document.createElement("span");
+        listedSpan.className = "wm-wishlist-listed";
+        listedSpan.textContent = WISHLIST_LISTED_PHRASE;
+
+        messageP.append(
+          listedSpan,
+          rest.slice(listedIdx + WISHLIST_LISTED_PHRASE.length),
+        );
+      }
+
       messageP.dataset.wmWishlistWrapped = "true";
     });
   }
 
   function watchWishlistToastWrap() {
+    GM_addStyle(`
+      .wm-wishlist-listed {
+        color: #f4c2f6;
+        font-weight: 600;
+      }
+    `);
+
     wrapWishlistToastCardName();
 
     const observer = new MutationObserver(() => wrapWishlistToastCardName());
@@ -1857,10 +1978,56 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 33: on a bid page (/marketplace/{UUID}), force button.bg-[var(--color-accent)] (the "place a bid" button)
+  // to a light red background when the current highest bidder — ul.card-frame's first entry, the bidder's name
+  // being the <span> inside its p.text-xs — is MY_USERNAME, as a reminder you're already leading and don't need
+  // to bid again.
+  // ============================================================
+  function isMyUsernameLeadingBid() {
+    const nameSpan = document.querySelector(
+      "ul.card-frame > :first-child p.text-xs span",
+    );
+    return nameSpan?.textContent.trim() === MY_USERNAME;
+  }
+
+  function updateOwnBidButtonColor() {
+    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
+
+    const bidButton = document.querySelector(
+      "button.bg-\\[var\\(--color-accent\\)\\]",
+    );
+    if (!bidButton) return;
+
+    bidButton.classList.toggle(
+      "wm-own-bid-leading",
+      isMyUsernameLeadingBid(),
+    );
+  }
+
+  function watchOwnBidButtonColor() {
+    GM_addStyle(`
+      .wm-own-bid-leading {
+        background-color: #fca5a5 !important;
+      }
+    `);
+
+    updateOwnBidButtonColor();
+
+    const observer = new MutationObserver(() => updateOwnBidButtonColor());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  // ============================================================
   // Feature BSP: on a bid page, once span.font-medium reads "Vendue" or "Non vendue" (a cancelled auction,
   // "Annulée", is neither and is never recorded — findAuctionOutcomeSpan only matches text ending in "endue") and
-  // there's no owned card label (span.bg-emerald-600/90), record the final displayed price (span.text-2xl) —
-  // whether the auction actually sold or not, it's still useful market signal — in localStorage, keyed by
+  // the viewer isn't the winning bidder (Rule 33's isMyUsernameLeadingBid — not the owned-card label,
+  // span.bg-emerald-600/90, which is present whenever the viewer owns the card at all, won here or not), record
+  // the final displayed price (span.text-2xl) — whether the auction actually sold or not, it's still useful
+  // market signal — in localStorage, keyed by
   // "observed-{card name}" (h1.flex-1). A legacy entry still stored under the untagged card name is migrated to that
   // prefixed key on read. Skips while div.animate-spin is present (the page is still loading). Each stored entry is
   // tagged as "{price}-{tag}", tag being the bid UUID's second segment, so the same bid can never be recorded twice.
@@ -1952,7 +2119,7 @@ const MY_USERNAME = "xxx";
     const soldSpan = findAuctionOutcomeSpan();
     if (!soldSpan || soldSpan.dataset.wmPriceStored === "true") return;
 
-    if (document.querySelector("span.bg-emerald-600\\/90")) return;
+    if (isMyUsernameLeadingBid()) return;
 
     // Feature BSP (cont'd) handles the seller's own completed sales instead (see updateSnipableBadge) — don't let them
     // pollute the market-observed average.
@@ -2051,9 +2218,14 @@ const MY_USERNAME = "xxx";
   // comment), so that cache is essentially always empty for a card you just sold. With no eval price cached
   // either, it falls back to the same "NEW ENTRY" (white) tag, worded for a sale instead.
   //
-  // Feature BSP (cont'd) — buyer's own win: when the auction just sold ("Vendue") and the owned card label
-  // (span.bg-emerald-600/90) is present — meaning this viewer is the one who just won it — the usual buyer-facing
-  // tag also appends the reference average it was compared against, as "(obj. {value})"
+  // Feature BSP (cont'd) — buyer's own win: when the auction just sold ("Vendue") and the viewer is the winning
+  // bidder (isMyUsernameLeadingBid — not the owned-card label, span.bg-emerald-600/90, which says nothing about
+  // whether THIS auction is what the viewer owns it from) — the usual buyer-facing tag also appends the
+  // reference average it was compared against, as "(obj. {value})"
+  //
+  // Feature BSP (cont'd) — reliable reference price: that same "(obj. {value})" suffix is also appended whenever
+  // the reliability tag would read "indice fiable" (observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES on a
+  // buyer-facing tag), not just on the viewer's own win — a reliable reference is worth showing on its own merit.
   //
   // Feature BSP (cont'd) — cancelled auction: when any span.font-medium reads "Annulée", no tag is shown at all,
   // buyer- or seller-facing — a cancelled auction has no real sale or final bid worth grading or comparing to.
@@ -2205,8 +2377,7 @@ const MY_USERNAME = "xxx";
 
     const isMySoldAuction =
       isSold && getBidPageSellerUsername() === MY_USERNAME;
-    const isMyWonAuction =
-      isSold && document.querySelector("span.bg-emerald-600\\/90") !== null;
+    const isMyWonAuction = isSold && isMyUsernameLeadingBid();
 
     // Your own sale is graded against the ETS eval price, not the "observed-" BSP cache: recordSoldBidPrice
     // deliberately never logs your own sales there (to keep the market-observed average clean), so that cache
@@ -2280,10 +2451,14 @@ const MY_USERNAME = "xxx";
       else status = "excessive";
     }
 
+    const isReliable =
+      !isMySoldAuction &&
+      observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES;
+
     let label = isMySoldAuction
       ? SALE_STATUS_LABELS[status]
       : BUY_STATUS_LABELS[status];
-    if (isMyWonAuction) {
+    if (isMyWonAuction || isReliable) {
       label += ` (obj. ${Math.round(referenceValue)})`;
     }
     group = getOrCreateBadgeGroup(nameEl);
@@ -2293,7 +2468,7 @@ const MY_USERNAME = "xxx";
       removeReliabilityTag(group);
     } else if (observedEntryCount <= 2) {
       setReliabilityTag(group, "unreliable");
-    } else if (observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES) {
+    } else if (isReliable) {
       setReliabilityTag(group, "reliable");
     } else {
       removeReliabilityTag(group);
@@ -3256,6 +3431,18 @@ const MY_USERNAME = "xxx";
       id: "rule-30",
       label: "Agrandir et réorganiser la modale d'étiquetage en masse",
     },
+    {
+      id: "rule-31",
+      label: "Filtrer les notifications par type",
+    },
+    {
+      id: "rule-32",
+      label: "Lueur rouge quand une enchère se termine dans moins de 10s",
+    },
+    {
+      id: "rule-33",
+      label: "Bouton de mise en rouge quand vous êtes en tête",
+    },
   ];
 
   function readFeatureFlags() {
@@ -3617,23 +3804,15 @@ const MY_USERNAME = "xxx";
     },
     {
       title: "Le bouton ⚙️ (réglages)",
-      text: "Il permet d'activer ou de désactiver chaque fonctionnalité de ce script. Il faut recharger la page après avoir changé quelque chose.",
+      text: "Il permet d'activer ou de désactiver chaque fonctionnalité de ce script. Il faut recharger la page après avoir changé quelque chose pour que les changements s'appliquent.",
     },
     {
-      title: "Trier ses enchères",
-      text: "Dans l'onglet « Mes enchères » du marché, un bouton sépare vos enchères en deux groupes : celles où quelqu'un vous a dépassé, et celles où vous êtes toujours en tête.",
-    },
-    {
-      title: "Être prévenu par notification",
-      text: "Si vous autorisez les notifications du navigateur, le script vous prévient quand vous avez beaucoup de paquets à ouvrir, ou juste avant la fin d'une de vos enchères.",
-    },
-    {
-      title: "Ouvrir ses paquets au clavier",
-      text: "En train d'ouvrir des paquets sur /pulls ? Utilisez les flèches pour changer de carte, Espace pour ouvrir ou fermer le paquet, E pour voir une carte en grand, et V pour la mettre en vente.",
+      title: "Être prévenu par notification bureau",
+      text: "Si vous autorisez les notifications du navigateur, le script vous prévient quand vous avez beaucoup de paquets à ouvrir, ou juste avant la fin d'une de vos enchères ouvertes.",
     },
     {
       title: "Enchérir plus vite",
-      text: "Dans votre collection, tapez une mise puis appuyez sur Entrée : l'enchère démarre directement, sans avoir à cliquer sur un bouton.",
+      text: "Dans votre collection, tapez la mise minimale puis appuyez sur Entrée : l'enchère démarre directement, sans avoir à cliquer sur un bouton.",
     },
     {
       title: "Sélectionner ses cartes sans étiquette",
@@ -3641,23 +3820,19 @@ const MY_USERNAME = "xxx";
     },
     {
       title: "Savoir si un prix est bon",
-      text: "Sur une page d'enchère, une petite étiquette de couleur vous dit si le prix est intéressant ou non, en le comparant aux ventes précédentes de cette carte. Si c'est vous qui vendez, elle vous dit à la place si votre vente est bonne.",
+      text: "Sur une page d'enchère, une petite étiquette de couleur vous dit si le prix est intéressant ou non, en le comparant aux ventes conclues de cette carte que vous avez observées. Si c'est vous qui vendez, elle vous dit si votre vente est bonne.",
     },
     {
       title: "Le prix estimé d'une carte",
-      text: "Une fois qu'une carte a été estimée sur /pulls ou dans la collection, son prix est retenu et réaffiché à côté d'elle. Dans la collection, des boutons permettent d'estimer plusieurs cartes d'un coup, ou de les trier du prix le plus élevé au plus bas.",
-    },
-    {
-      title: "Réclamer ses récompenses",
-      text: "Sur la page des hauts faits, un bouton récupère en une seule fois toutes les récompenses en attente.",
+      text: "Une fois qu'une carte a été estimée (lorsque vous vous apprêtez à la vendre), son prix est retenu et affiché à côté de sa rareté. Dans la collection, des boutons permettent d'estimer plusieurs cartes d'un coup, et de les trier par estimation.",
     },
     {
       title: "Accéder à un profil en un clic",
       text: "Un petit « @ » à côté d'un pseudo (sur une page d'enchère, ou à côté du nom d'un ami dans la liste de souhaits) ouvre directement son profil.",
     },
     {
-      title: "Voir la page Wikipédia d'une carte tirée",
-      text: "Sur /pulls, tant qu'une carte est affichée en grand, la touche W ouvre directement sa page Wikipédia, sans passer par sa modale.",
+      title: "Filtrer les notifications",
+      text: "En haut du panneau de notifications, des boutons 💰 🛒 🔨 ⭐ n'affichent que les notifications de ce type (ventes, achats, enchères, liste de souhaits). Cliquez à nouveau sur le bouton actif pour tout réafficher.",
     },
   ];
 
@@ -3945,6 +4120,166 @@ const MY_USERNAME = "xxx";
       subtree: true,
       characterData: true,
     });
+  }
+
+  // ============================================================
+  // Rule 31: on the notification container (div.card-frame.shadow-xl.overflow-hidden), insert a row of toggle
+  // buttons into its header (the container's first child, see Rule 17) — one per notification type this script
+  // already knows how to recognize: sold ("Votre carte « X » a été vendue pour Y wikibidous.", or its Rule
+  // 19-rewritten form carrying .wm-card-sold-amount), bought ("Vous avez remporté « X » pour Y wikibidous.",
+  // .wm-card-bought-amount), bidding-related (the outbid-refund phrase and the "no bidder" returned-card phrase
+  // Rule 19 also matches, or their rewritten .wm-outbid-refund-other-bid / .wm-returned-card-message forms), and
+  // wishlist (an item containing the substring "mise en vente" — see Rule 14's WISHLIST_LISTED_PHRASE — or, as a
+  // fallback, a <p> reading exactly "Liste de souhaits"). Both the original and Rule 19-rewritten phrasing are
+  // checked since this can run before or after Rule 19 processes the same item.
+  //
+  // Rule 31 (cont'd): clicking a button shows only notification items (button.w-full.items-start) of that type
+  // and hides the rest (display: none); clicking the already-active button clears the filter and shows everything
+  // again. Only one button can be active at a time — activating one deactivates whichever was active before. The
+  // active filter (or its absence) is remembered in localStorage and reapplied automatically, including to
+  // notifications that stream in afterward.
+  // ============================================================
+  const NOTIFICATION_FILTER_STORAGE_KEY = "wm-notification-filter";
+  const NOTIFICATION_FILTER_TYPES = [
+    { id: "sold", icon: "💰", label: "Ventes" },
+    { id: "bought", icon: "🛒", label: "Achats" },
+    { id: "bid", icon: "🔨", label: "Enchères" },
+    { id: "wishlist", icon: "⭐", label: "Liste de souhaits" },
+  ];
+
+  function getNotificationFilter() {
+    return localStorage.getItem(NOTIFICATION_FILTER_STORAGE_KEY);
+  }
+
+  function setNotificationFilter(type) {
+    if (type) localStorage.setItem(NOTIFICATION_FILTER_STORAGE_KEY, type);
+    else localStorage.removeItem(NOTIFICATION_FILTER_STORAGE_KEY);
+  }
+
+  function getNotificationItemType(item) {
+    if (item.querySelector(".wm-card-sold-amount")) return "sold";
+    if (item.querySelector(".wm-card-bought-amount")) return "bought";
+    if (
+      item.querySelector(
+        ".wm-outbid-refund-other-bid, .wm-returned-card-message",
+      )
+    )
+      return "bid";
+
+    const text = item.textContent;
+    if (CARD_SOLD_DETAILS_REGEX.test(text)) return "sold";
+    if (CARD_BOUGHT_DETAILS_REGEX.test(text)) return "bought";
+    if (
+      OUTBID_REFUND_DETAILS_REGEX.test(text) ||
+      text.trim().endsWith(RETURNED_CARD_PHRASE)
+    )
+      return "bid";
+
+    const isWishlistItem =
+      text.includes(WISHLIST_LISTED_PHRASE) ||
+      Array.from(item.querySelectorAll("p")).some(
+        (p) => p.textContent.trim() === "Liste de souhaits",
+      );
+    if (isWishlistItem) return "wishlist";
+
+    return null;
+  }
+
+  function applyNotificationFilter() {
+    const container = document.querySelector(
+      "div.card-frame.shadow-xl.overflow-hidden",
+    );
+    if (!container) return;
+
+    const activeType = getNotificationFilter();
+
+    container.querySelectorAll("button.w-full.items-start").forEach((item) => {
+      item.style.display =
+        !activeType || getNotificationItemType(item) === activeType
+          ? ""
+          : "none";
+    });
+  }
+
+  function setupNotificationFilterButtons() {
+    const container = document.querySelector(
+      "div.card-frame.shadow-xl.overflow-hidden",
+    );
+    const header = container?.firstElementChild;
+    if (!header) return;
+
+    if (header.querySelector(":scope > .wm-notification-filter-row")) {
+      applyNotificationFilter();
+      return;
+    }
+
+    const row = document.createElement("div");
+    row.className = "wm-notification-filter-row";
+
+    const activeType = getNotificationFilter();
+
+    NOTIFICATION_FILTER_TYPES.forEach(({ id, icon, label }) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "wm-notification-filter-btn";
+      btn.title = `Filtrer : ${label}`;
+      btn.textContent = icon;
+      btn.setAttribute("aria-pressed", String(id === activeType));
+
+      btn.addEventListener("click", () => {
+        const next = btn.getAttribute("aria-pressed") === "true" ? null : id;
+        setNotificationFilter(next);
+
+        row
+          .querySelectorAll(".wm-notification-filter-btn")
+          .forEach((b) =>
+            b.setAttribute("aria-pressed", String(b === btn && next !== null)),
+          );
+
+        applyNotificationFilter();
+      });
+
+      row.appendChild(btn);
+    });
+
+    header.appendChild(row);
+    applyNotificationFilter();
+  }
+
+  function watchNotificationFilterButtons() {
+    GM_addStyle(`
+      .wm-notification-filter-row {
+        display: flex;
+        gap: 0.35rem;
+        margin-left: auto;
+      }
+      .wm-notification-filter-btn {
+        border: none;
+        background: #ffffff0f;
+        border-radius: 0.375rem;
+        padding: 0.25rem 0.45rem;
+        font-size: 0.9rem;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0.6;
+        transition: background 0.2s ease, opacity 0.2s ease;
+      }
+      .wm-notification-filter-btn:hover {
+        background: #ffffff3f;
+        opacity: 1;
+      }
+      .wm-notification-filter-btn[aria-pressed="true"] {
+        background: var(--color-accent);
+        opacity: 1;
+      }
+    `);
+
+    setupNotificationFilterButtons();
+
+    const observer = new MutationObserver(() =>
+      setupNotificationFilterButtons(),
+    );
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ============================================================
@@ -5400,6 +5735,9 @@ const MY_USERNAME = "xxx";
     run("feature-owl", watchPulledCardWikiLinkShortcut);
     run("rule-29", watchPullsReloadTimer);
     run("rule-30", watchMultiTagModalSizing);
+    run("rule-31", watchNotificationFilterButtons);
+    run("rule-32", watchBidTimerUrgency);
+    run("rule-33", watchOwnBidButtonColor);
 
     watchFeatureConfigButton();
     watchTutorialButton();

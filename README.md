@@ -49,6 +49,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
 - **Suivi de lecture intelligent** : Cliquer sur une notification marque aussi toutes celles plus anciennes comme lues, met à jour le compteur
+- **Filtrer par type** : Des boutons 💰 🛒 🔨 ⭐ en haut du panneau n'affichent que les notifications de ventes, d'achats, d'enchères ou de liste de souhaits ; un seul filtre actif à la fois, mémorisé d'une visite à l'autre
 - **Suffixe de titre d'onglet** : Le titre de l'onglet du navigateur reflète le contenu de la page visitée
 
 ### 🎁 Paquets
@@ -75,9 +76,11 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 ### 💰 Marché & Enchères
 
-- **Onglet « Mes enchères » par défaut** : L'arrivée sur le marché ouvre automatiquement cet onglet
+- **Onglet « Mes enchères » par défaut** : L'arrivée ouvre automatiquement cet onglet
 - **Regroupement des enchères** : Bascule pour séparer « Mes enchères » en groupes « Surenchéri » / « Vous menez »
 - **Alertes d'expiration** : Une notification push prévient qu'il reste 30 secondes sur une enchère ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut, par onglet)
+- **Lueur rouge en fin d'enchère** : Le décompte « Se termine dans... » se met à luire en rouge quand il reste moins de 10 secondes
+- **Bouton de mise en rouge si vous menez** : Le bouton pour enchérir devient rouge clair quand vous êtes déjà le meilleur enchérisseur
 - **Liens de profil de la salle de vente** : Un lien « @ » à côté du nom de chaque enchérisseur, et du vendeur
 - **Rechargement automatique si enchère introuvable** : Si la page affiche « Enchère introuvable », elle se recharge d'elle-même peu après
 - **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
