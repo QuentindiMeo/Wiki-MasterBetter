@@ -49,7 +49,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
 - **Suivi de lecture intelligent** : Cliquer sur une notification marque aussi toutes celles plus anciennes comme lues, met à jour le compteur
-- **Filtrer par type** : Des boutons 💰 🛒 🔨 ⭐ en haut du panneau n'affichent que les notifications de ventes, d'achats, d'enchères ou de liste de souhaits ; un seul filtre actif à la fois, mémorisé d'une visite à l'autre
+- **Filtrer par type** : Des boutons 💰 🛒 🔨 ⭐ en haut du panneau permettent de filtrer les notifications
 - **Suffixe de titre d'onglet** : Le titre de l'onglet du navigateur reflète le contenu de la page visitée
 
 ### 🎁 Paquets
@@ -63,6 +63,8 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
 - **Estimations mémorisées** : Les estimations du marché dans la modale de vente sont mémorisées et affichées à côté de la rareté dans votre collection
 - **Évaluation en masse** : Deux boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation, réévaluer toute la page ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours
+- **Estimation en masse sur une collection** : Un bouton rouge répète l'évaluation des cartes sans estimation sur chaque page de la collection, en changeant de page automatiquement
+  - ⚠️ Pour ces deux évaluations en masse, gardez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan, le navigateur ralentit les temporisations dont elles dépendent, ce qui les rend peu fiables
 - **Tri par prix décroissant** : Un bouton permet de trier les cartes de la page par prix décroissant, pour repérer rapidement les plus chères
 - **Liste d'étiquettes plus lisible** : Plus de place pour afficher les étiquettes, et la liste se trie par ordre décroissant dès que les compteurs sont chargés
 - **Copier le nom d'une carte** : Un bouton 📋 à côté du nom, dans la modale de carte comme dans la modale d'enchère

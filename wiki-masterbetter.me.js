@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.20.20
+// @version      0.20.22
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -1460,7 +1460,7 @@ const MY_USERNAME = "xxx";
   // time remaining drops under 10 seconds. The countdown's own text is parsed rather than assumed to always carry
   // a "30s"-style suffix like Feature PNB checks for, since anywhere from 1 to 9 seconds left is also possible.
   // ============================================================
-  const BID_TIMER_URGENT_THRESHOLD_SECONDS = 10;
+  const BID_TIMER_URGENT_THRESHOLD_SECONDS = 15;
   const BID_TIMER_REMAINING_REGEX = /dans\s+(?:(\d+)h\s*)?(?:(\d+)m\s*)?(\d+)s/;
 
   function getBidTimerRemainingSeconds(text) {
@@ -1481,7 +1481,7 @@ const MY_USERNAME = "xxx";
 
     const remaining = getBidTimerRemainingSeconds(span.textContent.trim());
     const isUrgent =
-      remaining !== null && remaining < BID_TIMER_URGENT_THRESHOLD_SECONDS;
+      remaining !== null && remaining <= BID_TIMER_URGENT_THRESHOLD_SECONDS;
 
     span.classList.toggle("wm-bid-timer-urgent", isUrgent);
   }
@@ -1490,7 +1490,7 @@ const MY_USERNAME = "xxx";
     GM_addStyle(`
       .wm-bid-timer-urgent {
         color: #ef4444;
-        animation: wm-bid-timer-urgent-glow 1s ease-in-out infinite;
+        animation: wm-bid-timer-urgent-glow 2s ease-in-out infinite;
       }
       @keyframes wm-bid-timer-urgent-glow {
         0%, 100% {
@@ -1984,9 +1984,7 @@ const MY_USERNAME = "xxx";
   // to bid again.
   // ============================================================
   function isMyUsernameLeadingBid() {
-    const nameSpan = document.querySelector(
-      "ul.card-frame > :first-child p.text-xs span",
-    );
+    const nameSpan = document.querySelector("div.card-frame p.text-xs span");
     return nameSpan?.textContent.trim() === MY_USERNAME;
   }
 
@@ -1998,16 +1996,18 @@ const MY_USERNAME = "xxx";
     );
     if (!bidButton) return;
 
-    bidButton.classList.toggle(
-      "wm-own-bid-leading",
-      isMyUsernameLeadingBid(),
-    );
+    bidButton.classList.toggle("wm-own-bid-leading", isMyUsernameLeadingBid());
   }
 
   function watchOwnBidButtonColor() {
     GM_addStyle(`
       .wm-own-bid-leading {
         background-color: #fca5a5 !important;
+        opacity: 0.5;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-own-bid-leading:hover {
+        opacity: 1;
       }
     `);
 
@@ -3443,6 +3443,10 @@ const MY_USERNAME = "xxx";
       id: "rule-33",
       label: "Bouton de mise en rouge quand vous êtes en tête",
     },
+    {
+      id: "rule-34",
+      label: "Navigation et recherche au clavier dans la liste des étiquettes",
+    },
   ];
 
   function readFeatureFlags() {
@@ -3833,6 +3837,10 @@ const MY_USERNAME = "xxx";
     {
       title: "Filtrer les notifications",
       text: "En haut du panneau de notifications, des boutons 💰 🛒 🔨 ⭐ n'affichent que les notifications de ce type (ventes, achats, enchères, liste de souhaits). Cliquez à nouveau sur le bouton actif pour tout réafficher.",
+    },
+    {
+      title: "Estimer toute une collection d'un coup",
+      text: "Dans votre collection, le bouton rouge « Estimation en masse » évalue les cartes sans estimation de la page, puis passe à la page suivante et recommence, jusqu'à la dernière. Le bouton « Arrêter la reconnaissance » interrompt le processus à n'importe quel moment. Laissez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan ou minimisée, le navigateur ralentit les temporisations dont cette fonctionnalité dépend, ce qui la rend peu fiable.",
     },
   ];
 
@@ -4741,7 +4749,7 @@ const MY_USERNAME = "xxx";
 
   // ============================================================
   // Feature EBC: on /collection, add three buttons as the last children of div.flex-wrap.gap-2 (rarity filter
-  // buttons): "Réévaluer toute la page" (re-evaluates every card), "Évaluer les cartes non évaluées" (only cards
+  // buttons): "Réévaluer la page" (re-evaluates every card), "Évaluer les cartes non évaluées" (only cards
   // whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker — hidden outright once
   // that count reaches 0 on the current page), and "Ordonner la page par prix décroissant" (reorders the grid by
   // each card's raw eval value, unknowns last). The two evaluation
@@ -4749,9 +4757,14 @@ const MY_USERNAME = "xxx";
   // .wm-quick-action button, wait for Feature ETS to record a fresh value under its "eval-{name}" localStorage
   // key, then press Escape to close the modal before moving to the next card. The stop button cancels the run
   // after the current card; the two evaluation buttons disable each other while either is running. Whenever a
-  // native rarity filter button (button.px-3.py-1.transition-colors) shows up after "Réévaluer toute la page" —
+  // native rarity filter button (button.px-3.py-1.transition-colors) shows up after "Réévaluer la page" —
   // e.g. a new rarity tier's filter button getting appended past our own controls — it's moved back in front of
   // it, keeping the site's own filter buttons grouped together ahead of ours.
+  //
+  // Feature EBC (cont'd): both evaluation buttons, and the "Estimation en masse" one below, only run reliably
+  // while their tab is the active one and the window isn't minimized — their polling (waitForCardEvaluation's
+  // setTimeout loop, and waitUntil's below) gets throttled by the browser once backgrounded/minimized, which
+  // stretches or outright misses the timeout window a slow card's evaluation needs to land within.
   // ============================================================
   function getAllCollectionCards() {
     const grid = document.querySelector("div.gap-3.justify-center");
@@ -4846,9 +4859,13 @@ const MY_USERNAME = "xxx";
     btn.textContent = label;
   }
 
-  async function evaluateCollectionCards(button, cards) {
-    const state = { stopped: false };
-    const stopBtn = insertStopEvaluationButton(state);
+  // Feature EBC (cont'd): accepts an optional externally-owned state/stop-button instead of always creating its
+  // own — used by the "Estimation en masse" button below to share a single stop button across a whole multi-page
+  // run rather than spawning a new one for every page. The two original callers below don't pass one, so their
+  // own behavior is unchanged.
+  async function evaluateCollectionCards(button, cards, sharedState) {
+    const state = sharedState ?? { stopped: false };
+    const stopBtn = sharedState ? null : insertStopEvaluationButton(state);
 
     for (let i = 0; i < cards.length; i++) {
       if (state.stopped) break;
@@ -4877,7 +4894,7 @@ const MY_USERNAME = "xxx";
       if (state.stopped) break;
     }
 
-    stopBtn.remove();
+    stopBtn?.remove();
   }
 
   async function evaluateUnratedCollectionCards(button, otherButton) {
@@ -4899,6 +4916,91 @@ const MY_USERNAME = "xxx";
     button.disabled = false;
     otherButton.disabled = false;
     updateEvaluateUnratedButtonLabel(otherButton);
+  }
+
+  // ============================================================
+  // Feature EBC (cont'd): a fourth button, "Estimation en masse" (styled red, unlike its other three siblings
+  // which just inherit the site's own filter-button look) — walks every page of the collection in turn, running
+  // the same "evaluate unrated cards" pass as the "Évaluer les cartes non évaluées" button on each one. A single
+  // stop button/state is shared across the whole run (evaluateCollectionCards's sharedState parameter, above)
+  // rather than spawning a new one per page. Between pages, the pagination control's second child button
+  // (div.gap-2.py-3 — the first is "previous page") is clicked once it stops being disabled: it can briefly stay
+  // disabled right after our own last Escape keypress closes a card's modal, so this is polled rather than clicked
+  // immediately; staying disabled for the whole poll window instead means there simply is no next page, which ends
+  // the run normally rather than erroring. After clicking, the run waits for the grid's first card to actually
+  // change before evaluating the newly-loaded page — the site's own transition isn't instant, and evaluating the
+  // outgoing page's still-visible cards a second time would waste a full pass for nothing.
+  // ============================================================
+  function waitUntil(predicate, state, timeout = 8000, interval = 150) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        if (state.stopped) {
+          resolve(false);
+          return;
+        }
+        if (predicate()) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start >= timeout) {
+          resolve(false);
+          return;
+        }
+        setTimeout(check, interval);
+      };
+      check();
+    });
+  }
+
+  function getCollectionNextPageButton() {
+    const container = document.querySelector("div.gap-2.py-3");
+    if (!container) return null;
+
+    return Array.from(container.querySelectorAll(":scope > button"))[1] ?? null;
+  }
+
+  function getFirstCollectionCardName() {
+    return (
+      getAllCollectionCards()?.[0]?.querySelector("h3")?.textContent.trim() ??
+      null
+    );
+  }
+
+  async function evaluateAllCollectionPages(button, otherButtons) {
+    const state = { stopped: false };
+    const stopBtn = insertStopEvaluationButton(state);
+
+    let page = 1;
+    while (!state.stopped) {
+      button.textContent = `Estimation en masse... (page ${page})`;
+
+      const cards = getUnevaluatedCollectionCards() ?? [];
+      await evaluateCollectionCards(button, cards, state);
+      if (state.stopped) break;
+
+      const nextBtn = getCollectionNextPageButton();
+      if (!nextBtn) break;
+
+      const canAdvance = await waitUntil(() => !nextBtn.disabled, state, 5000);
+      if (!canAdvance || state.stopped) break;
+
+      const previousFirstCardName = getFirstCollectionCardName();
+      nextBtn.click();
+      page++;
+
+      await waitUntil(() => {
+        const firstName = getFirstCollectionCardName();
+        return firstName !== null && firstName !== previousFirstCardName;
+      }, state);
+    }
+
+    stopBtn.remove();
+    button.textContent = "🗃️📈";
+    button.disabled = false;
+    otherButtons.forEach((btn) => {
+      btn.disabled = false;
+    });
   }
 
   // Reads a card's raw eval value straight from localStorage (not its
@@ -4949,9 +5051,9 @@ const MY_USERNAME = "xxx";
       const reevaluateBtn = document.createElement("button");
       reevaluateBtn.type = "button";
       reevaluateBtn.className = referenceBtn
-        ? `${referenceBtn.className} ml-auto wm-eval-reevaluate-all`
+        ? `${referenceBtn.className} wm-eval-reevaluate-all`
         : "wm-eval-reevaluate-all";
-      reevaluateBtn.textContent = "Réévaluer toute la page";
+      reevaluateBtn.textContent = "Réévaluer la page";
 
       unratedBtn = document.createElement("button");
       unratedBtn.type = "button";
@@ -4966,24 +5068,45 @@ const MY_USERNAME = "xxx";
         : "wm-eval-sort";
       sortBtn.textContent = "Ordonner la page par prix décroissant";
 
+      const massBtn = document.createElement("button");
+      massBtn.type = "button";
+      massBtn.className = "ml-auto wm-eval-mass";
+      massBtn.textContent = "🗃️📈";
+      massBtn.title = "Estimation en masse de toutes les pages";
+
       reevaluateBtn.addEventListener("click", () => {
         if (reevaluateBtn.disabled) return;
         reevaluateBtn.disabled = true;
         unratedBtn.disabled = true;
-        reevaluateAllCollectionCards(reevaluateBtn, unratedBtn);
+        massBtn.disabled = true;
+        reevaluateAllCollectionCards(reevaluateBtn, unratedBtn).then(() => {
+          massBtn.disabled = false;
+        });
       });
 
       unratedBtn.addEventListener("click", () => {
         if (unratedBtn.disabled) return;
         unratedBtn.disabled = true;
         reevaluateBtn.disabled = true;
-        evaluateUnratedCollectionCards(unratedBtn, reevaluateBtn);
+        massBtn.disabled = true;
+        evaluateUnratedCollectionCards(unratedBtn, reevaluateBtn).then(() => {
+          massBtn.disabled = false;
+        });
       });
 
       sortBtn.addEventListener("click", () => {
         sortCollectionByPriceDescending();
       });
 
+      massBtn.addEventListener("click", () => {
+        if (massBtn.disabled) return;
+        massBtn.disabled = true;
+        reevaluateBtn.disabled = true;
+        unratedBtn.disabled = true;
+        evaluateAllCollectionPages(massBtn, [reevaluateBtn, unratedBtn]);
+      });
+
+      filterBar.appendChild(massBtn);
       filterBar.appendChild(reevaluateBtn);
       filterBar.appendChild(unratedBtn);
       filterBar.appendChild(sortBtn);
@@ -5043,6 +5166,26 @@ const MY_USERNAME = "xxx";
         font-size: 0.7rem;
         font-weight: 400;
         opacity: 0.85;
+      }
+      .wm-eval-mass {
+        border: none;
+        border-radius: 0.5rem;
+        padding: 0.25rem 0.5rem;
+        background: #dc2626;
+        opacity: 0.5;
+        color: #fff;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease, opacity 0.2s ease;
+      }
+      .wm-eval-mass:hover {
+        background: #b91c1c;
+        opacity: 1;
+      }
+      .wm-eval-mass:disabled {
+        cursor: default;
+        opacity: 0.6;
       }
     `);
 
@@ -5673,6 +5816,151 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 34: on /collection, every time the tag filter's popover (ul.rounded-xl[role="listbox"], the same list
+  // Rule 24 already sizes/sorts) is mounted, give it real keyboard navigation. Its "Toutes les étiquettes" trigger
+  // button keeps DOM focus after opening the popover — aria-haspopup/aria-expanded toggle correctly, but focus
+  // never moves into the list — so ArrowDown/ArrowUp land on the page itself (scrolling it) instead of the list.
+  // As soon as the list is mounted, focus moves onto its currently selected option
+  // (button[role="option"][aria-selected="true"], or the first option if none is selected yet). From there,
+  // ArrowDown/ArrowUp/Home/End roving-focus between the option <button>s (each one is already natively focusable
+  // and already handles Enter/Space to pick itself, so only the focus movement needed adding), wrapping past
+  // either end. Typing any other printable character runs a standard listbox typeahead: characters typed within
+  // 500ms of each other accumulate into a search string, and focus jumps to the next option (search starting
+  // right after the currently focused one, wrapping back to the top) whose label starts with it — matched
+  // against the tag's own name, with its leading "#" and trailing " (count)" stripped (the latter via
+  // TAG_COUNT_REGEX, the same pattern Rule 24 uses to read it), so e.g. "a" reaches "#Art 🎨" / "#Animo 🐒" rather
+  // than only ever matching entries literally starting with "#a". Guarded by a dataset flag so the listener is
+  // wired once per freshly-portalled list instance, not once per mutation.
+  // ============================================================
+  function normalizedTagOptionLabel(option) {
+    return option.textContent
+      .trim()
+      .replace(TAG_COUNT_REGEX, "")
+      .trim()
+      .replace(/^#/, "")
+      .trim()
+      .toLowerCase();
+  }
+
+  function focusTagOptionAtDelta(options, delta) {
+    if (!options.length) return;
+
+    const currentIndex = options.indexOf(document.activeElement);
+    const nextIndex =
+      currentIndex === -1
+        ? delta > 0
+          ? 0
+          : options.length - 1
+        : (currentIndex + delta + options.length) % options.length;
+
+    options[nextIndex].focus();
+  }
+
+  function setUpTagFilterListKeyboardNav(list) {
+    if (list.dataset.wmKeyboardNav === "true") return;
+
+    const getOptions = () =>
+      Array.from(list.querySelectorAll('button[role="option"]'));
+
+    const options = getOptions();
+    if (!options.length) return;
+
+    list.dataset.wmKeyboardNav = "true";
+
+    const selected = options.find(
+      (option) => option.getAttribute("aria-selected") === "true",
+    );
+    (selected ?? options[0]).focus();
+
+    let typeaheadSearch = "";
+    let typeaheadResetTimer = null;
+
+    list.addEventListener("keydown", (event) => {
+      const currentOptions = getOptions();
+      if (!currentOptions.length) return;
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        focusTagOptionAtDelta(currentOptions, 1);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        focusTagOptionAtDelta(currentOptions, -1);
+        return;
+      }
+
+      if (event.key === "Home") {
+        event.preventDefault();
+        currentOptions[0].focus();
+        return;
+      }
+
+      if (event.key === "End") {
+        event.preventDefault();
+        currentOptions[currentOptions.length - 1].focus();
+        return;
+      }
+
+      if (
+        event.key.length !== 1 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      )
+        return;
+
+      event.preventDefault();
+
+      clearTimeout(typeaheadResetTimer);
+      typeaheadSearch += event.key.toLowerCase();
+      typeaheadResetTimer = setTimeout(() => {
+        typeaheadSearch = "";
+      }, 500);
+
+      const currentIndex = Math.max(
+        currentOptions.indexOf(document.activeElement),
+        0,
+      );
+      const searchOrder = [
+        ...currentOptions.slice(currentIndex + 1),
+        ...currentOptions.slice(0, currentIndex + 1),
+      ];
+
+      const match = searchOrder.find((option) =>
+        normalizedTagOptionLabel(option).startsWith(typeaheadSearch),
+      );
+      if (match) match.focus();
+    });
+  }
+
+  function processTagFilterListKeyboardNav() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    document
+      .querySelectorAll('ul.rounded-xl[role="listbox"]')
+      .forEach(setUpTagFilterListKeyboardNav);
+  }
+
+  function watchTagFilterListKeyboardNav() {
+    GM_addStyle(`
+      ul.rounded-xl[role="listbox"] button[role="option"]:focus-visible {
+        outline: none;
+        background-color: var(--color-surface-light);
+        box-shadow: inset 0 0 0 1px var(--color-accent);
+      }
+    `);
+
+    processTagFilterListKeyboardNav();
+
+    const observer = new MutationObserver(() =>
+      processTagFilterListKeyboardNav(),
+    );
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -5738,6 +6026,7 @@ const MY_USERNAME = "xxx";
     run("rule-31", watchNotificationFilterButtons);
     run("rule-32", watchBidTimerUrgency);
     run("rule-33", watchOwnBidButtonColor);
+    run("rule-34", watchTagFilterListKeyboardNav);
 
     watchFeatureConfigButton();
     watchTutorialButton();

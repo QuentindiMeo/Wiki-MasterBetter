@@ -49,3 +49,4 @@ When updating the README, check ALL rules/features (both from the documentation 
 - **Liste d'étiquettes qui suit le clavier** : Dans la modale de carte, la liste défile automatiquement pour garder l'étiquette sélectionnée au clavier visible
 - **Bannière d'achat estompée** : Une fois qu'il ne vous reste plus aucun paquet à ouvrir, la bannière qui vous encourage à en acheter s'estompe
 - **Rechargement automatique** : Une fois la pile de paquets pleine, la page se recharge d'elle-même toutes les 10 minutes tant qu'elle le reste
+- **Notifications de liste de souhaits clarifiées** : Le nom de la carte mise en vente est encadré de guillemets, et « mise en vente » est teinté en rose pour mieux se repérer

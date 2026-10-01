@@ -47,8 +47,9 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - _Rule 8 no longer exists as its own item — it was folded into Feature NPN (the pinnable navigation bar) above._
 - **Rule 9 — Auto-open "My Bids".** Arriving on the marketplace automatically switches you to the "My Bids" tab
   instead of leaving you on the default one.
-- **Feature TBC — Trade button on collection cards.** Adds a button directly on each card in your collection to
-  start a trade for it, without extra clicks.
+- **Feature TBC — Quick action button on collection cards.** Adds a small button directly on each card in your
+  collection that opens its sale/estimate modal in one click, instead of needing to open the card's modal
+  yourself first. Feature EBC's bulk evaluation tools click through this same button automatically.
 - **Rule 10 — Live notification counter.** Clicking a notification immediately updates the unread-count badge to
   match, instead of waiting for a refresh.
 - **Rule 11 — Dim the "buy packs" banner.** Once you have zero packs left to open, the site's promotional banner
@@ -106,7 +107,12 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Feature EBC — Bulk-evaluate your collection.** Adds buttons on `/collection` to estimate the market value of
   every card at once (or only the ones still missing an estimate), with a stop button to cancel partway through,
   plus a button to sort the whole page by estimated value from most to least expensive. Keeps the site's own
-  rarity filter buttons grouped ahead of these new ones whenever the site re-adds them.
+  rarity filter buttons grouped ahead of these new ones whenever the site re-adds them. A fourth, red "Estimation
+  en masse" button repeats the "missing estimate" pass across every page of your collection automatically,
+  advancing the pager itself between pages; the same stop button cancels it at any point. Keep the tab running the
+  evaluation active and the browser window un-minimized for the whole run — background tabs and minimized windows
+  get their timers throttled by the browser, which this feature's polling relies on, so a run left in the
+  background is liable to stall or time out individual cards instead of reliably stepping through them.
 - **Rule 20 — Tag list follows keyboard selection.** Inside a card's modal (on `/collection` and `/pulls`), the
   tag list automatically scrolls to keep whichever tag you've highlighted with the keyboard in view.
 - **Feature GCP — Click a friend's name to see their profile.** On the global collection/wishlist page, clicking
@@ -152,3 +158,7 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   remain.
 - **Rule 33 — Warn when you're already the highest bidder.** On a card's bidding page, the "place a bid" button
   turns light red when the current highest bidder is you, as a reminder you don't need to bid again.
+- **Rule 34 — Keyboard navigation in the tag filter list.** Opening the tag filter popover on your collection page
+  now moves focus straight into the list (onto the currently selected tag, or the first one), so arrow keys
+  navigate it immediately instead of scrolling the page. Home/End jump to the first/last tag, and typing a few
+  letters jumps to the next matching tag by name (ignoring its leading "#" and usage count).
