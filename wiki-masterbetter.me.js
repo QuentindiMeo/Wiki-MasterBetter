@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.20.22
+// @version      0.21.6
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -951,11 +951,18 @@ const MY_USERNAME = "xxx";
   // after 5 seconds — a one-shot timeout rather than a repeating interval, since a reload either fixes the page
   // (nothing left to reload for) or shows the same message again, which simply re-arms the timeout from scratch.
   // The div disappearing (auction loads, or navigating away) before the 5 seconds are up cancels it.
+  //
+  // Rule 29 (cont'd): on /collection, the same one-shot reload fires once a p.text-red-400/90 whose text contains
+  // "a échoué" (the site's own failure message) is showing, after COLLECTION_FAILURE_RELOAD_DELAY_MS. It disappearing
+  // before then cancels it; if it's still there after the reload, the timeout simply re-arms.
   // ============================================================
   const PULLS_RELOAD_INTERVAL_MS = 600000; // 10 minutes
   const AUCTION_NOT_FOUND_RELOAD_DELAY_MS = 1000; // 1 second
   let pullsReloadTimerId = null;
+  const COLLECTION_FAILURE_RELOAD_DELAY_MS = 2000; // 2 seconds
+  const COLLECTION_FAILURE_PHRASE = "a échoué";
   let auctionNotFoundReloadTimerId = null;
+  let collectionFailureReloadTimerId = null;
 
   function isPullsPileFull() {
     return (
@@ -968,6 +975,15 @@ const MY_USERNAME = "xxx";
     return (
       MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname) &&
       findInnermostDivContainingText(AUCTION_NOT_FOUND_PHRASE) !== undefined
+    );
+  }
+
+  function isCollectionFailureShowing() {
+    return (
+      window.location.pathname.startsWith("/collection") &&
+      Array.from(document.querySelectorAll("p.text-red-400\\/90")).some((p) =>
+        p.textContent.includes(COLLECTION_FAILURE_PHRASE),
+      )
     );
   }
 
@@ -1008,13 +1024,34 @@ const MY_USERNAME = "xxx";
     }, AUCTION_NOT_FOUND_RELOAD_DELAY_MS);
   }
 
+  function updateCollectionFailureReloadTimer() {
+    if (!isCollectionFailureShowing()) {
+      if (collectionFailureReloadTimerId !== null) {
+        clearTimeout(collectionFailureReloadTimerId);
+        collectionFailureReloadTimerId = null;
+      }
+      return;
+    }
+
+    if (collectionFailureReloadTimerId !== null) return;
+
+    collectionFailureReloadTimerId = setTimeout(() => {
+      collectionFailureReloadTimerId = null;
+      if (isCollectionFailureShowing()) {
+        window.location.reload();
+      }
+    }, COLLECTION_FAILURE_RELOAD_DELAY_MS);
+  }
+
   function watchPullsReloadTimer() {
     updatePullsReloadTimer();
     updateAuctionNotFoundReloadTimer();
+    updateCollectionFailureReloadTimer();
 
     const observer = new MutationObserver(() => {
       updatePullsReloadTimer();
       updateAuctionNotFoundReloadTimer();
+      updateCollectionFailureReloadTimer();
     });
     observer.observe(document.body, {
       childList: true,
@@ -3425,7 +3462,7 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-29",
       label:
-        "Recharger automatiquement la page (pile de paquets pleine, enchère introuvable)",
+        "Recharger automatiquement la page (pile de paquets pleine, enchère introuvable, échec de la collection)",
     },
     {
       id: "rule-30",
@@ -3446,6 +3483,10 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-34",
       label: "Navigation et recherche au clavier dans la liste des étiquettes",
+    },
+    {
+      id: "rule-35",
+      label: "Bouton des 40 plus grosses estimations de votre collection",
     },
   ];
 
@@ -3670,7 +3711,7 @@ const MY_USERNAME = "xxx";
       .wm-settings-modal {
         display: flex;
         flex-direction: column;
-        width: min(50rem, 90vw);
+        width: 75vw;
         max-height: 80vh;
         border-radius: 0.75rem;
         border: 1px solid var(--color-border);
@@ -3841,6 +3882,10 @@ const MY_USERNAME = "xxx";
     {
       title: "Estimer toute une collection d'un coup",
       text: "Dans votre collection, le bouton rouge « Estimation en masse » évalue les cartes sans estimation de la page, puis passe à la page suivante et recommence, jusqu'à la dernière. Le bouton « Arrêter la reconnaissance » interrompt le processus à n'importe quel moment. Laissez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan ou minimisée, le navigateur ralentit les temporisations dont cette fonctionnalité dépend, ce qui la rend peu fiable.",
+    },
+    {
+      title: "Voir les estimations les plus élevées",
+      text: "Dans votre collection, le bouton « Top 40 », à droite du titre, affiche les 40 plus grosses estimations mémorisées. Le ✕ d'une ligne supprime cette estimation du cache.",
     },
   ];
 
@@ -4749,15 +4794,15 @@ const MY_USERNAME = "xxx";
 
   // ============================================================
   // Feature EBC: on /collection, add three buttons as the last children of div.flex-wrap.gap-2 (rarity filter
-  // buttons): "Réévaluer la page" (re-evaluates every card), "Évaluer les cartes non évaluées" (only cards
+  // buttons): "Ré-estimer la page" (re-evaluates every card), "Estimer les cartes non évaluées" (only cards
   // whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker — hidden outright once
-  // that count reaches 0 on the current page), and "Ordonner la page par prix décroissant" (reorders the grid by
+  // that count reaches 0 on the current page), and "Ordonner la page par prix" (reorders the grid by
   // each card's raw eval value, unknowns last). The two evaluation
   // buttons show a fixed "Arrêter la reconnaissance" button and, for each targeted card, click its
   // .wm-quick-action button, wait for Feature ETS to record a fresh value under its "eval-{name}" localStorage
   // key, then press Escape to close the modal before moving to the next card. The stop button cancels the run
   // after the current card; the two evaluation buttons disable each other while either is running. Whenever a
-  // native rarity filter button (button.px-3.py-1.transition-colors) shows up after "Réévaluer la page" —
+  // native rarity filter button (button.px-3.py-1.transition-colors) shows up after "Ré-estimer la page" —
   // e.g. a new rarity tier's filter button getting appended past our own controls — it's moved back in front of
   // it, keeping the site's own filter buttons grouped together ahead of ours.
   //
@@ -4852,8 +4897,8 @@ const MY_USERNAME = "xxx";
 
     const label =
       cards === null
-        ? "Évaluer les cartes non évaluées (chargement...)"
-        : `Évaluer les cartes non évaluées (${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__BEST)} – ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__WORST)} s)`;
+        ? "Estimer les cartes non évaluées (chargement...)"
+        : `Estimer les cartes non évaluées (${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__BEST)} – ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__WORST)} s)`;
 
     if (btn.textContent === label) return;
     btn.textContent = label;
@@ -4921,7 +4966,7 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Feature EBC (cont'd): a fourth button, "Estimation en masse" (styled red, unlike its other three siblings
   // which just inherit the site's own filter-button look) — walks every page of the collection in turn, running
-  // the same "evaluate unrated cards" pass as the "Évaluer les cartes non évaluées" button on each one. A single
+  // the same "evaluate unrated cards" pass as the "Estimer les cartes non évaluées" button on each one. A single
   // stop button/state is shared across the whole run (evaluateCollectionCards's sharedState parameter, above)
   // rather than spawning a new one per page. Between pages, the pagination control's second child button
   // (div.gap-2.py-3 — the first is "previous page") is clicked once it stops being disabled: it can briefly stay
@@ -5038,6 +5083,33 @@ const MY_USERNAME = "xxx";
     grid.append(...sorted);
   }
 
+  // Reads the number of pages left to go off the pagination indicator's whole text ("Page 1 / 92" -> 92 - 1 = 91);
+  // null when the indicator isn't on screen (yet) or doesn't read "{current} / {max}".
+  const COLLECTION_PAGE_INDICATOR_SELECTOR =
+    "span.text-\\[var\\(--color-foreground\\)\\]\\/40";
+
+  function getCollectionPagesLeft() {
+    for (const span of document.querySelectorAll(
+      COLLECTION_PAGE_INDICATOR_SELECTOR,
+    )) {
+      const match = span.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+      if (match) return parseInt(match[2], 10) - parseInt(match[1], 10) + 1; // +1 because the current
+    }
+    return null;
+  }
+
+  function updateMassButtonLabel(btn) {
+    // Disabled while a run is in progress, when the button shows that run's own progress text instead
+    if (!btn || btn.disabled) return;
+
+    const pagesLeft = getCollectionPagesLeft();
+    const label =
+      pagesLeft === null
+        ? "Estimation complète 🗃️"
+        : `Estimation complète 🗃️ (>${pagesLeft} min)`;
+    if (btn.textContent !== label) btn.textContent = label;
+  }
+
   function insertEvaluateUnratedButton() {
     if (!window.location.pathname.startsWith("/collection")) return;
 
@@ -5053,7 +5125,7 @@ const MY_USERNAME = "xxx";
       reevaluateBtn.className = referenceBtn
         ? `${referenceBtn.className} wm-eval-reevaluate-all`
         : "wm-eval-reevaluate-all";
-      reevaluateBtn.textContent = "Réévaluer la page";
+      reevaluateBtn.textContent = "Ré-estimer la page";
 
       unratedBtn = document.createElement("button");
       unratedBtn.type = "button";
@@ -5066,12 +5138,11 @@ const MY_USERNAME = "xxx";
       sortBtn.className = referenceBtn
         ? `${referenceBtn.className} wm-eval-sort`
         : "wm-eval-sort";
-      sortBtn.textContent = "Ordonner la page par prix décroissant";
+      sortBtn.textContent = "Ordonner la page par prix";
 
       const massBtn = document.createElement("button");
       massBtn.type = "button";
       massBtn.className = "ml-auto wm-eval-mass";
-      massBtn.textContent = "🗃️📈";
       massBtn.title = "Estimation en masse de toutes les pages";
 
       reevaluateBtn.addEventListener("click", () => {
@@ -5113,10 +5184,11 @@ const MY_USERNAME = "xxx";
     }
 
     updateEvaluateUnratedButtonLabel(unratedBtn);
+    updateMassButtonLabel(filterBar.querySelector(":scope > .wm-eval-mass"));
 
     // The site's own rarity filter buttons (button.px-3.py-1.transition-colors) can be (re)inserted after ours —
     // e.g. a new rarity tier showing up appends its filter button at the end of filterBar, past our controls.
-    // Move any such button back to where it belongs: grouped with the other filter buttons, ahead of "Réévaluer".
+    // Move any such button back to where it belongs: grouped with the other filter buttons, ahead of "Ré-estimer".
     const reevaluateBtn = filterBar.querySelector(
       ":scope > .wm-eval-reevaluate-all",
     );
@@ -5171,10 +5243,10 @@ const MY_USERNAME = "xxx";
         border: none;
         border-radius: 0.5rem;
         padding: 0.25rem 0.5rem;
-        background: #dc2626;
+        background: #8c0606;
         opacity: 0.5;
         color: #fff;
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         font-weight: 600;
         cursor: pointer;
         transition: background-color 0.2s ease, opacity 0.2s ease;
@@ -5961,6 +6033,281 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 35: on /collection, a "Top {TOP_EVALS_LIMIT}" text button appended to the h1 inside div.gap-3.animate-fade-in-up
+  // (right after the heading's text) opens a modal listing the TOP_EVALS_LIMIT (40) largest eval prices cached under
+  // "eval-{name}" (Feature ETS), as a 3-column grid sorted by descending value. Entries whose cached value is the
+  // "?" placeholder (or otherwise non-numeric) are left out. Each entry has a "✕" button that removes that eval
+  // from localStorage and grays the entry out, the same way the "✕" on /profile's sold-prices grid (Feature BSP)
+  // does. The highest eval is pulled out of the grid and showcased above it with a golden pulsating glow
+  // (wm-top-eval-glow). Reuses the settings modal's overlay/header/close styling (.wm-settings-*), fading in on open
+  // (wm-top-evals-fade-in); closes on Escape, overlay click or its own close button.
+  // ============================================================
+  const TOP_EVALS_LIMIT = 40;
+  const EVAL_KEY_PREFIX = "eval-";
+
+  function collectTopEvals() {
+    const names = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(EVAL_KEY_PREFIX))
+        names.push(key.slice(EVAL_KEY_PREFIX.length));
+    }
+
+    return names
+      .map((cardName) => ({
+        cardName,
+        value: getCardEvalValueByName(cardName),
+      }))
+      .filter((entry) => entry.value !== null)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, TOP_EVALS_LIMIT);
+  }
+
+  function buildTopEvalsModal() {
+    const overlay = document.createElement("div");
+    overlay.className = "wm-settings-overlay wm-top-evals-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "wm-settings-modal wm-top-evals-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute(
+      "aria-label",
+      `Les ${TOP_EVALS_LIMIT} plus grosses estimations de votre collection`,
+    );
+
+    const header = document.createElement("div");
+    header.className = "wm-settings-header";
+
+    const title = document.createElement("h2");
+    title.className = "wm-settings-title";
+    title.textContent = `🏆 Les ${TOP_EVALS_LIMIT} plus grosses estimations de votre collection`;
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "wm-settings-close";
+    closeBtn.setAttribute("aria-label", "Fermer");
+    closeBtn.textContent = "✕";
+
+    header.append(title, closeBtn);
+
+    const grid = document.createElement("div");
+    grid.className = "wm-top-evals-grid";
+
+    const entries = collectTopEvals();
+    if (entries.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-settings-hint";
+      empty.textContent = "Aucune estimation en cache pour le moment.";
+      grid.appendChild(empty);
+    }
+
+    const buildEntry = ({ cardName, value }) => {
+      const entryEl = document.createElement("div");
+      entryEl.className = "wm-top-evals-entry";
+
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "wm-top-evals-clear";
+      clearBtn.setAttribute("aria-label", `Effacer ${cardName}`);
+      clearBtn.textContent = "✕";
+
+      const nameCell = document.createElement("span");
+      nameCell.className = "wm-top-evals-name";
+      nameCell.title = cardName;
+      nameCell.textContent =
+        cardName.length < 42 ? cardName : cardName.trim().slice(0, 42) + "...";
+
+      const valueCell = document.createElement("span");
+      valueCell.className = "wm-top-evals-value";
+      valueCell.textContent = formatEvalValue(String(value));
+
+      clearBtn.addEventListener("click", () => {
+        localStorage.removeItem(`${EVAL_KEY_PREFIX}${cardName}`);
+        clearBtn.remove();
+        entryEl.classList.add("wm-top-evals-entry-cleared");
+      });
+
+      entryEl.append(clearBtn, nameCell, valueCell);
+      return entryEl;
+    };
+
+    // The maximum eval (entries are already sorted) is pulled out of the grid and showcased above it.
+    const [topEntry, ...otherEntries] = entries;
+    let topEl = null;
+    if (topEntry) {
+      topEl = buildEntry(topEntry);
+      topEl.classList.add("wm-top-evals-max");
+    }
+    otherEntries.forEach((entry) => grid.appendChild(buildEntry(entry)));
+
+    modal.append(header);
+    if (topEl) modal.appendChild(topEl);
+    modal.appendChild(grid);
+    overlay.appendChild(modal);
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeydown);
+    };
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", onKeydown);
+
+    return overlay;
+  }
+
+  function insertTopEvalsButton() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    const heading = document.querySelector("div.gap-3.animate-fade-in-up h1");
+    if (!heading || heading.querySelector(":scope > .wm-top-evals-btn")) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-top-evals-btn";
+    btn.textContent = `Top ${TOP_EVALS_LIMIT}`;
+    btn.title = `Afficher les ${TOP_EVALS_LIMIT} plus grosses estimations de votre collection`;
+    btn.setAttribute("aria-haspopup", "dialog");
+
+    btn.addEventListener("click", () => {
+      if (document.querySelector(".wm-settings-overlay")) return;
+      document.body.appendChild(buildTopEvalsModal());
+    });
+
+    heading.appendChild(btn);
+  }
+
+  function watchTopEvalsButton() {
+    GM_addStyle(`
+      .wm-top-evals-btn {
+        margin-left: 0.75rem;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid #ffd700;
+        border-radius: 0.5rem;
+        background: transparent;
+        color: #ffd700;
+        font-size: 0.8rem;
+        font-weight: 600;
+        vertical-align: middle;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-top-evals-btn:hover {
+        opacity: 1;
+        background: rgba(255, 215, 0, 0.1);
+      }
+      .wm-top-evals-overlay {
+        animation: wm-top-evals-fade-in 0.5s ease-out;
+      }
+      @keyframes wm-top-evals-fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      .wm-top-evals-modal {
+        width: min(60rem, 92vw);
+      }
+      .wm-top-evals-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem 0.75rem;
+        overflow-y: auto;
+        padding-right: 0.25rem;
+      }
+      .wm-top-evals-grid > p {
+        grid-column: 1 / -1;
+      }
+      .wm-top-evals-entry {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 0.5rem;
+        transition: opacity 0.2s ease;
+      }
+      .wm-top-evals-entry-cleared {
+        opacity: 0.35;
+      }
+      .wm-top-evals-max {
+        min-width: 40%;
+        max-width: 50%;
+        margin-inline: auto;
+        margin-bottom: 0.75rem;
+        padding: 0.75rem;
+        border: 1px solid rgba(255, 215, 0, 0.6);
+        background-color: rgba(255, 215, 0, 0.2);
+        color: #fff4cc;
+        animation: wm-top-eval-glow 3s ease-in-out infinite;
+      }
+      .wm-top-evals-max .wm-top-evals-clear {
+        margin-right: 0.25rem;
+      }
+      .wm-top-evals-max .wm-top-evals-name,
+      .wm-top-evals-max .wm-top-evals-value {
+        font-size: 1.1rem;
+      }
+      /* overflow: hidden would clip the inherited text-shadow to the span's box instead of following the glyphs */
+      .wm-top-evals-max .wm-top-evals-name {
+        overflow: visible;
+        text-overflow: clip;
+      }
+      .wm-top-evals-max .wm-top-evals-value {
+        color: #ffd700;
+      }
+      @keyframes wm-top-eval-glow {
+        0%, 100% {
+          box-shadow: 0 0 3px rgba(255, 215, 0, 0.5), 0 0 6px rgba(255, 215, 0, 0.25);
+          text-shadow: 0 0 3px rgba(255, 215, 0, 0.6);
+        }
+        50% {
+          box-shadow: 0 0 9px rgba(255, 215, 0, 1), 0 0 18px rgba(255, 195, 0, 0.75),
+            0 0 28px rgba(255, 215, 0, 0.4);
+          text-shadow: 0 0 6px rgba(255, 240, 150, 1), 0 0 14px rgba(255, 215, 0, 0.9);
+        }
+      }
+      .wm-top-evals-name {
+        font-size: 0.825rem;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .wm-top-evals-value {
+        margin-left: auto;
+        color: #8db600;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+      .wm-top-evals-clear {
+        border: none;
+        background: transparent;
+        color: var(--color-foreground);
+        opacity: 0.5;
+        cursor: pointer;
+        line-height: 1;
+        transition: opacity 0.2s ease, color 0.2s ease;
+      }
+      .wm-top-evals-clear:hover {
+        opacity: 1;
+        color: #ef2222;
+      }
+    `);
+
+    insertTopEvalsButton();
+
+    const observer = new MutationObserver(() => insertTopEvalsButton());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -6027,6 +6374,7 @@ const MY_USERNAME = "xxx";
     run("rule-32", watchBidTimerUrgency);
     run("rule-33", watchOwnBidButtonColor);
     run("rule-34", watchTagFilterListKeyboardNav);
+    run("rule-35", watchTopEvalsButton);
 
     watchFeatureConfigButton();
     watchTutorialButton();

@@ -107,9 +107,11 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Feature EBC — Bulk-evaluate your collection.** Adds buttons on `/collection` to estimate the market value of
   every card at once (or only the ones still missing an estimate), with a stop button to cancel partway through,
   plus a button to sort the whole page by estimated value from most to least expensive. Keeps the site's own
-  rarity filter buttons grouped ahead of these new ones whenever the site re-adds them. A fourth, red "Estimation
-  en masse" button repeats the "missing estimate" pass across every page of your collection automatically,
-  advancing the pager itself between pages; the same stop button cancels it at any point. Keep the tab running the
+  rarity filter buttons grouped ahead of these new ones whenever the site re-adds them. A fourth, dark red
+  "Estimation complète" button repeats the "missing estimate" pass across every page of your collection
+  automatically, advancing the pager itself between pages; its label shows a minimum duration in minutes (one
+  minute per page left, current page included, read from the site's "Page X / Y" indicator); the same stop button
+  cancels it at any point. Keep the tab running the
   evaluation active and the browser window un-minimized for the whole run — background tabs and minimized windows
   get their timers throttled by the browser, which this feature's polling relies on, so a run left in the
   background is liable to stall or time out individual cards instead of reliably stepping through them.
@@ -144,7 +146,8 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Rule 29 — Automatic page reloads when stuck.** On `/pulls`, once your pack pile has reached the maximum size,
   the page reloads every 10 minutes for as long as it stays full — opening packs cancels the timer instead of
   letting it reload mid-session. On a card's bidding page, if Rule 22's "Auction not found" message is showing, the
-  page reloads itself once automatically, shortly after.
+  page reloads itself once automatically, shortly after. On `/collection`, the page likewise reloads itself once
+  when the site shows a red "a échoué" (failed) message.
 - **Rule 30 — Bigger, reorganized bulk-tagging modal.** Widens the "apply a tag" / "remove a tag" modal on your
   collection page and lays its tag list out as a wrapping grid instead of one narrow column, so more tags fit on
   screen at once. On the removal variant specifically, the list is also sorted so the tags affecting the most of
@@ -162,3 +165,8 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   now moves focus straight into the list (onto the currently selected tag, or the first one), so arrow keys
   navigate it immediately instead of scrolling the page. Home/End jump to the first/last tag, and typing a few
   letters jumps to the next matching tag by name (ignoring its leading "#" and usage count).
+- **Rule 35 — Your biggest card estimates.** Adds a "Top 40" button right after the page heading on `/collection`
+  that opens a modal listing the 40 highest card estimates saved in your cache (Feature ETS), most valuable first,
+  in three columns. Each entry has a "✕" button that deletes that estimate from the cache and grays the entry out,
+  just like the cache entries on `/profile`. The modal fades in smoothly, and the single highest estimate is
+  showcased above the grid with a golden pulsating glow. Cards whose estimate is still unknown ("?") are left out.
