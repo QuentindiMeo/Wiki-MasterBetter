@@ -94,6 +94,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Un indice de fiabilité accompagne le tag
   - Les prix enregistrés sont listés dans une grille sur votre propre profil
   - Un bouton Exporter/Importer permet de télécharger ce cache (prix de vente et estimations) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil
+- **Mes plus grosses ventes et achats** : Les 40 plus grosses ventes et les 40 plus gros achats sont mémorisés (depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché) ; deux boutons sur votre profil les listent dans une modale, la première mise en avant par une lueur dorée, un ✕ retire une entrée du cache
 
 ### 📦 Catalogue
 

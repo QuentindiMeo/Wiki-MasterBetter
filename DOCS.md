@@ -127,7 +127,7 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   card's bidding page, it also rewrites and centers the "Auction not found" message.
 - **Rule 23 — Custom favicon.** Replaces the site's browser-tab icon with the Wiki-MasterBetter logo.
 - **Feature FIS — Fix a page-transition visual glitch.** Corrects a styling issue with the loading spinner that
-  shows up briefly during page transitions (on `/pulls`, `/friends` and `/guild`).
+  shows up briefly during page transitions (on `/pulls`, `/friends`, `/guild`, `/achievements` and `/profile`).
 - **Feature TUT — Built-in feature tutorials.** Adds a "❓" button next to the settings button that opens a modal
   with short explanations for the script's less obvious features.
 - **Rule 24 — Bigger, sorted tag list.** Enlarges the tag list on your collection page and sorts it by how many
@@ -176,3 +176,20 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   indicator becomes clickable: clicking it swaps it for a number field (1 to the last page). Press Enter to go to
   that page — the script presses the site's own previous/next buttons for you, one page at a time — or Escape (or
   click elsewhere) to cancel.
+- **Feature BBS — Remember your biggest sales and purchases.** When you open the page of one of your own auctions that
+  has sold, or one that you won, the trade (card name and final price) is saved in your browser, under the cache keys
+  `wm-observed-best-sells` and `wm-observed-best-buys` respectively. Only your 40 biggest of each are kept (the same
+  size as the "Top 40" estimates list), sorted from biggest to smallest; once full, a new trade only gets in if it
+  beats the smallest one saved. Each price is saved with a short identifier taken from the auction's address (like
+  Feature BSP does), so revisiting the same auction never records it twice. Each trade also stores its cutoff from the
+  card's estimated market value (saved by Feature ETS): how far the price sits above or below it, in whole percent. It
+  is shown as a badge such as "+223%" or "-21%" on the top edge of the trade in the profile modal (hover it for an
+  explanation); trades whose card has no known estimate have no badge. Trades are listed by price by default; a "Trier
+  par bonne affaire" switch in each modal (off until you turn it on, and remembered afterwards) re-orders them by how
+  good a deal they were: sales by highest cutoff; purchases by a score that weighs the discount by the card's value
+  (discount × ln(1 + estimate)³), so a 605 bought at -64% ranks well above a 13 bought at -93% (trades without an
+  estimate last). Already-saved trades get their cutoff filled in or updated automatically. The auctions listed in the
+  "Historique" tab (sales) and the "Gagnées" tab (purchases) of `/marketplace` are picked up the same way, so you
+  don't have to open each one yourself. On your own profile, "Mes plus grosses ventes" and "Mes plus gros achats"
+  buttons between "Ma Collection" and "Mes Amis" open a modal listing those trades, in the same layout as the "Top 40"
+  estimates (biggest one showcased with a golden glow, "✕" to delete a trade from the cache).

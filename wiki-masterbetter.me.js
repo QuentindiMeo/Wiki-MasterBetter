@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.21.11
+// @version      0.22.13
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -178,7 +178,7 @@ const MY_USERNAME = "xxx";
   // Rule 4: on the /friends page, rearrange the friend list (everything after the search box) into a 3-column grid
   // ============================================================
   // Rule 4 (cont'd): the grid is applied in place — container itself becomes the grid, and the search box plus
-  // every H2 section header get a "span full row" class — rather than reparenting friend cards into a separate
+  // every H2 section header get a "span full row" class — rather than re-parenting friend cards into a separate
   // wrapper div like the original implementation did. Accepting a friend request while on this page re-renders
   // the list, and React's reconciler crashes (insertBefore/removeChild "not a child of this node") if a card it
   // still thinks is a direct child of container was actually moved under our wrapper. Only adding classes never
@@ -1006,6 +1006,10 @@ const MY_USERNAME = "xxx";
   }
 
   function updateAuctionNotFoundReloadTimer() {
+    if (!window.location.pathname.startsWith("/marketplace")) {
+      return;
+    }
+
     if (!isAuctionNotFoundShowing()) {
       if (auctionNotFoundReloadTimerId !== null) {
         clearTimeout(auctionNotFoundReloadTimerId);
@@ -2237,6 +2241,273 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Feature BBS: remembers the user's biggest sales and biggest purchases, each in its own localStorage entry
+  // (BEST_TRADE_KINDS: "wm-observed-best-sells" / "wm-observed-best-buys"): an array of single-key objects
+  // ({ "{card name}": "{amount}-{tag}" }, tag being the bid UUID's second segment, same tagged format as Feature
+  // BSP's entries), kept sorted from the biggest amount to the smallest and capped at TOP_LIMIT entries (same size as Rule 35's
+  // list). Once full, a new trade only gets in when it's strictly bigger than the current smallest entry, which it
+  // replaces. A trade whose tag is already stored is skipped, so revisiting an auction
+  // never records it twice; with no tag available, nothing is recorded. Skips while div.animate-spin is present
+  // (the page is still loading). Unlike Feature BSP's "observed-" cache, which deliberately ignores the user's own
+  // trades, this one only keeps them.
+  // Every trade also carries a cutoff: "{amount}-{tag}-{cutoff}", how far the amount sits from the card's cached
+  // Feature ETS eval price ("eval-{name}"), as a signed integer percentage ((amount / eval - 1) * 100, rounded to 0
+  // decimals: "-21" for 21% under the eval). With no usable eval for that card there's no cutoff, and the value stays
+  // "{amount}-{tag}". Entries already stored are brought up to date with refreshBestTradeCutoffs (on startup, and
+  // whenever the profile modal opens), since their eval may have appeared or moved since they were recorded.
+  // Two sources feed each entry:
+  //  - a bid page, once span.font-medium reads "Vendue" and the seller (getBidPageSellerUsername) is MY_USERNAME
+  //    (sells), or the winning bidder is (isMyUsernameLeadingBid; buys), the final price being span.text-2xl;
+  //  - /marketplace, while the kind's tab ("Historique" for sells, "Gagnées" for buys — the tab button whose text
+  //    starts with it, carrying border-b-2) is the active one: every div[id^="marketplace-auction-"] card whose
+  //    label span (span.uppercase) reads "Vendue pour" (not "Non vendue") / "Achetée pour", and — for sells only —
+  //    whose "Vendu par {name}" line names MY_USERNAME. Card name from its h3, amount from the span right after
+  //    the label, tag from the UUID in the card's id.
+  // ============================================================
+  const BEST_TRADE_KINDS = {
+    sells: {
+      key: "wm-observed-best-sells",
+      tabLabel: "Historique",
+      cardLabel: "Vendue pour",
+      isOnBidPage: () => getBidPageSellerUsername() === MY_USERNAME,
+      isOnCard: (card) => {
+        const sellerText = Array.from(card.querySelectorAll("p")).find((p) =>
+          p.textContent.trim().startsWith("Vendu par "),
+        )?.textContent;
+        return (
+          sellerText?.trim().match(/^Vendu par (\S+)/)?.[1] === MY_USERNAME
+        );
+      },
+      // What "Trier par bonne affaire" sorts a sale by, higher being better: its cutoff from the eval (NaN without
+      // an eval)
+      toggleScore: (cardName, amount) => {
+        const target = getCardEvalValueByName(cardName);
+        return target ? (amount / target - 1) * 100 : NaN;
+      },
+      cutoffHint:
+        "Écart du prix de vente par rapport à la valeur estimée sur le marché : ",
+      // Lazy: TOP_LIMIT is only declared further down
+      modalTitle: () => `💰 Vos ${TOP_LIMIT} plus grosses ventes`,
+      emptyText: "Aucune vente en cache pour le moment.",
+      buttonIcon: "💰",
+      buttonLabel: "Mes plus grosses ventes",
+    },
+    buys: {
+      key: "wm-observed-best-buys",
+      tabLabel: "Gagnées",
+      cardLabel: "Achetée pour",
+      isOnBidPage: () => isMyUsernameLeadingBid(),
+      isOnCard: () => true,
+      // What "Trier par bonne affaire" sorts a buy by, higher being better: the discount from the eval (1 - price /
+      // eval, so 0.75 for "-75%") weighted by ln(1 + eval) cubed, so a deal only ranks high when it's both deep and
+      // on a card that matters (a plain ln was too lenient: 13 at -93% outscored 605 at -64%). 605 at -64% (eval
+      // 1680) scores 0.64 * 7.4^3 = 262, 13 at -93% (eval 186) scores 0.93 * 5.2^3 = 133, 1000 at -50% scores 220,
+      // 9 at -75% scores 35. An overpriced buy scores negative; one with no usable eval has no score (NaN).
+      toggleScore: (cardName, amount) => {
+        const target = getCardEvalValueByName(cardName);
+        return target
+          ? (1 - amount / target) * Math.log(1 + target) ** 3
+          : NaN;
+      },
+      cutoffHint:
+        "Écart du prix d'achat par rapport à la valeur estimée sur le marché : ",
+      modalTitle: () => `🛒 Vos ${TOP_LIMIT} plus gros achats`,
+      emptyText: "Aucun achat en cache pour le moment.",
+      buttonIcon: "🛒",
+      buttonLabel: "Mes plus gros achats",
+    },
+  };
+
+  function readBestTrades(kind) {
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem(BEST_TRADE_KINDS[kind].key) ?? "[]",
+      );
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // "{amount}-{tag}[-{cutoff}]" -> its parts; cutoff is undefined when the entry has none. The cutoff is a signed
+  // integer, hence the regex rather than a split on "-" ("1907-01feb2--21"). Entries written back when it was still
+  // a 2-decimal ratio ("1907-01feb2-3.23") parse too, until the next refresh rewrites them.
+  function parseBestTradeValue(value) {
+    const match = String(value).match(/^(\d+)-([0-9a-f]+)(?:-(-?[\d.]+))?$/i);
+    if (!match) {
+      const [amount, tag] = String(value).split("-");
+      return { amount: parseInt(amount, 10), tag, cutoff: undefined };
+    }
+    return { amount: parseInt(match[1], 10), tag: match[2], cutoff: match[3] };
+  }
+
+  // How far the amount sits from the card's cached ETS eval price, as a rounded signed percentage string ("-21",
+  // "223", "0"); null when the card has no usable eval (missing, "?" or zero)
+  function computeBestTradeCutoff(cardName, amount) {
+    const target = getCardEvalValueByName(cardName);
+    return target ? String(Math.round((amount / target - 1) * 100)) : null;
+  }
+
+  function formatBestTradeCutoff(cutoff) {
+    return `${Number(cutoff) > 0 ? "+" : ""}${cutoff}%`;
+  }
+
+  function buildBestTradeValue(cardName, amount, tag) {
+    const base = `${amount}-${tag}`;
+    const cutoff = computeBestTradeCutoff(cardName, amount);
+    return cutoff === null ? base : `${base}-${cutoff}`;
+  }
+
+  // Biggest amount first; a stable sort, so equal amounts keep their order
+  function sortBestTradesByAmount(trades) {
+    const amountOf = (entry) =>
+      parseBestTradeValue(Object.values(entry)[0]).amount;
+    return [...trades].sort((a, b) => amountOf(b) - amountOf(a));
+  }
+
+  // Rewrites every stored entry's value with a freshly computed one and puts them back in amount order (a cache
+  // written while purchases were ranked by deal score is in that order), only saving when something changed
+  function refreshBestTradeCutoffs(kind) {
+    let changed = false;
+    let trades = readBestTrades(kind).map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+
+      const cardName = Object.keys(entry)[0];
+      const { amount, tag } = parseBestTradeValue(entry[cardName]);
+      if (Number.isNaN(amount) || !tag) return entry;
+
+      const value = buildBestTradeValue(cardName, amount, tag);
+      if (value === entry[cardName]) return entry;
+
+      changed = true;
+      return { [cardName]: value };
+    });
+
+    if (trades.every((e) => e && typeof e === "object")) {
+      const sorted = sortBestTradesByAmount(trades);
+      if (sorted.some((entry, i) => entry !== trades[i])) changed = true;
+      trades = sorted;
+    }
+
+    if (changed)
+      localStorage.setItem(BEST_TRADE_KINDS[kind].key, JSON.stringify(trades));
+  }
+
+  function addBestTrade(kind, cardName, amount, tag) {
+    if (!tag) return;
+
+    const amountOf = (entry) =>
+      parseBestTradeValue(Object.values(entry)[0]).amount;
+    const trades = readBestTrades(kind);
+    if (
+      trades.some((e) => parseBestTradeValue(Object.values(e)[0]).tag === tag)
+    )
+      return;
+
+    if (trades.length >= TOP_LIMIT) {
+      if (amount <= amountOf(trades[trades.length - 1])) return;
+      trades.pop();
+    }
+    trades.push({
+      [cardName]: buildBestTradeValue(cardName, amount, tag),
+    });
+
+    trades.sort((a, b) => amountOf(b) - amountOf(a));
+
+    localStorage.setItem(BEST_TRADE_KINDS[kind].key, JSON.stringify(trades));
+  }
+
+  function recordBestTradesFromBidPage() {
+    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
+    if (document.querySelector("div.animate-spin")) return;
+
+    const soldSpan = findAuctionOutcomeSpan();
+    if (!soldSpan || soldSpan.textContent.trim() !== "Vendue") return;
+
+    // Read h1.flex-1's own text node directly, same as recordSoldBidPrice (Feature CNC's 📋 button lives inside it)
+    const nameEl = document.querySelector("h1.flex-1");
+    const cardName = nameEl
+      ? Array.from(nameEl.childNodes)
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent)
+          .join("")
+          .trim()
+      : "";
+    const priceText = document
+      .querySelector("span.text-2xl")
+      ?.textContent.replace(/\s/g, "");
+    const amount = parseInt(priceText, 10);
+    if (!cardName || Number.isNaN(amount)) return;
+
+    Object.entries(BEST_TRADE_KINDS).forEach(([kind, config]) => {
+      const flag = `wmBest${kind}Stored`;
+      if (soldSpan.dataset[flag] === "true" || !config.isOnBidPage()) return;
+
+      soldSpan.dataset[flag] = "true";
+      addBestTrade(kind, cardName, amount, getBidTag());
+    });
+  }
+
+  function recordBestTradesFromMarketplaceTabs() {
+    if (!window.location.pathname.startsWith("/marketplace")) return;
+    if (document.querySelector("div.animate-spin")) return;
+
+    Object.entries(BEST_TRADE_KINDS).forEach(([kind, config]) => {
+      const tabActive = Array.from(document.querySelectorAll("button")).some(
+        (btn) =>
+          btn.textContent.trim().startsWith(config.tabLabel) &&
+          btn.classList.contains("border-b-2"),
+      );
+      if (!tabActive) return;
+
+      const flag = `wmBest${kind}Stored`;
+      document
+        .querySelectorAll('div[id^="marketplace-auction-"]')
+        .forEach((card) => {
+          if (card.dataset[flag] === "true") return;
+
+          const label = Array.from(
+            card.querySelectorAll("span.uppercase"),
+          ).find((span) => span.textContent.trim() === config.cardLabel);
+          if (!label || !config.isOnCard(card)) return;
+
+          const cardName = card.querySelector("h3")?.textContent.trim();
+          const amount = parseInt(
+            label.nextElementSibling?.textContent.replace(/\s/g, ""),
+            10,
+          );
+          const tag = card.id.replace("marketplace-auction-", "").split("-")[1];
+          if (!cardName || Number.isNaN(amount) || !tag) return;
+
+          card.dataset[flag] = "true";
+          addBestTrade(kind, cardName, amount, tag);
+        });
+    });
+  }
+
+  function watchBestTradeRecording() {
+    // Same debounce as watchSoldBidPriceRecording: a bid page mutates heavily while it hydrates
+    let debounceId = null;
+    const scheduleUpdate = () => {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(() => {
+        recordBestTradesFromBidPage();
+        recordBestTradesFromMarketplaceTabs();
+      }, 300);
+    };
+
+    scheduleUpdate();
+    Object.keys(BEST_TRADE_KINDS).forEach(refreshBestTradeCutoffs);
+
+    const observer = new MutationObserver(() => scheduleUpdate());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  // ============================================================
   // Feature BSP (cont'd): on a bid page, flag the card name (h1.flex-1, given "display: contents") as "EXCELLENT" when
   // the current price (input.min-w-0) is below 80% of the weighted average of that card's stored sold prices
   // (computeWeightedAveragePrice: out of N prices, the lowest weighs N, the second-lowest N-1, ... the highest
@@ -3392,7 +3663,7 @@ const MY_USERNAME = "xxx";
       id: "rule-14",
       label: "Encadrer le nom de carte des notifications de liste de souhaits",
     },
-    { id: "rule-15", label: "Relabelliser le bouton retour d'une enchère" },
+    { id: "rule-15", label: "Re-labelliser le bouton retour d'une enchère" },
     { id: "feature-plb", label: "Liens de profil sur la page d'enchère" },
     {
       id: "rule-16",
@@ -3500,6 +3771,10 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-35",
       label: "Bouton des 40 plus grosses estimations de votre collection",
+    },
+    {
+      id: "feature-bbs",
+      label: "Mémorisation de vos plus grosses ventes et achats",
     },
     {
       id: "rule-36",
@@ -3894,7 +4169,7 @@ const MY_USERNAME = "xxx";
     },
     {
       title: "Filtrer les notifications",
-      text: "En haut du panneau de notifications, des boutons 💰 🛒 🔨 ⭐ n'affichent que les notifications de ce type (ventes, achats, enchères, liste de souhaits). Cliquez à nouveau sur le bouton actif pour tout réafficher.",
+      text: "En haut du panneau de notifications, des boutons 💰 🛒 🔨 ⭐ n'affichent que les notifications de ce type (ventes, achats, enchères, liste de souhaits). Cliquez à nouveau sur le bouton actif pour tout ré-afficher.",
     },
     {
       title: "Estimer toute une collection d'un coup",
@@ -4628,7 +4903,7 @@ const MY_USERNAME = "xxx";
   // layout it just built.
   // ============================================================
   // Rule 26 (hotfix): the two columns are laid out with absolute positioning on each item, in place, rather than
-  // reparenting items into two wrapper divs like the original implementation did. Leaving /trades re-renders the
+  // re-parenting items into two wrapper divs like the original implementation did. Leaving /trades re-renders the
   // "Historique" list, and React's reconciler crashes (insertBefore/removeChild "not a child of this node") if a
   // card it still thinks is a direct child of list was actually moved under our column wrapper — same failure mode
   // already documented on Rule 4. Only setting each item's own inline position never changes anyone's parent, so
@@ -4637,7 +4912,7 @@ const MY_USERNAME = "xxx";
   //
   // Rule 26 (hotfix 2): each item's height is measured AFTER its width is narrowed down to the column width, not
   // before. An item can wrap onto extra lines once narrowed (e.g. a trade listing several cards per side), so
-  // measuring at the list's original full width undercounted its real (post-resize) height — the next item placed
+  // measuring at the list's original full width under-counted its real (post-resize) height — the next item placed
   // below it then overlapped instead of being pushed down.
   //
   // Rule 26 (hotfix 3): a dataset flag on the list used to guard against reprocessing, cleared only once the list's
@@ -4659,7 +4934,7 @@ const MY_USERNAME = "xxx";
 
     // Width has to be applied before measuring height: an item can wrap onto extra lines once narrowed down to a
     // column's width (e.g. a trade with several cards per side), so measuring offsetHeight at the list's original
-    // full width undercounts how tall it actually ends up once placed in a column — the next item placed below it
+    // full width under-counts how tall it actually ends up once placed in a column — the next item placed below it
     // then overlaps it instead of being pushed down.
     items.forEach((item) => {
       item.classList.add("wm-trades-history-item");
@@ -4825,7 +5100,7 @@ const MY_USERNAME = "xxx";
   //
   // Feature EBC (cont'd): both evaluation buttons, and the "Estimation en masse" one below, only run reliably
   // while their tab is the active one and the window isn't minimized — their polling (waitForCardEvaluation's
-  // setTimeout loop, and waitUntil's below) gets throttled by the browser once backgrounded/minimized, which
+  // setTimeout loop, and waitUntil's below) gets throttled by the browser once background/minimized, which
   // stretches or outright misses the timeout window a slow card's evaluation needs to land within.
   // ============================================================
   function getAllCollectionCards() {
@@ -5545,13 +5820,26 @@ const MY_USERNAME = "xxx";
   // than it drifting out of its normal layout flow. Split out from Rule 22 once the same drift showed up on
   // /friends (then /guild, then /achievements) too: unlike Rule 22, this fix isn't "on all pages" and doesn't
   // belong under its numbering.
+  //
+  // Feature FIS (cont'd): the same drift hits /profile (own and others'), but there only the div.animate-fade-in-up
+  // that contains the page's h1.text-2xl heading is affected — the page's other animate-fade-in-up blocks are left
+  // alone.
   // ============================================================
   function clearFadeInUpInlineStyle() {
+    const path = window.location.pathname;
+
+    if (path.startsWith("/profile")) {
+      document.querySelectorAll("div.animate-fade-in-up").forEach((el) => {
+        if (el.querySelector("h1.text-2xl")) el.removeAttribute("style");
+      });
+      return;
+    }
+
     if (
-      !window.location.pathname.startsWith("/pulls") &&
-      !window.location.pathname.startsWith("/friends") &&
-      !window.location.pathname.startsWith("/guild") &&
-      !window.location.pathname.startsWith("/achievements")
+      !path.startsWith("/pulls") &&
+      !path.startsWith("/friends") &&
+      !path.startsWith("/guild") &&
+      !path.startsWith("/achievements")
     )
       return;
 
@@ -6056,8 +6344,8 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 35: on /collection, a "Top {TOP_EVALS_LIMIT}" text button appended to the h1 inside div.gap-3.animate-fade-in-up
-  // (right after the heading's text) opens a modal listing the TOP_EVALS_LIMIT (40) largest eval prices cached under
+  // Rule 35: on /collection, a "Top {TOP_LIMIT}" text button appended to the h1 inside div.gap-3.animate-fade-in-up
+  // (right after the heading's text) opens a modal listing the TOP_LIMIT (40) largest eval prices cached under
   // "eval-{name}" (Feature ETS), as a 3-column grid sorted by descending value. Entries whose cached value is the
   // "?" placeholder (or otherwise non-numeric) are left out. Each entry has a "✕" button that removes that eval
   // from localStorage and grays the entry out, the same way the "✕" on /profile's sold-prices grid (Feature BSP)
@@ -6065,7 +6353,7 @@ const MY_USERNAME = "xxx";
   // (wm-top-eval-glow). Reuses the settings modal's overlay/header/close styling (.wm-settings-*), fading in on open
   // (wm-top-evals-fade-in); closes on Escape, overlay click or its own close button.
   // ============================================================
-  const TOP_EVALS_LIMIT = 40;
+  const TOP_LIMIT = 40;
   const EVAL_KEY_PREFIX = "eval-";
 
   function collectTopEvals() {
@@ -6083,10 +6371,21 @@ const MY_USERNAME = "xxx";
       }))
       .filter((entry) => entry.value !== null)
       .sort((a, b) => b.value - a.value)
-      .slice(0, TOP_EVALS_LIMIT);
+      .slice(0, TOP_LIMIT);
   }
 
-  function buildTopEvalsModal() {
+  // Shared by Rule 35 and Feature BBS's /profile button: builds the Top-list modal from already-sorted entries
+  // ({ cardName, valueText, badgeText?, badgeHint?, onClear }), the first one showcased above the grid. A badgeText
+  // gets its own span, docked to the top edge of the entry, whose tooltip is badgeHint followed by the text. With a sortToggle ({ label, compare, storageKey }), a switch in
+  // the header re-orders the entries with `compare` instead of the given order (re-showcasing whichever comes
+  // first); the choice is remembered in localStorage under storageKey, and an entry cleared before a re-order stays
+  // grayed out.
+  function buildTopListModal({
+    title: titleText,
+    emptyText,
+    entries,
+    sortToggle,
+  }) {
     const overlay = document.createElement("div");
     overlay.className = "wm-settings-overlay wm-top-evals-overlay";
 
@@ -6094,17 +6393,14 @@ const MY_USERNAME = "xxx";
     modal.className = "wm-settings-modal wm-top-evals-modal";
     modal.setAttribute("role", "dialog");
     modal.setAttribute("aria-modal", "true");
-    modal.setAttribute(
-      "aria-label",
-      `Les ${TOP_EVALS_LIMIT} plus grosses estimations de votre collection`,
-    );
+    modal.setAttribute("aria-label", titleText);
 
     const header = document.createElement("div");
     header.className = "wm-settings-header";
 
     const title = document.createElement("h2");
     title.className = "wm-settings-title";
-    title.textContent = `🏆 Les ${TOP_EVALS_LIMIT} plus grosses estimations de votre collection`;
+    title.textContent = titleText;
 
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
@@ -6112,20 +6408,26 @@ const MY_USERNAME = "xxx";
     closeBtn.setAttribute("aria-label", "Fermer");
     closeBtn.textContent = "✕";
 
-    header.append(title, closeBtn);
+    header.append(title);
+
+    let sortBtn = null;
+    if (sortToggle) {
+      sortBtn = document.createElement("button");
+      sortBtn.type = "button";
+      sortBtn.className = "wm-top-evals-sort";
+      sortBtn.textContent = sortToggle.label;
+      sortBtn.title = sortToggle.label;
+      header.append(sortBtn);
+    }
+    header.append(closeBtn);
 
     const grid = document.createElement("div");
     grid.className = "wm-top-evals-grid";
 
-    const entries = collectTopEvals();
-    if (entries.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "wm-settings-hint";
-      empty.textContent = "Aucune estimation en cache pour le moment.";
-      grid.appendChild(empty);
-    }
+    const clearedEntries = new Set();
 
-    const buildEntry = ({ cardName, value }) => {
+    const buildEntry = (entry) => {
+      const { cardName, valueText, badgeText, badgeHint, onClear } = entry;
       const entryEl = document.createElement("div");
       entryEl.className = "wm-top-evals-entry";
 
@@ -6143,31 +6445,80 @@ const MY_USERNAME = "xxx";
 
       const valueCell = document.createElement("span");
       valueCell.className = "wm-top-evals-value";
-      valueCell.textContent = formatEvalValue(String(value));
+      valueCell.textContent = valueText;
 
       clearBtn.addEventListener("click", () => {
-        localStorage.removeItem(`${EVAL_KEY_PREFIX}${cardName}`);
+        onClear();
+        clearedEntries.add(entry);
         clearBtn.remove();
         entryEl.classList.add("wm-top-evals-entry-cleared");
       });
 
+      if (clearedEntries.has(entry)) {
+        clearBtn.remove();
+        entryEl.classList.add("wm-top-evals-entry-cleared");
+      }
+
       entryEl.append(clearBtn, nameCell, valueCell);
+
+      if (badgeText) {
+        const formattedBadgeText = badgeText.replace(".", ",");
+        const badge = document.createElement("span");
+        badge.className = "wm-top-evals-badge";
+        badge.textContent = formattedBadgeText;
+        badge.title = (badgeHint ?? "") + formattedBadgeText;
+        entryEl.appendChild(badge);
+      }
       return entryEl;
     };
 
-    // The maximum eval (entries are already sorted) is pulled out of the grid and showcased above it.
-    const [topEntry, ...otherEntries] = entries;
     let topEl = null;
-    if (topEntry) {
+    const render = () => {
+      topEl?.remove();
+      topEl = null;
+      grid.replaceChildren();
+
+      if (entries.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "wm-settings-hint";
+        empty.textContent = emptyText;
+        grid.appendChild(empty);
+        return;
+      }
+
+      const sorted =
+        sortBtn?.getAttribute("aria-pressed") === "true"
+          ? [...entries].sort(sortToggle.compare)
+          : entries;
+
+      // The first entry is pulled out of the grid and showcased above it.
+      const [topEntry, ...otherEntries] = sorted;
       topEl = buildEntry(topEntry);
       topEl.classList.add("wm-top-evals-max");
-    }
-    otherEntries.forEach((entry) => grid.appendChild(buildEntry(entry)));
+      grid.before(topEl);
+      otherEntries.forEach((entry) => grid.appendChild(buildEntry(entry)));
+    };
 
-    modal.append(header);
-    if (topEl) modal.appendChild(topEl);
-    modal.appendChild(grid);
+    if (sortBtn) {
+      let pressed = false;
+      try {
+        pressed = localStorage.getItem(sortToggle.storageKey) === "true";
+      } catch {
+        // localStorage unavailable: the switch just starts off
+      }
+      sortBtn.setAttribute("aria-pressed", String(pressed));
+
+      sortBtn.addEventListener("click", () => {
+        const next = sortBtn.getAttribute("aria-pressed") !== "true";
+        sortBtn.setAttribute("aria-pressed", String(next));
+        localStorage.setItem(sortToggle.storageKey, String(next));
+        render();
+      });
+    }
+
+    modal.append(header, grid);
     overlay.appendChild(modal);
+    render();
 
     const onKeydown = (event) => {
       if (event.key === "Escape") close();
@@ -6186,6 +6537,18 @@ const MY_USERNAME = "xxx";
     return overlay;
   }
 
+  function buildTopEvalsModal() {
+    return buildTopListModal({
+      title: `🏆 Les ${TOP_LIMIT} plus grosses estimations de votre collection`,
+      emptyText: "Aucune estimation en cache pour le moment.",
+      entries: collectTopEvals().map(({ cardName, value }) => ({
+        cardName,
+        valueText: formatEvalValue(String(value)),
+        onClear: () => localStorage.removeItem(`${EVAL_KEY_PREFIX}${cardName}`),
+      })),
+    });
+  }
+
   function insertTopEvalsButton() {
     if (!window.location.pathname.startsWith("/collection")) return;
 
@@ -6195,8 +6558,8 @@ const MY_USERNAME = "xxx";
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "wm-top-evals-btn";
-    btn.textContent = `Top ${TOP_EVALS_LIMIT}`;
-    btn.title = `Afficher les ${TOP_EVALS_LIMIT} plus grosses estimations de votre collection`;
+    btn.textContent = `Top ${TOP_LIMIT}`;
+    btn.title = `Afficher les ${TOP_LIMIT} plus grosses estimations de votre collection`;
     btn.setAttribute("aria-haspopup", "dialog");
 
     btn.addEventListener("click", () => {
@@ -6357,7 +6720,12 @@ const MY_USERNAME = "xxx";
     });
   }
 
-  function watchTopEvalsButton() {
+  // Injected once, whichever of Rule 35 / Feature BBS's /profile button (both rely on it) is enabled first
+  let topListStylesInjected = false;
+  function injectTopListStyles() {
+    if (topListStylesInjected) return;
+    topListStylesInjected = true;
+
     GM_addStyle(`
       .wm-top-evals-btn {
         margin-left: 0.75rem;
@@ -6392,12 +6760,14 @@ const MY_USERNAME = "xxx";
         grid-template-columns: repeat(3, 1fr);
         gap: 0.5rem 0.75rem;
         overflow-y: auto;
+        padding-top: 0.5rem;
         padding-right: 0.25rem;
       }
       .wm-top-evals-grid > p {
         grid-column: 1 / -1;
       }
       .wm-top-evals-entry {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 0.5rem;
@@ -6405,6 +6775,42 @@ const MY_USERNAME = "xxx";
         border: 1px solid rgba(255, 255, 255, 0.15);
         border-radius: 0.5rem;
         transition: opacity 0.2s ease;
+      }
+      .wm-top-evals-sort {
+        margin-left: auto;
+        margin-right: 0.75rem;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--color-foreground);
+        font-size: 0.75rem;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-top-evals-sort:hover {
+        opacity: 1;
+      }
+      .wm-top-evals-sort[aria-pressed="true"] {
+        opacity: 1;
+        border-color: #ffd700;
+        color: #ffd700;
+        background: rgba(255, 215, 0, 0.12);
+      }
+      .wm-top-evals-badge {
+        position: absolute;
+        top: 0;
+        right: 0.75rem;
+        transform: translateY(-50%);
+        padding: 0 0.4rem;
+        border-radius: 0.5rem;
+        background: var(--color-surface, #1a1a1a);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        color: #ffd700;
+        font-size: 0.65rem;
+        font-weight: 700;
+        line-height: 1.2;
       }
       .wm-top-evals-entry-cleared {
         opacity: 0.35;
@@ -6455,6 +6861,7 @@ const MY_USERNAME = "xxx";
       }
       .wm-top-evals-value {
         margin-left: auto;
+        width: max-content;
         color: #8db600;
         font-size: 0.85rem;
         font-weight: 600;
@@ -6473,10 +6880,118 @@ const MY_USERNAME = "xxx";
         color: #ef2222;
       }
     `);
+  }
+
+  function watchTopEvalsButton() {
+    injectTopListStyles();
 
     insertTopEvalsButton();
 
     const observer = new MutationObserver(() => insertTopEvalsButton());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Feature BBS (cont'd): on your own profile (/profile), one button per BEST_TRADE_KINDS entry is inserted after
+  // the "Ma Collection" anchor of div.grid.grid-cols-2 (so, in order, between it and "Mes Amis"; the grid then
+  // gets one column per child), cloning the anchors' look. Each opens the same modal as Rule 35's Top list
+  // (buildTopListModal), listing that kind's cache — the biggest trade showcased first — with each amount shown in
+  // full (no "K" abbreviation), with the trade's cutoff from its eval, when it has one, as a "+223%" / "-21%" badge docked to the top of the entry; the cache is
+  // refreshed (refreshBestTradeCutoffs) as the modal opens. An entry's "✕" removes that trade from the cache (its stored "{amount}-{tag}" value
+  // being unique to that trade).
+  // ============================================================
+  function buildBestTradesModal(kind) {
+    const config = BEST_TRADE_KINDS[kind];
+    refreshBestTradeCutoffs(kind);
+    const trades = sortBestTradesByAmount(
+      readBestTrades(kind).filter((entry) => entry && typeof entry === "object"),
+    );
+
+    return buildTopListModal({
+      title: config.modalTitle(),
+      emptyText: config.emptyText,
+      sortToggle: {
+        label: "Trier par bonne affaire",
+        // New key: the old one remembered a switch that sorted by something else
+        storageKey: `wm-best-${kind}-sort-by-deal`,
+        // Default order is by amount; switched on, best score first (BEST_TRADE_KINDS' toggleScore); trades with none come last, in their usual order (sort
+        // is stable)
+        compare: (a, b) => {
+          const aMissing = Number.isNaN(a.toggleScore);
+          const bMissing = Number.isNaN(b.toggleScore);
+          if (aMissing || bMissing) return Number(aMissing) - Number(bMissing);
+          return b.toggleScore - a.toggleScore;
+        },
+      },
+      entries: trades.map((entry) => {
+        const cardName = Object.keys(entry)[0];
+        const raw = String(entry[cardName]);
+        const { amount, cutoff } = parseBestTradeValue(raw);
+        const amountText = (amount || 0).toLocaleString("fr-FR");
+        return {
+          cardName,
+          valueText: amountText,
+          badgeText: cutoff ? formatBestTradeCutoff(cutoff) : undefined,
+          badgeHint: config.cutoffHint,
+          toggleScore: config.toggleScore(cardName, amount),
+          onClear: () => {
+            localStorage.setItem(
+              config.key,
+              JSON.stringify(
+                readBestTrades(kind).filter(
+                  (e) => !(e && String(e[cardName]) === raw),
+                ),
+              ),
+            );
+          },
+        };
+      }),
+    });
+  }
+
+  function insertBestTradesButtons() {
+    if (!/^\/profile\/?$/.test(window.location.pathname)) return;
+
+    const collectionLink = document.querySelector(
+      'div.grid.grid-cols-2 > a[href="/collection"]',
+    );
+    const grid = collectionLink?.parentElement;
+    if (!grid || grid.querySelector(".wm-best-trades-btn")) return;
+
+    let previous = collectionLink;
+    Object.entries(BEST_TRADE_KINDS).forEach(([kind, config]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `${collectionLink.className} wm-best-trades-btn cursor-pointer`;
+      btn.title = config.modalTitle().replace(/^\S+\s/, "");
+      btn.setAttribute("aria-haspopup", "dialog");
+
+      const icon = document.createElement("span");
+      icon.className = "text-3xl leading-none";
+      icon.textContent = config.buttonIcon;
+      const label = document.createElement("span");
+      label.className = "text-sm font-medium";
+      label.textContent = config.buttonLabel;
+      btn.append(icon, label);
+
+      btn.addEventListener("click", () => {
+        if (document.querySelector(".wm-settings-overlay")) return;
+        document.body.appendChild(buildBestTradesModal(kind));
+      });
+
+      previous.after(btn);
+      previous = btn;
+    });
+
+    grid.style.gridTemplateColumns = `repeat(${grid.children.length}, 1fr)`;
+  }
+
+  function watchBestTradesButtons() {
+    injectTopListStyles();
+
+    insertBestTradesButtons();
+
+    const observer = new MutationObserver(() => insertBestTradesButtons());
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -6551,6 +7066,8 @@ const MY_USERNAME = "xxx";
     run("rule-34", watchTagFilterListKeyboardNav);
     run("rule-35", watchTopEvalsButton);
     run("rule-36", watchCollectionPageJump);
+    run("feature-bbs", watchBestTradeRecording);
+    run("feature-bbs", watchBestTradesButtons);
 
     watchFeatureConfigButton();
     watchTutorialButton();
