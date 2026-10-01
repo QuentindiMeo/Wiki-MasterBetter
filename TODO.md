@@ -10,4 +10,3 @@
 - [ ] si notif d'échange/ami non lue -> badge notif dans la navbar
 - [ ] afficher EVAL sur la collection globale
 - [ ] mettre la gestion de cache dans la danger zone
-- [ ] collection : buttons dernière/première page

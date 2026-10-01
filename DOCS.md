@@ -70,9 +70,9 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 - **Feature CAR — Claim all rewards at once.** Adds a "claim all" button on the achievements page that adds up and
   collects every pending reward in a single click, instead of one by one.
 - **Feature AKP — Keyboard control on /pulls.** Lets you use the keyboard while opening packs: the arrow keys move
-  between the pulled cards, Home/End jump straight to the first/last one, Space opens or closes a pack, E opens
+  between the pulled cards, Up/Down arrows jump straight to the first/last one, Space opens or closes a pack, E opens
   the currently selected card's full-size modal, and V does the same as E and then also puts that card up for
-  sale. While a card is shown large, a small legend in the space to its left reminds you of the arrow/Home/End
+  sale. While a card is shown large, a small legend in the space to its left reminds you of the arrow
   shortcuts.
 - **Feature SAT — Select all untagged cards.** Adds a "select all except tagged" button next to the site's own
   "select all" button on your collection page, so you can quickly select only the cards you haven't tagged yet.
@@ -89,13 +89,15 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   down to your most recent unread notification, instead of starting at the top of the list.
 - **Feature BSP — Track and grade sale prices.** Remembers how much each card has previously sold for (stored in
   your browser, not on the server) and uses that history to flag whether the current asking price looks like a
-  good deal — or, on a sale you make yourself, how good that sale was. Every price it has recorded is listed in a
+  good deal — or, on a sale you make yourself, how good that sale was. The top "legendary price" tier additionally
+  requires the price to be at least 50 below the reference average. Every price it has recorded is listed in a
   table on your own profile page, along with export/import buttons — export downloads a CSV file and import reads
   one back — so you can carry that history over to another browser or device.
 - **Rule 17 — Reposition "mark all as read".** Moves the "mark all as read" notifications button to the left side
   of the notifications panel, instead of wherever the site puts it by default.
-- **Rule 18 — Auto-focus useful inputs.** Opening a card's modal automatically puts your cursor in the tags input
-  field (on `/collection` and `/pulls`); arriving on `/collection` also automatically focuses the search field.
+- **Rule 18 — Auto-focus useful inputs.** Opening a card's modal automatically puts your cursor in its filter field
+  (on `/collection` and `/pulls`), which opens its dropdown. Arriving on `/collection`
+  also automatically focuses the search field (Rule 18b). Each can be toggled separately in the settings.
 - **Feature ETS — Remember market value estimates.** Saves each card's estimated market value (seen on `/pulls`
   and `/collection`) in your browser, then displays that saved value next to the card's rarity tag on your
   collection page, so you don't have to look it up again.
@@ -170,3 +172,7 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   in three columns. Each entry has a "✕" button that deletes that estimate from the cache and grays the entry out,
   just like the cache entries on `/profile`. The modal fades in smoothly, and the single highest estimate is
   showcased above the grid with a golden pulsating glow. Cards whose estimate is still unknown ("?") are left out.
+- **Rule 36 — Jump to any collection page.** On `/collection`, once the catalog has finished loading, the "Page X / Y"
+  indicator becomes clickable: clicking it swaps it for a number field (1 to the last page). Press Enter to go to
+  that page — the script presses the site's own previous/next buttons for you, one page at a time — or Escape (or
+  click elsewhere) to cancel.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.21.6
+// @version      0.21.11
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -957,7 +957,7 @@ const MY_USERNAME = "xxx";
   // before then cancels it; if it's still there after the reload, the timeout simply re-arms.
   // ============================================================
   const PULLS_RELOAD_INTERVAL_MS = 600000; // 10 minutes
-  const AUCTION_NOT_FOUND_RELOAD_DELAY_MS = 1000; // 1 second
+  const AUCTION_NOT_FOUND_RELOAD_DELAY_MS = 750;
   let pullsReloadTimerId = null;
   const COLLECTION_FAILURE_RELOAD_DELAY_MS = 2000; // 2 seconds
   const COLLECTION_FAILURE_PHRASE = "a échoué";
@@ -1632,12 +1632,13 @@ const MY_USERNAME = "xxx";
 
   // ============================================================
   // Feature AKP: on /pulls, once div.gap-4:not(.flex-col) is in the DOM, pressing ArrowLeft/ArrowRight clicks its
-  // first/second button; Home/End do the same but 4 times in a row (each click re-reads the container/buttons,
+  // first/second button; ArrowUp/ArrowDown do the same but 4 times in a row (each click re-reads the container/buttons,
   // waiting 50ms between clicks for React to re-render). Pressing Space, only while no modal (div.fixed.inset-0)
   // is open, clicks the "Continuer" button inside main, or button.relative.gap-4 if that's what's present in the
   // DOM instead. Pressing E, while a span reading "Carte" is inside main, clicks main img.scale-[1.8]. Pressing V
   // does the same as E, then (50ms later, to let React re-render the sell button after the card click) also
-  // clicks button.py-2.5.font-semibold. E and V are ignored while focus is inside an <input>.
+  // clicks button.py-2.5.font-semibold. E and V are ignored while focus is inside an <input>. ArrowLeft/ArrowRight and
+  // ArrowUp/ArrowDown are ignored while a modal (div.fixed.inset-0, e.g. the card modal) is open.
   // ============================================================
   function clickPullsNavButton(direction) {
     const container = document.querySelector("div.gap-4:not(.flex-col)");
@@ -1704,10 +1705,13 @@ const MY_USERNAME = "xxx";
         return;
       }
 
-      if (event.key === "Home" || event.key === "End") {
+      // Navigation keys are left to the modal (scrolling, text caret...) while one is open
+      if (!noOpenModal) return;
+
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
         event.preventDefault();
         clickPullsNavButtonRepeatedly(
-          event.key === "Home" ? "left" : "right",
+          event.key === "ArrowUp" ? "left" : "right",
           4,
         );
         return;
@@ -1722,8 +1726,8 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Feature AKP (cont'd): on /pulls, while a pulled card is shown large (same guard as the E/V shortcuts above:
   // main div.relative.inline-flex is present), dock a small legend in the space to the left of the card listing
-  // its keyboard shortcuts — ←/→ for Précédent/Suivant, Home/End for Début/Fin. Précédent/Suivant already mirror
-  // the on-screen chevron buttons, but Home/End have no visual hint otherwise. Positioned from
+  // its keyboard shortcuts — ←/→ for Précédent/Suivant, ↑/↓ for Début/Fin. Précédent/Suivant already mirror
+  // the on-screen chevron buttons, but ↑/↓ have no visual hint otherwise. Positioned from
   // main div.relative.inline-flex's own getBoundingClientRect(), same anchor and same self-healing pattern
   // (mutation observer + 200ms fallback timer, since navigating between cards doesn't reliably fire a mutation
   // these are watching for) as Feature OWL's own button, which it sits directly above so the two read as one
@@ -1741,8 +1745,8 @@ const MY_USERNAME = "xxx";
     [
       ["←", "Carte précédente"],
       ["→", "Carte suivante"],
-      ["Home", "Première carte"],
-      ["End", "Dernière carte"],
+      ["↑", "Première carte"],
+      ["↓", "Dernière carte"],
       ["E", "Ouvrir la carte"],
       ["V", "Ouvrir la vente"],
       ["W", "Ouvrir la page Wikipédia"],
@@ -2241,7 +2245,8 @@ const MY_USERNAME = "xxx";
   // above 120%; unflag it as soon as none of those is true. Below 50% of that average, with at least 5 stored sold
   // prices backing it — i.e. that card's cache is at its full MAX_STORED_PRICES capacity, so the average is
   // actually meaningful — it's flagged "prix extraordinaire" instead of "EXCELLENT"; below 20%, with that same
-  // 5-entry restriction, it's flagged "prix légendaire" instead. When this bid's own price is
+  // 5-entry restriction, and the price is at least LEGENDARY_MIN_DIFFERENCE below that average, it's flagged
+  // "prix légendaire" instead (a smaller gap falls back to the lower tiers). When this bid's own price is
   // the only entry stored for that card (a cache no-hit that this bid's
   // end just filled), that lone entry trivially equals the current price and would otherwise misleadingly compute
   // as "tolérable" — flag it "NEW ENTRY" (white) instead, since there's no real history yet to compare against.
@@ -2268,6 +2273,7 @@ const MY_USERNAME = "xxx";
   // buyer- or seller-facing — a cancelled auction has no real sale or final bid worth grading or comparing to.
   // ============================================================
   const LEGENDARY_THRESHOLD_RATIO = 0.2;
+  const LEGENDARY_MIN_DIFFERENCE = 50;
   const EXTRAORDINARY_THRESHOLD_RATIO = 0.5;
   const EXTRAORDINARY_MIN_OBSERVED_ENTRIES = 5;
   const EXCELLENT_THRESHOLD_RATIO = 0.8;
@@ -2471,6 +2477,7 @@ const MY_USERNAME = "xxx";
     } else {
       if (
         price < referenceValue * LEGENDARY_THRESHOLD_RATIO &&
+        referenceValue - price >= LEGENDARY_MIN_DIFFERENCE &&
         observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES
       )
         status = "legendary";
@@ -3280,9 +3287,11 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 18: on /collection and /pulls, when the card modal (div.card-frame.p-6) opens, focus input.px-3 after 250ms.
-  // Also, on arrival on /collection, focus input.rounded-lg as soon as it enters the DOM. Also suppresses the
-  // focus outline on nav a[href="/pulls"], left lingering from the click that navigated there.
+  // Rule 18: on /collection and /pulls, when the card modal (div.card-frame.p-6) opens, focus its filter input
+  // (input.px-3) after 250ms. Focusing it opens its dropdown, hence the dedicated "rule-18" toggle.
+  // Rule 18b: on arrival on /collection, focus input.rounded-lg as soon as it enters the DOM. Toggle-able on its own
+  // as "rule-18b". Also suppresses the focus outline on nav a[href="/pulls"], left lingering from the click that
+  // navigated there (always on, with either toggle).
   // ============================================================
   function focusCollectionModalInput() {
     if (
@@ -3311,20 +3320,20 @@ const MY_USERNAME = "xxx";
     input.focus();
   }
 
-  function watchCollectionModalInputFocus() {
+  function watchCollectionModalInputFocus(flags) {
     GM_addStyle(`
       nav a[href="/pulls"]:focus {
         outline: none;
       }
     `);
 
-    focusCollectionModalInput();
-    focusCollectionSearchInput();
+    const onMutation = () => {
+      if (flags["rule-18"]) focusCollectionModalInput();
+      if (flags["rule-18b"]) focusCollectionSearchInput();
+    };
+    onMutation();
 
-    const observer = new MutationObserver(() => {
-      focusCollectionModalInput();
-      focusCollectionSearchInput();
-    });
+    const observer = new MutationObserver(onMutation);
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -3397,7 +3406,11 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-18",
       label:
-        "Focus automatique sur le champ de mise et la recherche de collection",
+        "Focus automatique sur le champ de filtre à l'ouverture d'une carte",
+    },
+    {
+      id: "rule-18b",
+      label: "Focus automatique sur la recherche de la collection",
     },
     { id: "feature-ets", label: "Mémorisation des estimations de cartes" },
     {
@@ -3487,6 +3500,10 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-35",
       label: "Bouton des 40 plus grosses estimations de votre collection",
+    },
+    {
+      id: "rule-36",
+      label: "Aller directement à une page de la collection",
     },
   ];
 
@@ -5119,24 +5136,27 @@ const MY_USERNAME = "xxx";
     let unratedBtn = filterBar.querySelector(":scope > .wm-eval-unrated");
     if (!unratedBtn) {
       const referenceBtn = filterBar.querySelector("button");
+      const baseClass = referenceBtn
+        ? referenceBtn.className.replace("px-3", "px-1")
+        : "";
 
       const reevaluateBtn = document.createElement("button");
       reevaluateBtn.type = "button";
-      reevaluateBtn.className = referenceBtn
-        ? `${referenceBtn.className} wm-eval-reevaluate-all`
+      reevaluateBtn.className = baseClass
+        ? `${baseClass} wm-eval-reevaluate-all`
         : "wm-eval-reevaluate-all";
       reevaluateBtn.textContent = "Ré-estimer la page";
 
       unratedBtn = document.createElement("button");
       unratedBtn.type = "button";
-      unratedBtn.className = referenceBtn
-        ? `${referenceBtn.className} wm-eval-unrated`
+      unratedBtn.className = baseClass
+        ? `${baseClass} wm-eval-unrated`
         : "wm-eval-unrated";
 
       const sortBtn = document.createElement("button");
       sortBtn.type = "button";
-      sortBtn.className = referenceBtn
-        ? `${referenceBtn.className} wm-eval-sort`
+      sortBtn.className = baseClass
+        ? `${baseClass} wm-eval-sort`
         : "wm-eval-sort";
       sortBtn.textContent = "Ordonner la page par prix";
 
@@ -5243,6 +5263,7 @@ const MY_USERNAME = "xxx";
         border: none;
         border-radius: 0.5rem;
         padding: 0.25rem 0.5rem;
+        margin-right: 0.25rem;
         background: #8c0606;
         opacity: 0.5;
         color: #fff;
@@ -5462,8 +5483,10 @@ const MY_USERNAME = "xxx";
   }
 
   function findInnermostDivContainingText(text) {
-    const matches = Array.from(document.querySelectorAll("div")).filter((div) =>
-      div.textContent.includes(text),
+    // Skips the script's own modals (settings, tutorials), whose labels can quote the searched phrase
+    const matches = Array.from(document.querySelectorAll("div")).filter(
+      (div) =>
+        div.textContent.includes(text) && !div.closest(".wm-settings-overlay"),
     );
     return matches.find(
       (div) => !matches.some((other) => other !== div && div.contains(other)),
@@ -6184,6 +6207,156 @@ const MY_USERNAME = "xxx";
     heading.appendChild(btn);
   }
 
+  // ============================================================
+  // Rule 36: on /collection, once the catalog has finished loading (no div.animate-spin, and the page indicator
+  // COLLECTION_PAGE_INDICATOR_SELECTOR reads "{current} / {max}"), that indicator becomes clickable. Clicking it
+  // hides it and shows a number <input> (1..max) in its place; Enter jumps to that page, Escape or losing focus
+  // puts the indicator back untouched. The indicator is hidden rather than removed since React owns it. The jump
+  // is performed with the indicator's two sibling buttons (previous - indicator - next): the matching one is
+  // clicked once per page to cross, waiting for the indicator to change between clicks.
+  // ============================================================
+  let collectionPageJumpRunning = false;
+
+  function readCollectionPageIndicator(span) {
+    const match = span.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+    return match ? { current: +match[1], max: +match[2] } : null;
+  }
+
+  function findCollectionPageIndicator() {
+    return (
+      Array.from(
+        document.querySelectorAll(COLLECTION_PAGE_INDICATOR_SELECTOR),
+      ).find((span) => readCollectionPageIndicator(span)) ?? null
+    );
+  }
+
+  function isCollectionPageLoaded() {
+    return (
+      window.location.pathname.startsWith("/collection") &&
+      !document.querySelector("div.animate-spin") &&
+      findCollectionPageIndicator() !== null
+    );
+  }
+
+  async function jumpToCollectionPage(target) {
+    if (collectionPageJumpRunning) return;
+    collectionPageJumpRunning = true;
+
+    try {
+      for (;;) {
+        const span = findCollectionPageIndicator();
+        const state = span && readCollectionPageIndicator(span);
+        if (!state || state.current === target) return;
+
+        const btn =
+          target > state.current
+            ? span.nextElementSibling
+            : span.previousElementSibling;
+        if (!(btn instanceof HTMLButtonElement) || btn.disabled) return;
+
+        btn.click();
+
+        let changed = false;
+        for (let waited = 0; waited < 15000 && !changed; waited += 50) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          const now = findCollectionPageIndicator();
+          const nowState = now && readCollectionPageIndicator(now);
+          changed = nowState !== null && nowState.current !== state.current;
+        }
+        if (!changed) return;
+      }
+    } finally {
+      collectionPageJumpRunning = false;
+    }
+  }
+
+  function openCollectionPageInput(span) {
+    if (span.nextElementSibling?.classList.contains("wm-page-jump-input"))
+      return;
+
+    const state = readCollectionPageIndicator(span);
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.max = String(state.max);
+    input.value = String(state.current);
+    input.className = "wm-page-jump-input";
+    input.title =
+      "Cliquer pour définir manuellement une page à laquelle vous rendre";
+    input.setAttribute("aria-label", "Aller à la page");
+
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      input.remove();
+      span.style.display = "";
+    };
+
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        close();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        const target = Math.min(
+          state.max,
+          Math.max(1, parseInt(input.value, 10) || state.current),
+        );
+        close();
+        jumpToCollectionPage(target);
+      }
+    });
+    input.addEventListener("blur", close);
+
+    span.style.display = "none";
+    span.after(input);
+    input.focus();
+    input.select();
+  }
+
+  function updateCollectionPageIndicatorClickable() {
+    const span = findCollectionPageIndicator();
+    if (!span) return;
+    span.classList.toggle("wm-page-jump", isCollectionPageLoaded());
+  }
+
+  function watchCollectionPageJump() {
+    GM_addStyle(`
+      .wm-page-jump {
+        cursor: pointer;
+        transition: scale 0.1s ease;
+      }
+      .wm-page-jump:hover {
+        scale: 1.05;
+      }
+      .wm-page-jump-input {
+        width: 4.5rem;
+        padding: 0.1rem 0.4rem;
+        border: 1px solid currentColor;
+        border-radius: 0.4rem;
+        background: transparent;
+        color: inherit;
+        text-align: center;
+      }
+    `);
+
+    document.addEventListener("click", (event) => {
+      const span = event.target.closest?.(".wm-page-jump");
+      if (span && isCollectionPageLoaded()) openCollectionPageInput(span);
+    });
+
+    updateCollectionPageIndicatorClickable();
+    const observer = new MutationObserver(() =>
+      updateCollectionPageIndicatorClickable(),
+    );
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
   function watchTopEvalsButton() {
     GM_addStyle(`
       .wm-top-evals-btn {
@@ -6352,7 +6525,9 @@ const MY_USERNAME = "xxx";
     run("feature-ets", watchTabularNumsRecording);
     run("feature-ets", watchRarityEvalTags);
     run("rule-17", watchNotificationContainerFirstChildSpacing);
-    run("rule-18", watchCollectionModalInputFocus);
+    if (flags["rule-18"] || flags["rule-18b"]) {
+      watchCollectionModalInputFocus(flags);
+    }
     run("rule-19", watchNotificationRewrites);
     run("feature-ebc", watchEvaluateUnratedButton);
     run("rule-20", watchCardModalListScroll);
@@ -6375,6 +6550,7 @@ const MY_USERNAME = "xxx";
     run("rule-33", watchOwnBidButtonColor);
     run("rule-34", watchTagFilterListKeyboardNav);
     run("rule-35", watchTopEvalsButton);
+    run("rule-36", watchCollectionPageJump);
 
     watchFeatureConfigButton();
     watchTutorialButton();
