@@ -93,7 +93,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Un indice de fiabilité accompagne le tag
   - Les prix enregistrés sont listés dans une grille sur votre propre profil
-  - Un bouton Exporter/Importer permet de télécharger ce cache (prix de vente et estimations) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil
+  - Un bouton Exporter/Importer permet de télécharger ce cache (prix de vente, estimations et joueurs suivis) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil
 - **Mes plus grosses ventes et achats** : Les 40 plus grosses ventes et les 40 plus gros achats sont mémorisés (depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché) ; deux boutons sur votre profil les listent dans une modale, la première mise en avant par une lueur dorée, un ✕ retire une entrée du cache
 
 ### 📦 Catalogue
@@ -104,6 +104,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits à leur icône
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
+- **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre
 
 ### 🏆 Succès
 

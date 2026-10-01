@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.22.13
+// @version      0.23.2
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2305,9 +2305,7 @@ const MY_USERNAME = "xxx";
       // 9 at -75% scores 35. An overpriced buy scores negative; one with no usable eval has no score (NaN).
       toggleScore: (cardName, amount) => {
         const target = getCardEvalValueByName(cardName);
-        return target
-          ? (1 - amount / target) * Math.log(1 + target) ** 3
-          : NaN;
+        return target ? (1 - amount / target) * Math.log(1 + target) ** 3 : NaN;
       },
       cutoffHint:
         "Écart du prix d'achat par rapport à la valeur estimée sur le marché : ",
@@ -2973,18 +2971,24 @@ const MY_USERNAME = "xxx";
   // BSP) and "eval-" (Feature ETS) localStorage entry as a downloadable "key,value" CSV file, so that cache can be
   // moved to another browser/device. Values are carried as their raw stored strings (not re-parsed), since Feature
   // BSP's entries are JSON-encoded arrays while Feature ETS's are plain strings; both are CSV-quoted as needed.
+  // Feature FOL's followed-users list is carried too.
   const TAGGED_CACHE_PREFIXES = [BSP_KEY_PREFIX, "eval-"];
+
+  // Feature FOL's followed-users list (FOLLOWED_USERS_KEY, declared further down, hence the function) travels with
+  // that cache too; on import it's merged into the local list rather than replacing it.
+  function isTaggedCacheKey(key) {
+    return (
+      key === FOLLOWED_USERS_KEY ||
+      TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))
+    );
+  }
 
   function collectTaggedCacheEntries() {
     const entries = {};
 
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (
-        !key ||
-        !TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))
-      )
-        continue;
+      if (!key || !isTaggedCacheKey(key)) continue;
 
       const raw = localStorage.getItem(key);
       if (raw !== null) entries[key] = raw;
@@ -3096,8 +3100,24 @@ const MY_USERNAME = "xxx";
 
         rows.forEach(([key, value]) => {
           if (typeof key !== "string" || typeof value !== "string") return;
-          if (!TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix)))
+          if (!isTaggedCacheKey(key)) return;
+
+          if (key === FOLLOWED_USERS_KEY) {
+            try {
+              const imported = JSON.parse(value);
+              if (!Array.isArray(imported)) return;
+
+              const merged = new Set([
+                ...readFollowedUsers(),
+                ...imported.filter((u) => typeof u === "string"),
+              ]);
+              localStorage.setItem(key, JSON.stringify([...merged]));
+              importedCount++;
+            } catch {
+              // Not a followed-users list: skipped like any other invalid row
+            }
             return;
+          }
 
           localStorage.setItem(key, value);
           importedCount++;
@@ -3780,6 +3800,10 @@ const MY_USERNAME = "xxx";
       id: "rule-36",
       label: "Aller directement à une page de la collection",
     },
+    {
+      id: "feature-fol",
+      label: "Suivre des joueurs (œil rouge sur les pages d'enchère)",
+    },
   ];
 
   function readFeatureFlags() {
@@ -4178,6 +4202,10 @@ const MY_USERNAME = "xxx";
     {
       title: "Voir les estimations les plus élevées",
       text: "Dans votre collection, le bouton « Top 40 », à droite du titre, affiche les 40 plus grosses estimations mémorisées. Le ✕ d'une ligne supprime cette estimation du cache.",
+    },
+    {
+      title: "Suivre un joueur",
+      text: "Sur le profil d'un joueur, le bouton « Suivre » en forme d'œil, à côté de « Signaler », le suit : l'œil devient rouge, et un petit œil rouge apparaît à côté de son pseudo sur les pages d'enchère. Cliquez à nouveau pour ne plus le suivre.",
     },
   ];
 
@@ -6904,7 +6932,9 @@ const MY_USERNAME = "xxx";
     const config = BEST_TRADE_KINDS[kind];
     refreshBestTradeCutoffs(kind);
     const trades = sortBestTradesByAmount(
-      readBestTrades(kind).filter((entry) => entry && typeof entry === "object"),
+      readBestTrades(kind).filter(
+        (entry) => entry && typeof entry === "object",
+      ),
     );
 
     return buildTopListModal({
@@ -6996,6 +7026,283 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Feature FOL: on another user's profile (/profile/{username}), a "follow" eye button is added to the top-right
+  // row (div.-mt-0.5) holding the "Signaler" button, right before it, styled after that button (eye icon + "Suivre"
+  // / "Suivi" label). That row is there on every other user's profile, friend or not, unlike the message / trade
+  // buttons. Clicking it adds the user to — or removes them from — the followed list kept in localStorage under FOLLOWED_USERS_KEY (a
+  // JSON array of usernames), and the button turns red while the user is followed. On a bid page
+  // (/marketplace/{UUID}), a red eye icon (span.wm-follow-eye) is then put right after every followed user's name:
+  // the seller (p.text-sm.mt-1 span), each bidder of ul.card-frame (the first span of the entry) and the leading
+  // bidder (div.card-frame p.text-xs span). The icon is a sibling of the name span rather than a child, since the
+  // site's own framework owns that span's content. Icons of users no longer followed are removed.
+  //
+  // Feature FOL (cont'd): on your own profile (/profile), the followed users are listed in a block placed right after
+  // Feature BSP's div.wm-bsp-dump (or after div.grid when that one isn't there), sorted alphabetically, each as a
+  // link to their profile with a "✕" that unfollows them and grays the entry out, like the dump's own entries. It
+  // reuses none of the dump's classes — wm-bsp-dump in particular is how Feature BSP spots its own block. Nothing is
+  // shown while nobody is followed.
+  // ============================================================
+  const FOLLOWED_USERS_KEY = "wm-followed-users";
+  const FOLLOW_EYE_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+
+  function readFollowedUsers() {
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem(FOLLOWED_USERS_KEY) ?? "[]",
+      );
+      return Array.isArray(parsed)
+        ? parsed.filter((u) => typeof u === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function setUserFollowed(username, followed) {
+    const users = readFollowedUsers().filter((u) => u !== username);
+    if (followed) users.push(username);
+    localStorage.setItem(FOLLOWED_USERS_KEY, JSON.stringify(users));
+  }
+
+  function getViewedProfileUsername() {
+    const match = window.location.pathname.match(/^\/profile\/([^/]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  function updateFollowButtonState(btn, username) {
+    const followed = readFollowedUsers().includes(username);
+    btn.setAttribute("aria-pressed", String(followed));
+    const label = btn.querySelector(".wm-follow-btn-label");
+    if (label) label.textContent = followed ? "Suivi" : "Suivre";
+    btn.title = followed ? `Ne plus suivre ${username}` : `Suivre ${username}`;
+  }
+
+  function insertFollowButton() {
+    const username = getViewedProfileUsername();
+    if (!username) return;
+
+    const reportBtn = document.querySelector(
+      'div.-mt-0\\.5 button[title^="Signaler"]',
+    );
+    const row = reportBtn?.parentElement;
+    if (!reportBtn || !row) return;
+
+    const existing = row.querySelector(":scope > .wm-follow-btn");
+    if (existing) {
+      // The viewed profile can change without the row being rebuilt
+      if (existing.dataset.wmFollowUser !== username) {
+        existing.dataset.wmFollowUser = username;
+        updateFollowButtonState(existing, username);
+      }
+      return;
+    }
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${reportBtn.className.replace("wm-profile-btn", "").trim()} wm-follow-btn`;
+    btn.dataset.wmFollowUser = username;
+    btn.innerHTML = `${FOLLOW_EYE_SVG}<span class="wm-follow-btn-label"></span>`;
+    btn
+      .querySelector("svg")
+      .setAttribute("class", "size-2.5 shrink-0 opacity-80");
+    updateFollowButtonState(btn, username);
+
+    btn.addEventListener("click", () => {
+      const user = btn.dataset.wmFollowUser;
+      setUserFollowed(user, !readFollowedUsers().includes(user));
+      updateFollowButtonState(btn, user);
+    });
+
+    reportBtn.before(btn);
+  }
+
+  function createFollowEye(username) {
+    const eye = document.createElement("span");
+    eye.className = "wm-follow-eye";
+    eye.dataset.wmFollowName = username;
+    eye.title = `Vous suivez ${username}`;
+    eye.innerHTML = FOLLOW_EYE_SVG;
+    return eye;
+  }
+
+  function updateFollowEyes() {
+    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
+
+    const followed = new Set(readFollowedUsers());
+
+    const nameSpans = new Set();
+    const sellerSpan = document.querySelector("p.text-sm.mt-1 span");
+    if (sellerSpan) nameSpans.add(sellerSpan);
+    document
+      .querySelectorAll("div.card-frame p.text-xs span")
+      .forEach((span) => nameSpans.add(span));
+    document.querySelectorAll("ul.card-frame > *").forEach((entry) => {
+      const span = Array.from(entry.children).find(
+        (child) =>
+          child.tagName === "SPAN" &&
+          !child.classList.contains("wm-follow-eye"),
+      );
+      if (span) nameSpans.add(span);
+    });
+
+    nameSpans.forEach((span) => {
+      const name = span.textContent.trim();
+      const eye = span.nextElementSibling?.classList.contains("wm-follow-eye")
+        ? span.nextElementSibling
+        : null;
+
+      if (!followed.has(name)) {
+        eye?.remove();
+      } else if (!eye || eye.dataset.wmFollowName !== name) {
+        eye?.remove();
+        span.after(createFollowEye(name));
+      }
+    });
+
+    // Eyes whose name span changed to someone else, or is gone
+    document.querySelectorAll(".wm-follow-eye").forEach((eye) => {
+      const name = eye.previousElementSibling?.textContent.trim();
+      if (!name || name !== eye.dataset.wmFollowName || !followed.has(name))
+        eye.remove();
+    });
+  }
+
+  function renderFollowedUsersList() {
+    if (window.location.pathname !== "/profile") return;
+
+    const grid = document.querySelector("div.grid");
+    if (!grid) return;
+
+    const anchor = document.querySelector(".wm-bsp-dump") ?? grid;
+    const existing = document.querySelector(".wm-followed-dump");
+    if (existing) {
+      // Feature BSP's dump can show up after this block was inserted
+      if (anchor.nextElementSibling !== existing) anchor.after(existing);
+      return;
+    }
+
+    const users = readFollowedUsers().sort((a, b) => a.localeCompare(b));
+    if (users.length === 0) return;
+
+    const list = document.createElement("div");
+    list.className = "wm-followed-dump";
+
+    const title = document.createElement("h2");
+    title.className = "wm-followed-dump-title";
+    title.textContent = "👁️ Joueurs suivis";
+    list.appendChild(title);
+
+    users.forEach((username) => {
+      const entryEl = document.createElement("div");
+      entryEl.className = "wm-followed-dump-entry";
+
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "wm-followed-dump-clear";
+      clearBtn.setAttribute("aria-label", `Ne plus suivre ${username}`);
+      clearBtn.textContent = "✕";
+
+      const nameLink = document.createElement("a");
+      nameLink.className = "wm-followed-dump-name";
+      nameLink.href = `/profile/${encodeURIComponent(username)}`;
+      nameLink.textContent = username;
+
+      clearBtn.addEventListener("click", () => {
+        setUserFollowed(username, false);
+        clearBtn.remove();
+        entryEl.classList.add("wm-followed-dump-entry-cleared");
+      });
+
+      entryEl.append(clearBtn, nameLink);
+      list.appendChild(entryEl);
+    });
+
+    anchor.after(list);
+  }
+
+  function watchFollowedUsers() {
+    GM_addStyle(`
+      .wm-followed-dump {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem 1.5rem;
+        margin-top: 1rem;
+        padding: 0.75rem 1rem;
+        border-radius: 0.75rem;
+        border: 1px solid var(--color-border);
+      }
+      .wm-followed-dump-title {
+        grid-column: 1 / -1;
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+      }
+      .wm-followed-dump-entry {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 0.5rem;
+        transition: opacity 0.2s ease;
+      }
+      .wm-followed-dump-entry-cleared {
+        opacity: 0.35;
+      }
+      .wm-followed-dump-name {
+        font-size: 0.825rem;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .wm-followed-dump-name:hover {
+        text-decoration: underline;
+      }
+      .wm-followed-dump-clear {
+        border: none;
+        background: transparent;
+        color: var(--color-foreground);
+        opacity: 0.5;
+        cursor: pointer;
+        line-height: 1;
+        transition: opacity 0.2s ease, color 0.2s ease;
+      }
+      .wm-followed-dump-clear:hover {
+        opacity: 1;
+        color: #ef2222;
+      }
+      .wm-follow-btn {
+        margin-right: 0.5rem;
+      }
+      .wm-follow-btn[aria-pressed="true"],
+      .wm-follow-btn[aria-pressed="true"]:not(:hover) {
+        color: #ef4444 !important;
+      }
+      .wm-follow-eye {
+        display: inline-flex;
+        vertical-align: middle;
+        margin-top: 2px;
+        margin-left: 0.25rem;
+        color: #ef4444;
+      }
+      .wm-follow-eye svg {
+        width: 1em;
+        height: 1em;
+      }
+    `);
+
+    const update = () => {
+      insertFollowButton();
+      updateFollowEyes();
+      renderFollowedUsersList();
+    };
+    update();
+
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -7068,6 +7375,7 @@ const MY_USERNAME = "xxx";
     run("rule-36", watchCollectionPageJump);
     run("feature-bbs", watchBestTradeRecording);
     run("feature-bbs", watchBestTradesButtons);
+    run("feature-fol", watchFollowedUsers);
 
     watchFeatureConfigButton();
     watchTutorialButton();

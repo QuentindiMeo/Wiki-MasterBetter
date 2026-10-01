@@ -92,7 +92,8 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   good deal — or, on a sale you make yourself, how good that sale was. The top "legendary price" tier additionally
   requires the price to be at least 50 below the reference average. Every price it has recorded is listed in a
   table on your own profile page, along with export/import buttons — export downloads a CSV file and import reads
-  one back — so you can carry that history over to another browser or device.
+  one back — so you can carry that history over to another browser or device. The export also carries the list of players you
+  follow (Feature FOL); importing merges it into your current list instead of replacing it.
 - **Rule 17 — Reposition "mark all as read".** Moves the "mark all as read" notifications button to the left side
   of the notifications panel, instead of wherever the site puts it by default.
 - **Rule 18 — Auto-focus useful inputs.** Opening a card's modal automatically puts your cursor in its filter field
@@ -193,3 +194,10 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
   don't have to open each one yourself. On your own profile, "Mes plus grosses ventes" and "Mes plus gros achats"
   buttons between "Ma Collection" and "Mes Amis" open a modal listing those trades, in the same layout as the "Top 40"
   estimates (biggest one showcased with a golden glow, "✕" to delete a trade from the cache).
+- **Feature FOL — Follow players.** On another player's profile, an eye button next to the "Signaler" button, at the
+  top right of the profile card, lets you follow them (it reads "Suivre", then turns red and reads "Suivi" while they
+  are followed; click again to unfollow). The list of followed players is kept in your browser, under the cache key
+  `wm-followed-users`. On a card's bidding page, a small red eye is then shown right after the name of every followed
+  player: the seller, the bidders and the current highest bidder. On your own profile, the players you follow are
+  listed under the sold-prices block, alphabetically, each linking to their profile, with a "✕" to unfollow them. That list
+  is part of the sold-prices block's export/import (see Feature BSP).
