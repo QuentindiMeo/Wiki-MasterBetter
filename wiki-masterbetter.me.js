@@ -4844,7 +4844,7 @@ const MY_USERNAME = "xxx";
       button.textContent = `Retrait des cartes possédées... (${removed + 1})`;
       (card.querySelector("div.inset-0") ?? card).click();
 
-      const unwishBtn = await waitForElement("button.transition-colors.border");
+      const unwishBtn = await waitForElement("button.transition-colors.border:nth-child(1)");
       unwishBtn?.click();
       removed++;
 
@@ -4931,7 +4931,7 @@ const MY_USERNAME = "xxx";
     const evaluate = () => {
       if (!window.location.pathname.startsWith("/global-collection")) return;
 
-      const toggle = document.querySelector("button.gap-1\\.5");
+      const toggle = document.querySelector("button.gap-1\\.5:nth-child(1)");
       const existingBtn = document.querySelector(".wm-wishlist-cleanup");
       if (!toggle?.classList.contains("ring-2")) {
         if (existingBtn) existingBtn.style.display = "none";
