@@ -27,177 +27,63 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 
 ## Rules and Features
 
-- **Rule 1a — Bigger notifications list.** Makes the notifications panel larger, so more notifications fit on
-  screen at once without extra scrolling.
-- **Rule 1b — Hide the market analysis button.** Removes the site's built-in "market analysis" button from view.
-- **Rule 2 — Smarter "mark as read".** Clicking a notification also marks every notification older than it as
-  read, not just the one you clicked.
-- **Rule 3 — Descriptive tab title.** Adds useful context to the browser tab's title depending on what you're
-  looking at — for example the card currently being bid on, or the username of the profile you're viewing.
-- **Rule 4 — 3-column friends grid.** Rearranges your friends list into a tidy 3-column grid instead of one long
-  single-column list.
-- **Rule 5 — Compact friend action buttons.** Shrinks the "Message" and "Trade" buttons on the friends grid down
-  to just their icon, to save space.
-- **Rule 6 — Collapsible navigation bar.** The sidebar navigation collapses into icons by default and smoothly
-  expands when you hover over it.
-- **Feature NPN — Pin the navigation bar.** Adds a pin button so the sidebar can be kept permanently expanded
-  instead of only expanding on hover. (This feature replaced the original Rule 8 — see below.)
-- **Rule 7 — Click the first notification to clear all.** Clicking the very top (most recent) notification marks
-  the entire notifications list as read.
+- **Rule 1a — Bigger notifications list.** Makes the notifications panel larger, so more notifications fit on screen at once without extra scrolling.
+- **Rule 1b — Declutter auction pages.** On auction pages (`/marketplace/{UUID}`), hides the non-essential round buttons next to the card (wishlist and market analysis buttons). Applied once the page has finished rendering, and again when navigating to an auction page without a reload.
+- **Rule 2 — Smarter "mark as read".** Clicking a notification also marks every notification older than it as read, not just the one you clicked.
+- **Rule 3 — Descriptive tab title.** Adds useful context to the browser tab's title depending on what you're looking at — for example the card currently being bid on, or the username of the profile you're viewing.
+- **Rule 4 — 3-column friends grid.** Rearranges your friends list into a tidy 3-column grid instead of one long single-column list.
+- **Rule 5 — Compact friend action buttons.** Shrinks the "Message" and "Trade" buttons on the friends grid down to just their icon, to save space.
+- **Rule 6 — Collapsible navigation bar.** The sidebar navigation collapses into icons by default and smoothly expands when you hover over it.
+- **Feature NPN — Pin the navigation bar.** Adds a pin button so the sidebar can be kept permanently expanded instead of only expanding on hover. (This feature replaced the original Rule 8 — see below.)
+- **Rule 7 — Click the first notification to clear all.** Clicking the very top (most recent) notification marks the entire notifications list as read.
 - _Rule 8 no longer exists as its own item — it was folded into Feature NPN (the pinnable navigation bar) above._
-- **Rule 9 — Auto-open "My Bids".** Arriving on the marketplace automatically switches you to the "My Bids" tab
-  instead of leaving you on the default one.
-- **Feature TBC — Quick action button on collection cards.** Adds a small button directly on each card in your
-  collection that opens its sale/estimate modal in one click, instead of needing to open the card's modal
-  yourself first. Feature EBC's bulk evaluation tools click through this same button automatically.
-- **Rule 10 — Live notification counter.** Clicking a notification immediately updates the unread-count badge to
-  match, instead of waiting for a refresh.
-- **Rule 11 — Dim the "buy packs" banner.** Once you have zero packs left to open, the site's promotional banner
-  encouraging you to get more is faded down instead of staying at full visibility.
-- **Rule 12 — Clearer profile action buttons.** Improves the visibility/contrast of the action buttons shown on
-  user profile pages. On your own profile page, also caps the width of the tag-count list so it doesn't stretch
-  the full width of the page.
-- **Feature PNP — Pack pile-up notifications.** Sends a browser push notification when you're accumulating a lot
-  of unopened card packs, as a reminder to go open them.
-- **Rule 13 — Trim long, fully-read notification lists.** Once every notification has been read, only the 20 most
-  recent are shown at first; scrolling to the bottom loads the rest.
-- **Feature TMB — Group bids by status.** Adds a toggle that splits your "My Bids" list into two groups: bids
-  where someone has outbid you, and bids where you're still in the lead.
-- **Feature CME — Close modals with Escape.** Lets you press the Escape key to close any open popup/modal, instead
-  of having to find and click a close button.
-- **Feature PNB — Bid-ending push alert.** Sends a browser push notification when one of your bids is about to
-  end (30 seconds left), so you don't miss the chance to raise it.
-- **Feature CAR — Claim all rewards at once.** Adds a "claim all" button on the achievements page that adds up and
-  collects every pending reward in a single click, instead of one by one.
-- **Feature AKP — Keyboard control on /pulls.** Lets you use the keyboard while opening packs: the arrow keys move
-  between the pulled cards, Up/Down arrows jump straight to the first/last one, Space opens or closes a pack, E opens
-  the currently selected card's full-size modal, and V does the same as E and then also puts that card up for
-  sale. While a card is shown large, a small legend in the space to its left reminds you of the arrow
-  shortcuts.
-- **Feature SAT — Select all untagged cards.** Adds a "select all except tagged" button next to the site's own
-  "select all" button on your collection page, so you can quickly select only the cards you haven't tagged yet.
-- **Feature LBD — Enter key starts a bid.** On your collection page, typing an amount into the quick-bid field and
-  pressing Enter starts the auction immediately, without needing to click a separate button.
-- **Rule 14 — Clearer wishlist auction notifications.** Rewrites the wording of notifications about auctions for
-  cards on your wishlist so they read more clearly, wrapping the card's name in guillemets and tinting "mise en
-  vente" pink.
-- **Rule 15 — Relabel the back button.** On a card's bidding page, renames the back button to a clearer French
-  label ("Retour en arrière") instead of the site's default wording.
-- **Feature PLB — Quick profile links on bid pages.** Adds a small "@" link right after each bidder's name (and
-  the seller's name) on a card's bidding page, so you can jump straight to their profile.
-- **Rule 16 — Auto-scroll to your last unread notification.** Opening the notifications panel scrolls it straight
-  down to your most recent unread notification, instead of starting at the top of the list.
-- **Feature BSP — Track and grade sale prices.** Remembers how much each card has previously sold for (stored in
-  your browser, not on the server) and uses that history to flag whether the current asking price looks like a
-  good deal — or, on a sale you make yourself, how good that sale was. The top "legendary price" tier additionally
-  requires the price to be at least 50 below the reference average. Every price it has recorded is listed in a
-  table on your own profile page, along with export/import buttons — export downloads a CSV file and import reads
-  one back — so you can carry that history over to another browser or device. The export also carries the list of players you
-  follow (Feature FOL); importing merges it into your current list instead of replacing it.
-- **Rule 17 — Reposition "mark all as read".** Moves the "mark all as read" notifications button to the left side
-  of the notifications panel, instead of wherever the site puts it by default.
-- **Rule 18 — Auto-focus useful inputs.** Opening a card's modal automatically puts your cursor in its filter field
-  (on `/collection` and `/pulls`), which opens its dropdown. Arriving on `/collection`
-  also automatically focuses the search field (Rule 18b). Each can be toggled separately in the settings.
-- **Feature ETS — Remember market value estimates.** Saves each card's estimated market value (seen on `/pulls`
-  and `/collection`) in your browser, then displays that saved value next to the card's rarity tag on your
-  collection page, so you don't have to look it up again.
-- **Feature FCP — Toggle individual features.** Adds a settings button, next to the navbar's pin button, that lets
-  you turn each feature of this script on or off individually; your choices are saved and take effect the next
-  time the page loads.
-- **Rule 19 — Cleaner notification text.** Rewrites notification wording in one single, consistent pass rather
-  than several separate small tweaks.
-- **Feature EBC — Bulk-evaluate your collection.** Adds buttons on `/collection` to estimate the market value of
-  every card at once (or only the ones still missing an estimate), with a stop button to cancel partway through,
-  plus a button to sort the whole page by estimated value from most to least expensive. Keeps the site's own
-  rarity filter buttons grouped ahead of these new ones whenever the site re-adds them. A fourth, dark red
-  "Estimation complète" button repeats the "missing estimate" pass across every page of your collection
-  automatically, advancing the pager itself between pages; its label shows a minimum duration in minutes (one
-  minute per page left, current page included, read from the site's "Page X / Y" indicator); the same stop button
-  cancels it at any point. Keep the tab running the
-  evaluation active and the browser window un-minimized for the whole run — background tabs and minimized windows
-  get their timers throttled by the browser, which this feature's polling relies on, so a run left in the
-  background is liable to stall or time out individual cards instead of reliably stepping through them.
-- **Rule 20 — Tag list follows keyboard selection.** Inside a card's modal (on `/collection` and `/pulls`), the
-  tag list automatically scrolls to keep whichever tag you've highlighted with the keyboard in view.
-- **Feature GCP — Click a friend's name to see their profile.** On the global collection/wishlist page, clicking
-  the username of a friend who owns a card takes you straight to that friend's profile.
-- **Rule 21 — Hide the legal disclaimer in the card modal.** Removes the small legal-notice text from a card's
-  modal (on `/collection` and `/pulls`) to leave more room for the actual card details.
-- **Rule 22 — Centered loading spinner and error message.** Centers the loading spinner on every page; on a
-  card's bidding page, it also rewrites and centers the "Auction not found" message.
+- **Rule 9 — Auto-open "My Bids".** Arriving on the marketplace automatically switches you to the "My Bids" tab instead of leaving you on the default one.
+- **Feature TBC — Quick action button on collection cards.** Adds a small button directly on each card in your collection that opens its sale/estimate modal in one click, instead of needing to open the card's modal yourself first. Feature EBC's bulk evaluation tools click through this same button automatically.
+- **Rule 10 — Live notification counter.** Clicking a notification immediately updates the unread-count badge to match, instead of waiting for a refresh.
+- **Rule 11 — Dim the "buy packs" banner.** Once you have zero packs left to open, the site's promotional banner encouraging you to get more is faded down instead of staying at full visibility.
+- **Rule 12 — Clearer profile action buttons.** Improves the visibility/contrast of the action buttons shown on user profile pages. On your own profile page, also caps the width of the tag-count list so it doesn't stretch the full width of the page.
+- **Feature PNP — Pack pile-up notifications.** Sends a browser push notification when you're accumulating a lot of unopened card packs, as a reminder to go open them.
+- **Rule 13 — Trim long, fully-read notification lists.** Once every notification has been read, only the 20 most recent are shown at first; scrolling to the bottom loads the rest.
+- **Feature TMB — Group bids by status.** Adds a toggle that splits your "My Bids" list into two groups: bids where someone has outbid you, and bids where you're still in the lead.
+- **Feature CME — Close modals with Escape.** Lets you press the Escape key to close any open popup/modal, instead of having to find and click a close button.
+- **Feature PNB — Bid-ending push alert.** Sends a browser push notification when one of your bids is about to end (30 seconds left), so you don't miss the chance to raise it.
+- **Feature CAR — Claim all rewards at once.** Adds a "claim all" button on the achievements page that adds up and collects every pending reward in a single click, instead of one by one.
+- **Feature AKP — Keyboard control on /pulls.** Lets you use the keyboard while opening packs: the arrow keys move between the pulled cards, Up/Down arrows jump straight to the first/last one, Space opens or closes a pack, E opens the currently selected card's full-size modal, and V does the same as E and then also puts that card up for sale. While a card is shown large, a small legend in the space to its left reminds you of the arrow shortcuts.
+- **Feature SAT — Select all untagged cards.** Adds a "select all except tagged" button next to the site's own "select all" button on your collection page, so you can quickly select only the cards you haven't tagged yet.
+- **Feature LBD — Enter key starts a bid.** On your collection page, typing an amount into the quick-bid field and pressing Enter starts the auction immediately, without needing to click a separate button.
+- **Rule 14 — Clearer wishlist auction notifications.** Rewrites the wording of notifications about auctions for cards on your wishlist so they read more clearly, wrapping the card's name in guillemets and tinting "mise en vente" pink.
+- **Rule 15 — Relabel the back button.** On a card's bidding page, renames the back button to a clearer French label ("Retour en arrière") instead of the site's default wording.
+- **Feature PLB — Quick profile links on bid pages.** Adds a small "@" link right after each bidder's name (and the seller's name) on a card's bidding page, so you can jump straight to their profile.
+- **Rule 16 — Auto-scroll to your last unread notification.** Opening the notifications panel scrolls it straight down to your most recent unread notification, instead of starting at the top of the list.
+- **Feature BSP — Track and grade sale prices.** Remembers how much each card has previously sold for (stored in your browser, not on the server) and uses that history to flag whether the current asking price looks like a good deal — or, on a sale you make yourself, how good that sale was. The top "legendary price" tier additionally requires the price to be at least 50 below the reference average. Every price it has recorded is listed in a table on your own profile page, along with export/import buttons — export downloads a CSV file and import reads one back — so you can carry that history over to another browser or device. The export also carries the list of players you follow (Feature FOL); importing merges it into your current list instead of replacing it.
+- **Rule 17 — Reposition "mark all as read".** Moves the "mark all as read" notifications button to the left side of the notifications panel, instead of wherever the site puts it by default.
+- **Rule 18 — Auto-focus useful inputs.** Opening a card's modal automatically puts your cursor in its filter field (on `/collection` and `/pulls`), which opens its dropdown. Arriving on `/collection` also automatically focuses the search field (Rule 18b). Each can be toggled separately in the settings.
+- **Feature ETS — Remember market value estimates.** Saves each card's estimated market value (seen on `/pulls` and `/collection`) in your browser, then displays that saved value next to the card's rarity tag on your collection page, so you don't have to look it up again.
+- **Feature FCP — Toggle individual features.** Adds a settings button, next to the navbar's pin button, that lets you turn each feature of this script on or off individually; your choices are saved and take effect the next time the page loads.
+- **Rule 19 — Cleaner notification text.** Rewrites notification wording in one single, consistent pass rather than several separate small tweaks.
+- **Feature EBC — Bulk-evaluate your collection.** Adds buttons on `/collection` to estimate the market value of every card at once (or only the ones still missing an estimate), with a stop button to cancel partway through, plus a button to sort the whole page by estimated value from most to least expensive. Keeps the site's own rarity filter buttons grouped ahead of these new ones whenever the site re-adds them. A fourth, dark red "Estimation complète" button repeats the "missing estimate" pass across every page of your collection automatically, advancing the pager itself between pages; its label shows a minimum duration in minutes (one minute per page left, current page included, read from the site's "Page X / Y" indicator); the same stop button cancels it at any point. Keep the tab running the evaluation active and the browser window un-minimized for the whole run — background tabs and minimized windows get their timers throttled by the browser, which this feature's polling relies on, so a run left in the background is liable to stall or slow individual cards down. A card is never skipped for a slow market response: if its estimate hasn't arrived after a few seconds, its modal is closed and re-opened, as many times as needed, until the value is recorded (or you press the stop button).
+- **Rule 20 — Tag list follows keyboard selection.** Inside a card's modal (on `/collection` and `/pulls`), the tag list automatically scrolls to keep whichever tag you've highlighted with the keyboard in view.
+- **Feature GCP — Click a friend's name to see their profile.** On the global collection/wishlist page, clicking the username of a friend who owns a card takes you straight to that friend's profile.
+- **Rule 21 — Hide the legal disclaimer in the card modal.** Removes the small legal-notice text from a card's modal (on `/collection` and `/pulls`) to leave more room for the actual card details.
+- **Rule 22 — Centered loading spinner and error message.** Centers the loading spinner on every page; on a card's bidding page, it also rewrites and centers the "Auction not found" message.
 - **Rule 23 — Custom favicon.** Replaces the site's browser-tab icon with the Wiki-MasterBetter logo.
-- **Feature FIS — Fix a page-transition visual glitch.** Corrects a styling issue with the loading spinner that
-  shows up briefly during page transitions (on `/pulls`, `/friends`, `/guild`, `/achievements` and `/profile`).
-- **Feature TUT — Built-in feature tutorials.** Adds a "❓" button next to the settings button that opens a modal
-  with short explanations for the script's less obvious features.
-- **Rule 24 — Bigger, sorted tag list.** Enlarges the tag list on your collection page and sorts it by how many
-  cards carry each tag, from most used to least used.
-- **Rule 25 — Clean up your wishlist.** Adds a button that removes every card you already own from your wishlist,
-  all in one click.
-- **Feature CNC — Copy a card's name.** Adds a small clipboard-copy button next to a card's name wherever that
-  name appears: in the card modal, the auction modal, and a card's bidding page.
-- **Rule 26 — Two-column trade history.** Displays your trade history as two flexible columns instead of one long
-  single list, so more of it fits on screen.
-- **Rule 27 — Filter trade history by partner.** Adds a search field above your trade history to filter it down
-  to trades with one specific person.
-- **Rule 28 — Clear button in the collection search field.** Adds a small "✕" button inside the collection search
-  field to instantly empty it.
-- **Feature OWL — Jump straight to a pulled card's Wikipedia page.** While opening packs on `/pulls`, pressing the
-  W key opens the revealed card's Wikipedia page directly, without you needing to first open the card's modal and
-  find the link yourself. (Feature AKP's own on-screen legend documents the shortcut.)
-- **Rule 29 — Automatic page reloads when stuck.** On `/pulls`, once your pack pile has reached the maximum size,
-  the page reloads every 10 minutes for as long as it stays full — opening packs cancels the timer instead of
-  letting it reload mid-session. On a card's bidding page, if Rule 22's "Auction not found" message is showing, the
-  page reloads itself once automatically, shortly after. On `/collection`, the page likewise reloads itself once
-  when the site shows a red "a échoué" (failed) message.
-- **Rule 30 — Bigger, reorganized bulk-tagging modal.** Widens the "apply a tag" / "remove a tag" modal on your
-  collection page and lays its tag list out as a wrapping grid instead of one narrow column, so more tags fit on
-  screen at once. On the removal variant specifically, the list is also sorted so the tags affecting the most of
-  your selected cards appear first.
-- **Rule 31 — Filter notifications by type.** Adds toggle buttons to the notifications panel's header — one each
-  for sold cards, bought cards, bidding-related notifications (outbid refunds and unsold "returned to you" cards),
-  and wishlist listings — that show only notifications of that type and hide the rest. Only one filter can be
-  active at a time; pressing the active button again clears it. The chosen filter is remembered between visits.
-- **Rule 32 — Red glow on an almost-finished auction.** On a card's bidding page, the "Se termine dans…" countdown
-  glows red, the same pulsing effect Feature BSP gives a legendary price (in gold), once less than 10 seconds
-  remain.
-- **Rule 33 — Warn when you're already the highest bidder.** On a card's bidding page, the "place a bid" button
-  turns light red when the current highest bidder is you, as a reminder you don't need to bid again.
-- **Rule 34 — Keyboard navigation in the tag filter list.** Opening the tag filter popover on your collection page
-  now moves focus straight into the list (onto the currently selected tag, or the first one), so arrow keys
-  navigate it immediately instead of scrolling the page. Home/End jump to the first/last tag, and typing a few
-  letters jumps to the next matching tag by name (ignoring its leading "#" and usage count).
-- **Rule 35 — Your biggest card estimates.** Adds a "Top 40" button right after the page heading on `/collection`
-  that opens a modal listing the 40 highest card estimates saved in your cache (Feature ETS), most valuable first,
-  in three columns. Each entry has a "✕" button that deletes that estimate from the cache and grays the entry out,
-  just like the cache entries on `/profile`. The modal fades in smoothly, and the single highest estimate is
-  showcased above the grid with a golden pulsating glow. Cards whose estimate is still unknown ("?") are left out.
-- **Rule 36 — Jump to any collection page.** On `/collection`, once the catalog has finished loading, the "Page X / Y"
-  indicator becomes clickable: clicking it swaps it for a number field (1 to the last page). Press Enter to go to
-  that page — the script presses the site's own previous/next buttons for you, one page at a time — or Escape (or
-  click elsewhere) to cancel.
-- **Feature BBS — Remember your biggest sales and purchases.** When you open the page of one of your own auctions that
-  has sold, or one that you won, the trade (card name and final price) is saved in your browser, under the cache keys
-  `wm-observed-best-sells` and `wm-observed-best-buys` respectively. Only your 40 biggest of each are kept (the same
-  size as the "Top 40" estimates list), sorted from biggest to smallest; once full, a new trade only gets in if it
-  beats the smallest one saved. Each price is saved with a short identifier taken from the auction's address (like
-  Feature BSP does), so revisiting the same auction never records it twice. Each trade also stores its cutoff from the
-  card's estimated market value (saved by Feature ETS): how far the price sits above or below it, in whole percent. It
-  is shown as a badge such as "+223%" or "-21%" on the top edge of the trade in the profile modal (hover it for an
-  explanation); trades whose card has no known estimate have no badge. Trades are listed by price by default; a "Trier
-  par bonne affaire" switch in each modal (off until you turn it on, and remembered afterwards) re-orders them by how
-  good a deal they were: sales by highest cutoff; purchases by a score that weighs the discount by the card's value
-  (discount × ln(1 + estimate)³), so a 605 bought at -64% ranks well above a 13 bought at -93% (trades without an
-  estimate last). Already-saved trades get their cutoff filled in or updated automatically. The auctions listed in the
-  "Historique" tab (sales) and the "Gagnées" tab (purchases) of `/marketplace` are picked up the same way, so you
-  don't have to open each one yourself. On your own profile, "Mes plus grosses ventes" and "Mes plus gros achats"
-  buttons between "Ma Collection" and "Mes Amis" open a modal listing those trades, in the same layout as the "Top 40"
-  estimates (biggest one showcased with a golden glow, "✕" to delete a trade from the cache).
-- **Feature FOL — Follow players.** On another player's profile, an eye button next to the "Signaler" button, at the
-  top right of the profile card, lets you follow them (it reads "Suivre", then turns red and reads "Suivi" while they
-  are followed; click again to unfollow). The list of followed players is kept in your browser, under the cache key
-  `wm-followed-users`. On a card's bidding page, a small red eye is then shown right after the name of every followed
-  player: the seller, the bidders and the current highest bidder. On your own profile, the players you follow are
-  listed under the sold-prices block, alphabetically, each linking to their profile, with a "✕" to unfollow them. That list
-  is part of the sold-prices block's export/import (see Feature BSP).
+- **Feature FIS — Fix a page-transition visual glitch.** Corrects a styling issue with the loading spinner that shows up briefly during page transitions (on `/pulls`, `/friends`, `/guild`, `/achievements` and `/profile`).
+- **Feature TUT — Built-in feature tutorials.** Adds a "❓" button next to the settings button that opens a modal with short explanations for the script's less obvious features.
+- **Rule 24 — Bigger, sorted tag list.** Enlarges the tag list on your collection page and sorts it by how many cards carry each tag, from most used to least used.
+- **Rule 25 — Clean up your wishlist.** Adds a button that removes every card you already own from your wishlist, all in one click.
+- **Feature CNC — Copy a card's name.** Adds a small clipboard-copy button next to a card's name wherever that name appears: in the card modal, the auction modal, and a card's bidding page.
+- **Rule 26 — Two-column trade history.** Displays your trade history as two flexible columns instead of one long single list, so more of it fits on screen.
+- **Rule 27 — Filter trade history by partner.** Adds a search field above your trade history to filter it down to trades with one specific person.
+- **Rule 28 — Clear button in the collection search field.** Adds a small "✕" button inside the collection search field to instantly empty it.
+- **Feature OWL — Jump straight to a pulled card's Wikipedia page.** While opening packs on `/pulls`, pressing the W key opens the revealed card's Wikipedia page directly, without you needing to first open the card's modal and find the link yourself. (Feature AKP's own on-screen legend documents the shortcut.)
+- **Rule 29 — Automatic page reloads when stuck.** On `/pulls`, once your pack pile has reached the maximum size, the page reloads every 10 minutes for as long as it stays full — opening packs cancels the timer instead of letting it reload mid-session. On a card's bidding page, if Rule 22's "Auction not found" message is showing, the page reloads itself once automatically, shortly after. On `/collection`, the page likewise reloads itself once when the site shows a red "a échoué" (failed) message.
+- **Rule 30 — Bigger, reorganized bulk-tagging modal.** Widens the "apply a tag" / "remove a tag" modal on your collection page and lays its tag list out as a wrapping grid instead of one narrow column, so more tags fit on screen at once. On the removal variant specifically, the list is also sorted so the tags affecting the most of your selected cards appear first.
+- **Rule 31 — Filter notifications by type.** Adds toggle buttons to the notifications panel's header — one each for sold cards, bought cards, bidding-related notifications (outbid refunds and unsold "returned to you" cards), and wishlist listings — that show only notifications of that type and hide the rest. Only one filter can be active at a time; pressing the active button again clears it. The chosen filter is remembered between visits.
+- **Rule 32 — Red glow on an almost-finished auction.** On a card's bidding page, the "Se termine dans…" countdown glows red, the same pulsing effect Feature BSP gives a legendary price (in gold), once less than 10 seconds remain.
+- **Rule 33 — Warn when you're already the highest bidder.** On a card's bidding page, the "place a bid" button turns light red when the current highest bidder is you, as a reminder you don't need to bid again.
+- **Rule 34 — Keyboard navigation in the tag filter list.** Opening the tag filter popover on your collection page now moves focus straight into the list (onto the currently selected tag, or the first one), so arrow keys navigate it immediately instead of scrolling the page. Home/End jump to the first/last tag, and typing a few letters jumps to the next matching tag by name (ignoring its leading "#" and usage count).
+- **Rule 35 — Your biggest card estimates.** Adds a "Top 40" button right after the page heading on `/collection` that opens a modal listing the 40 highest card estimates saved in your cache (Feature ETS), most valuable first, in three columns. Each entry has a "✕" button that deletes that estimate from the cache and grays the entry out, just like the cache entries on `/profile`. The modal fades in smoothly, and the single highest estimate is showcased above the grid with a golden pulsating glow. Cards whose estimate is still unknown ("?") are left out.
+- **Rule 36 — Jump to any collection page.** On `/collection`, once the catalog has finished loading, the "Page X / Y" indicator becomes clickable: clicking it swaps it for a number field (1 to the last page). Press Enter to go to that page — the script presses the site's own previous/next buttons for you, one page at a time — or Escape (or click elsewhere) to cancel.
+- **Feature BBS — Remember your biggest sales and purchases.** When you open the page of one of your own auctions that has sold, or one that you won, the trade (card name and final price) is saved in your browser, under the cache keys `wm-observed-best-sells` and `wm-observed-best-buys` respectively. Only your 40 biggest of each are kept (the same size as the "Top 40" estimates list), sorted from biggest to smallest; once full, a new trade only gets in if it beats the smallest one saved. Each price is saved with a short identifier taken from the auction's address (like Feature BSP does), so revisiting the same auction never records it twice. Each trade also stores its cutoff from the card's estimated market value (saved by Feature ETS): how far the price sits above or below it, in whole percent. It is shown as a badge such as "+223%" or "-21%" on the top edge of the trade in the profile modal (hover it for an explanation); trades whose card has no known estimate have no badge. Trades are listed by price by default; a "Trier par bonne affaire" switch in each modal (off until you turn it on, and remembered afterwards) re-orders them by how good a deal they were. The score weighs how far the price sits on the right side of the card's estimate (the premium for a sale, the discount for a purchase) by the logarithm of that estimate, to the 4th power (edge × ln(1 + estimate)⁴), so a 971 sold at +175% scores well above a 250 sold at +216%, and a 605 bought at -64% well above a 13 bought at -93% (trades without an estimate last). Each entry in those modals also exposes its score as a `data-score` attribute (rounded to 2 decimals; absent when the card has no estimate). Already-saved trades get their cutoff filled in or updated automatically. The auctions listed in the "Historique" tab (sales) and the "Gagnées" tab (purchases) of `/marketplace` are picked up the same way, so you don't have to open each one yourself. On your own profile, "Mes plus grosses ventes" and "Mes plus gros achats" buttons between "Ma Collection" and "Mes Amis" open a modal listing those trades, in the same layout as the "Top 40" estimates (biggest one showcased with a golden glow, "✕" to delete a trade from the cache).
+- **Feature FOL — Follow players.** On another player's profile, an eye button next to the "Signaler" button, at the top right of the profile card, lets you follow them (it reads "Suivre", then turns red and reads "Suivi" while they are followed; click again to unfollow). The list of followed players is kept in your browser, under the cache key `wm-followed-users`. On a card's bidding page, a small red eye is then shown right after the name of every followed player: the seller, the bidders and the current highest bidder. On your own profile, the players you follow are listed under the sold-prices block, alphabetically, each linking to their profile, with a "✕" to unfollow them. That list is part of the sold-prices block's export/import (see Feature BSP).
+- **Rule 37 — Hide the "favorite" bulk buttons.** On `/collection`, the bulk-action bar that appears at the bottom of the page when you select cards no longer shows its "add to favorites" and "remove from favorites" buttons, leaving only the tagging and discard actions.

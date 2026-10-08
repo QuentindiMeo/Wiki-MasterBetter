@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.23.2
+// @version      0.23.8
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -30,21 +30,33 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 1b: hide button.relative.shrink-0.h-9
+  // Rule 1b: On auction pages (/marketplace/{UUID}), hide every button.shrink-0 (wishlist button, market button)
   // ============================================================
+  // Re-evaluated on every DOM mutation: the site is an SPA, so the page (and its buttons) may only be there once the
+  // initial render is done, and the path changes without a reload.
   function hideShrinkButton() {
-    GM_addStyle(`
-      button.relative.shrink-0.h-9 {
-        display: none !important;
-      }
-    `);
+    if (!/^\/marketplace\/[^/]+/.test(window.location.pathname)) return;
+
+    document.querySelectorAll("button.shrink-0").forEach((btn) => {
+      if (btn.style.display !== "none") btn.style.display = "none";
+    });
+  }
+
+  function watchShrinkButtons() {
+    hideShrinkButton();
+
+    const observer = new MutationObserver(() => hideShrinkButton());
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ============================================================
-  // Rule 2: if a button.w-full.items-start has no
+  // Rule 2: if a notification item (.w-full.items-start) has no
   // bg-[var(--color-accent)]/5 styling:
   //   - strip that class from all of its NEXT siblings (previous siblings are untouched)
   //   - hide (display: none) every div.w-2.h-2 found inside those next siblings
+  //
+  // Rule 2 (cont'd) — the site now renders each notification as an <a href> link instead of a <button>, so the
+  // item selector has to accept both tags (it matched nothing once the markup changed, silently disabling the rule).
   //
   // Rule 2 (cont'd) — perf: originally walked every qualifying button's own full suffix of siblings
   // (O(buttons) × O(siblings), quadratic on a long notification list — the prime suspect behind reported
@@ -56,9 +68,10 @@ const MY_USERNAME = "xxx";
   // same end result, O(siblings) instead of O(buttons × siblings).
   // ============================================================
   const ACCENT_CLASS = "bg-[var(--color-accent)]/5";
+  const NOTIFICATION_ITEM_SELECTOR = ":is(a, button).w-full.items-start";
   function stripAccentFromFollowingSiblings() {
     const parents = new Set();
-    document.querySelectorAll("button.w-full.items-start").forEach((btn) => {
+    document.querySelectorAll(NOTIFICATION_ITEM_SELECTOR).forEach((btn) => {
       if (btn.parentElement) parents.add(btn.parentElement);
     });
 
@@ -68,7 +81,7 @@ const MY_USERNAME = "xxx";
       Array.from(parent.children).forEach((child) => {
         if (
           !pastUnaccented &&
-          child.matches("button.w-full.items-start") &&
+          child.matches(NOTIFICATION_ITEM_SELECTOR) &&
           !child.classList.contains(ACCENT_CLASS)
         ) {
           pastUnaccented = true;
@@ -484,7 +497,13 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 7: clicking the first <button> inside div.min-h-0.flex-1 also clicks the button labelled "Tout marquer lu"
+  // Rule 7: clicking the first notification item (.w-full.items-start) inside div.min-h-0.flex-1 also clicks the
+  // button labelled "Tout marquer lu"
+  //
+  // Rule 7 (cont'd) — the site now renders notification items as <a href> links instead of <button>s, so "first
+  // button" matched nothing and the rule never fired: the first item is now looked up with
+  // NOTIFICATION_ITEM_SELECTOR (declared with Rule 2). The listener also runs in the capture phase, so "Tout marquer
+  // lu" is clicked the instant the newest notification is clicked, before the link's own navigation can start.
   //
   // Rule 7 (cont'd) — Rule 31 compatibility: "first" here means the first button not hidden by Rule 31's type
   // filter (display: none), not simply the first in DOM order — otherwise, while a filter is active, clicking the
@@ -518,9 +537,9 @@ const MY_USERNAME = "xxx";
       const container = document.querySelector("div.min-h-0.flex-1");
       if (!container) return;
 
-      const firstButton = Array.from(container.querySelectorAll("button")).find(
-        (btn) => btn.style.display !== "none",
-      );
+      const firstButton = Array.from(
+        container.querySelectorAll(NOTIFICATION_ITEM_SELECTOR),
+      ).find((btn) => btn.style.display !== "none");
       if (!firstButton) return;
       if (event.target !== firstButton && !firstButton.contains(event.target))
         return;
@@ -529,7 +548,7 @@ const MY_USERNAME = "xxx";
       if (markAllReadBtn && markAllReadBtn !== firstButton) {
         markAllReadBtn.click();
       }
-    });
+    }, true);
   }
 
   // ============================================================
@@ -705,8 +724,11 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 10: clicking a button.w-full.items-start updates the first span.absolute in the document with the number of
-  // button.w-full.items-start PREVIOUS siblings it has
+  // Rule 10: clicking a notification item (.w-full.items-start) updates the notification badge
+  // (div.shrink-0 span.-top-0.5) with the number of notification items that are PREVIOUS siblings of it
+  //
+  // Rule 10 (cont'd): notification items are now <a href> links instead of <button>s, so both the click target and the
+  // sibling count use NOTIFICATION_ITEM_SELECTOR (declared with Rule 2) to accept either tag.
   // ============================================================
   function countPreviousSiblingsMatching(el, selector) {
     let count = 0;
@@ -720,14 +742,14 @@ const MY_USERNAME = "xxx";
 
   function watchItemButtonIndexDisplay() {
     document.addEventListener("click", (event) => {
-      const btn = event.target.closest("button.w-full.items-start");
+      const btn = event.target.closest(NOTIFICATION_ITEM_SELECTOR);
       if (!btn) return;
 
-      const span = document.querySelector("span.absolute");
+      const span = document.querySelector("div.shrink-0 span.-top-0\\.5");
       if (!span) return;
 
       span.textContent = String(
-        countPreviousSiblingsMatching(btn, "button.w-full.items-start"),
+        countPreviousSiblingsMatching(btn, NOTIFICATION_ITEM_SELECTOR),
       );
     });
   }
@@ -2278,11 +2300,11 @@ const MY_USERNAME = "xxx";
           sellerText?.trim().match(/^Vendu par (\S+)/)?.[1] === MY_USERNAME
         );
       },
-      // What "Trier par bonne affaire" sorts a sale by, higher being better: its cutoff from the eval (NaN without
-      // an eval)
-      toggleScore: (cardName, amount) => {
+      // Deal score of a sale: its premium over the eval (price / eval - 1, so 1.75 for "+175%"), see computeDealScore
+      // (NaN without an eval)
+      score: (cardName, amount) => {
         const target = getCardEvalValueByName(cardName);
-        return target ? (amount / target - 1) * 100 : NaN;
+        return target ? computeDealScore(amount / target - 1, target) : NaN;
       },
       cutoffHint:
         "Écart du prix de vente par rapport à la valeur estimée sur le marché : ",
@@ -2298,14 +2320,11 @@ const MY_USERNAME = "xxx";
       cardLabel: "Achetée pour",
       isOnBidPage: () => isMyUsernameLeadingBid(),
       isOnCard: () => true,
-      // What "Trier par bonne affaire" sorts a buy by, higher being better: the discount from the eval (1 - price /
-      // eval, so 0.75 for "-75%") weighted by ln(1 + eval) cubed, so a deal only ranks high when it's both deep and
-      // on a card that matters (a plain ln was too lenient: 13 at -93% outscored 605 at -64%). 605 at -64% (eval
-      // 1680) scores 0.64 * 7.4^3 = 262, 13 at -93% (eval 186) scores 0.93 * 5.2^3 = 133, 1000 at -50% scores 220,
-      // 9 at -75% scores 35. An overpriced buy scores negative; one with no usable eval has no score (NaN).
-      toggleScore: (cardName, amount) => {
+      // Deal score of a buy: its discount from the eval (1 - price / eval, so 0.75 for "-75%"), see
+      // computeDealScore (NaN without an eval)
+      score: (cardName, amount) => {
         const target = getCardEvalValueByName(cardName);
-        return target ? (1 - amount / target) * Math.log(1 + target) ** 3 : NaN;
+        return target ? computeDealScore(1 - amount / target, target) : NaN;
       },
       cutoffHint:
         "Écart du prix d'achat par rapport à la valeur estimée sur le marché : ",
@@ -2315,6 +2334,19 @@ const MY_USERNAME = "xxx";
       buttonLabel: "Mes plus gros achats",
     },
   };
+
+  // How good a deal is, for the "Trier par bonne affaire" switch and the entries' data-score: the edge (how far the
+  // price is on the right side of the eval, as a fraction) weighted by ln(1 + eval) to the 4th power, so an edge
+  // only scores high when it's both big and on a card that matters. The power is what keeps a small card's huge
+  // percentage from outscoring a pricier card's smaller one, and 4 is the lowest round value that holds the
+  // calibration cases at least 2x apart:
+  //   sell 971 at +175% (eval 353) = 1.75 * 5.9^4 ≈ 2076   vs   sell 250 at +216% (eval 79) = 2.16 * 4.4^4 ≈ 797
+  //   buy 605 at -64% (eval 1680) = 0.64 * 7.4^4 ≈ 1951    vs   buy 13 at -93% (eval 186) = 0.93 * 5.2^4 ≈ 696
+  // A negative edge (overpriced buy, underpriced sale) scores negative.
+  const DEAL_SCORE_LOG_POWER = 4;
+  function computeDealScore(edge, target) {
+    return edge * Math.log(1 + target) ** DEAL_SCORE_LOG_POWER;
+  }
 
   function readBestTrades(kind) {
     try {
@@ -3128,9 +3160,12 @@ const MY_USERNAME = "xxx";
           return;
         }
 
+        // Every consumer of this cache (profile grid, ETS modal, trades, followed users) reads it at render time,
+        // so without a reload an import looks like it did nothing
         alert(
-          `${importedCount} entrée(s) importée(s). Rechargez la page pour les voir.`,
+          `${importedCount} entrée(s) importée(s). La page va se recharger.`,
         );
+        window.location.reload();
       };
       reader.onerror = () => {
         alert("Le fichier n'a pas pu être lu.");
@@ -3356,7 +3391,7 @@ const MY_USERNAME = "xxx";
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.5rem 0.75rem;
+        padding: 0.25rem 0.75rem;
         border: 1px solid rgba(255, 255, 255, 0.15);
         border-radius: 0.5rem;
         transition: opacity 0.2s ease;
@@ -3803,6 +3838,10 @@ const MY_USERNAME = "xxx";
     {
       id: "feature-fol",
       label: "Suivre des joueurs (œil rouge sur les pages d'enchère)",
+    },
+    {
+      id: "rule-37",
+      label: "Masquer les boutons « favori » de la barre d'actions groupées",
     },
   ];
 
@@ -5129,7 +5168,9 @@ const MY_USERNAME = "xxx";
   // Feature EBC (cont'd): both evaluation buttons, and the "Estimation en masse" one below, only run reliably
   // while their tab is the active one and the window isn't minimized — their polling (waitForCardEvaluation's
   // setTimeout loop, and waitUntil's below) gets throttled by the browser once background/minimized, which
-  // stretches or outright misses the timeout window a slow card's evaluation needs to land within.
+  // stretches the time a slow card's evaluation needs to land. evaluateCollectionCards never skips a card on
+  // timeout: it closes the modal (Escape) and re-clicks the card's quick action, waiting again, until a value is
+  // recorded or the run is stopped.
   // ============================================================
   function getAllCollectionCards() {
     const grid = document.querySelector("div.gap-3.justify-center");
@@ -5247,7 +5288,18 @@ const MY_USERNAME = "xxx";
       button.textContent = `Évaluation... (${i + 1}/${cards.length})`;
       quickActionBtn.click();
 
-      const recorded = await waitForCardEvaluation(cardName, state);
+      // Never moves on before the market estimation lands: a timed-out attempt closes the modal and re-opens it
+      // rather than skipping the card, until a value is recorded or the run is stopped.
+      let recorded = await waitForCardEvaluation(cardName, state);
+      while (!recorded && !state.stopped) {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (state.stopped) break;
+        quickActionBtn.click();
+        recorded = await waitForCardEvaluation(cardName, state, 20000);
+      }
       if (!recorded && previousValue !== null) {
         localStorage.setItem(key, previousValue);
       }
@@ -5717,7 +5769,9 @@ const MY_USERNAME = "xxx";
       window.location.pathname.startsWith("/global-collection");
 
     if (onPulls || onCollection || onGlobalCollection) {
-      const modalName = document.querySelector("div.card-frame.p-6 h2.text-xl");
+      const modalName = document.querySelector(
+        "div.card-frame.p-6 h2.text-xl.pr-10",
+      );
       if (modalName) insertCopyButtonInto(modalName);
     }
 
@@ -6180,7 +6234,6 @@ const MY_USERNAME = "xxx";
         display: flex !important;
         flex-wrap: wrap !important;
         align-content: flex-start !important;
-        gap: 0.5rem !important;
       }
 
       .wm-multi-tag-list button {
@@ -6403,7 +6456,7 @@ const MY_USERNAME = "xxx";
   }
 
   // Shared by Rule 35 and Feature BBS's /profile button: builds the Top-list modal from already-sorted entries
-  // ({ cardName, valueText, badgeText?, badgeHint?, onClear }), the first one showcased above the grid. A badgeText
+  // ({ cardName, valueText, badgeText?, badgeHint?, score?, onClear }), the first one showcased above the grid. A badgeText
   // gets its own span, docked to the top edge of the entry, whose tooltip is badgeHint followed by the text. With a sortToggle ({ label, compare, storageKey }), a switch in
   // the header re-orders the entries with `compare` instead of the given order (re-showcasing whichever comes
   // first); the choice is remembered in localStorage under storageKey, and an entry cleared before a re-order stays
@@ -6455,9 +6508,12 @@ const MY_USERNAME = "xxx";
     const clearedEntries = new Set();
 
     const buildEntry = (entry) => {
-      const { cardName, valueText, badgeText, badgeHint, onClear } = entry;
+      const { cardName, valueText, badgeText, badgeHint, score, onClear } =
+        entry;
       const entryEl = document.createElement("div");
       entryEl.className = "wm-top-evals-entry";
+      // The entry's score, when it has a finite one, is exposed as a data-score metadatum (rounded to 2 decimals)
+      if (Number.isFinite(score)) entryEl.dataset.score = score.toFixed(2);
 
       const clearBtn = document.createElement("button");
       clearBtn.type = "button";
@@ -6944,13 +7000,13 @@ const MY_USERNAME = "xxx";
         label: "Trier par bonne affaire",
         // New key: the old one remembered a switch that sorted by something else
         storageKey: `wm-best-${kind}-sort-by-deal`,
-        // Default order is by amount; switched on, best score first (BEST_TRADE_KINDS' toggleScore); trades with none come last, in their usual order (sort
+        // Default order is by amount; switched on, best score first (BEST_TRADE_KINDS' score); trades with none come last, in their usual order (sort
         // is stable)
         compare: (a, b) => {
-          const aMissing = Number.isNaN(a.toggleScore);
-          const bMissing = Number.isNaN(b.toggleScore);
+          const aMissing = Number.isNaN(a.score);
+          const bMissing = Number.isNaN(b.score);
           if (aMissing || bMissing) return Number(aMissing) - Number(bMissing);
-          return b.toggleScore - a.toggleScore;
+          return b.score - a.score;
         },
       },
       entries: trades.map((entry) => {
@@ -6963,7 +7019,7 @@ const MY_USERNAME = "xxx";
           valueText: amountText,
           badgeText: cutoff ? formatBestTradeCutoff(cutoff) : undefined,
           badgeHint: config.cutoffHint,
-          toggleScore: config.toggleScore(cardName, amount),
+          score: config.score(cardName, amount),
           onClear: () => {
             localStorage.setItem(
               config.key,
@@ -7303,6 +7359,31 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 37: on /collection, whenever the bulk-action popover (div.bottom-4) is in the DOM, hide every <button> inside it
+  // whose text contains "favori" ("Mettre en favori (N)" and "Retirer des favoris (N)"). Matched on the text rather
+  // than on a class, since the site gives those buttons no stable hook; re-applied on every mutation because the popover
+  // re-renders its buttons whenever the selection changes. /global-collection is left alone (the path check is a prefix
+  // match on "/collection", which that route doesn't share).
+  // ============================================================
+  function hideBulkActionFavoriteButtons() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    document.querySelectorAll("div.bottom-4 button").forEach((btn) => {
+      if (btn.style.display === "none") return;
+      if (btn.textContent.includes("favori")) btn.style.display = "none";
+    });
+  }
+
+  function watchBulkActionFavoriteButtons() {
+    hideBulkActionFavoriteButtons();
+
+    const observer = new MutationObserver(() =>
+      hideBulkActionFavoriteButtons(),
+    );
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -7312,7 +7393,7 @@ const MY_USERNAME = "xxx";
     };
 
     run("rule-1a", applyCardFrameMaxHeight);
-    run("rule-1b", hideShrinkButton);
+    run("rule-1b", watchShrinkButtons);
     run("rule-2", watchAccentSiblings);
     run("rule-3", watchNavForTitleChanges);
     run("rule-4", watchFriendsGrid);
@@ -7376,6 +7457,7 @@ const MY_USERNAME = "xxx";
     run("feature-bbs", watchBestTradeRecording);
     run("feature-bbs", watchBestTradesButtons);
     run("feature-fol", watchFollowedUsers);
+    run("rule-37", watchBulkActionFavoriteButtons);
 
     watchFeatureConfigButton();
     watchTutorialButton();
