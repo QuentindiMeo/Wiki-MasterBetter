@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.23.10
+// @version      0.23.12
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -780,7 +780,8 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Rule 12: on /profile/*, give buttons inside div.-mt-0\.5 a color of #ccc, but only while they're not hovered
   //
-  // Rule 12 (cont'd): on /profile (the user's own profile page), give div.mt-2 a max-width of 50rem.
+  // Rule 12 (cont'd): on /profile (the user's own profile page), give div.mt-2 a max-width of 50rem, and keep its
+  // tags' text from being clipped at the bottom (span.truncate inherits the pill's leading-none line-height).
   // ============================================================
   function updateProfileButtonColor() {
     const onProfile = window.location.pathname.startsWith("/profile/");
@@ -804,6 +805,13 @@ const MY_USERNAME = "xxx";
 
       .wm-own-profile-tag-list {
         max-width: 50rem;
+      }
+
+      /* Each tag's text span is overflow-hidden (truncate) with the pill's leading-none line-height, which clips
+         descenders (Q, G, g, y...). Padding gives the glyphs room; the negative margin keeps the pill's size. */
+      .wm-own-profile-tag-list span.truncate {
+        padding-block: 0.2em;
+        margin-block: -0.2em;
       }
     `);
 
@@ -1498,7 +1506,10 @@ const MY_USERNAME = "xxx";
       if (isBidTimerNotificationMuted()) return;
 
       const cardNameEl = document.querySelector("h1.min-w-0");
-      const cardName = cardNameEl ? cardNameEl.textContent.trim() : null;
+      // Feature CNC's 📋 button lives inside the heading, so strip it from the text
+      const cardName = cardNameEl
+        ? cardNameEl.textContent.replace("📋", "").trim()
+        : null;
       const notificationText = cardName
         ? `Il reste 30 secondes pour enchérir sur la carte « ${cardName} » !`
         : "Il reste 30 secondes pour enchérir sur cette carte !";
@@ -7488,8 +7499,9 @@ const MY_USERNAME = "xxx";
         background: rgba(255, 128, 128, 0.15);
       }
       body[data-wm-no-eval-halo] .wm-no-eval-card {
+        z-index: 2;
         box-shadow: 0 0 14px 4px rgba(255, 128, 128, 0.55);
-        border-radius: 0.75rem;
+        border-radius: 1rem;
       }
     `);
 
