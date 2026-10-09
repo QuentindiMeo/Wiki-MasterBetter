@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.24.1
+// @version      0.24.2
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -14,7 +14,7 @@
 // ==/UserScript==
 //! Regarde Naïm, c'est comme ça qu'on vibe-claude.
 
-const MY_USERNAME = "onohunt";
+const MY_USERNAME = "xxx";
 
 (function () {
   "use strict";
@@ -4099,8 +4099,6 @@ const MY_USERNAME = "onohunt";
       .wm-settings-modal {
         display: flex;
         flex-direction: column;
-        width: 50vw;
-        max-height: 50vh;
         border-radius: 0.75rem;
         border: 1px solid var(--color-border);
         background-color: var(--color-surface-light);
@@ -6021,7 +6019,7 @@ const MY_USERNAME = "onohunt";
   // stops overflowing the viewport once a card has a lot of tags. Each tag's usage count loads in asynchronously
   // after the list itself renders, appended to its name in span > span.inline-flex > span.min-w-0.truncate as
   // "{tag name} ({amount})" — that middle span.inline-flex (the tag's colored pill) is what distinguishes an
-  // actual tag <li> from the list's two non-tag entries ("Toutes les étiquettes" first, "Gérer les étiquettes…"
+  // actual tag <li> from the list's two non-tag entries ("Toutes les étiquettes" first, "Gérer les étiquettes..."
   // last), which only nest two levels deep (span > span.block.min-w-0.truncate) and never carry a count — so
   // they're excluded from consideration entirely, rather than forever blocking the "every entry has its count"
   // check the way they used to. Once every actual tag has its count (i.e. the list is fully loaded), the tag
@@ -7563,14 +7561,21 @@ const MY_USERNAME = "onohunt";
     }
   }
 
+  // Returns whether the description could be persisted
   function writeUserDescription(username, text) {
     const key = `${USER_DESC_KEY_PREFIX}${username}`;
     const clean = text
       .replace(/\s*[\r\n]+\s*/g, " ")
       .trim()
       .slice(0, USER_DESC_MAX_LENGTH);
-    if (clean) localStorage.setItem(key, clean);
-    else localStorage.removeItem(key);
+    try {
+      if (clean) localStorage.setItem(key, clean);
+      else localStorage.removeItem(key);
+      return true;
+    } catch {
+      // Storage blocked, or its quota exhausted
+      return false;
+    }
   }
 
   function syncUserDescription(nameEl, username) {
@@ -7651,8 +7656,19 @@ const MY_USERNAME = "onohunt";
     textarea.className = "wm-user-desc-input";
     textarea.rows = 3;
     textarea.maxLength = USER_DESC_MAX_LENGTH;
-    textarea.placeholder = "Ce qu'il cherche, ce qu'il propose…";
+    textarea.placeholder = "Ce qu'il cherche, ce qu'il propose...";
+    textarea.setAttribute(
+      "aria-label",
+      `Description personnelle de ${username}`,
+    );
     textarea.value = readUserDescription(username);
+
+    const error = document.createElement("p");
+    error.className = "wm-user-desc-error";
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+    error.textContent =
+      "Impossible d'enregistrer : le stockage du navigateur est indisponible ou plein.";
 
     const footer = document.createElement("div");
     footer.className = "wm-user-desc-footer";
@@ -7663,7 +7679,10 @@ const MY_USERNAME = "onohunt";
       counter.textContent = `${textarea.value.length} / ${USER_DESC_MAX_LENGTH}`;
     };
     updateCounter();
-    textarea.addEventListener("input", updateCounter);
+    textarea.addEventListener("input", () => {
+      updateCounter();
+      error.hidden = true;
+    });
 
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
@@ -7671,7 +7690,7 @@ const MY_USERNAME = "onohunt";
     saveBtn.textContent = "Enregistrer";
 
     footer.append(counter, saveBtn);
-    modal.append(header, textarea, footer);
+    modal.append(header, textarea, error, footer);
     overlay.appendChild(modal);
 
     const onKeydown = (event) => {
@@ -7682,7 +7701,11 @@ const MY_USERNAME = "onohunt";
       document.removeEventListener("keydown", onKeydown);
     };
     const save = () => {
-      writeUserDescription(username, textarea.value);
+      if (!writeUserDescription(username, textarea.value)) {
+        // Keep the modal open with the edit intact, and say that nothing was saved
+        error.hidden = false;
+        return;
+      }
       onSave();
       close();
     };
@@ -7786,6 +7809,11 @@ const MY_USERNAME = "onohunt";
         align-items: center;
         justify-content: space-between;
         margin-top: 0.5rem;
+      }
+      .wm-user-desc-error {
+        margin: 0.5rem 0 0;
+        font-size: 0.75rem;
+        color: #ef4444;
       }
       .wm-user-desc-counter {
         font-size: 0.75rem;
