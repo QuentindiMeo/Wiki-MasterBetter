@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.23.12
+// @version      0.24.1
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -14,7 +14,7 @@
 // ==/UserScript==
 //! Regarde Naïm, c'est comme ça qu'on vibe-claude.
 
-const MY_USERNAME = "xxx";
+const MY_USERNAME = "onohunt";
 
 (function () {
   "use strict";
@@ -778,7 +778,8 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 12: on /profile/*, give buttons inside div.-mt-0\.5 a color of #ccc, but only while they're not hovered
+  // Rule 12: on /profile/*, give buttons inside div.-mt-0\.5 a color of #ccc, but only while they're not hovered; while
+  // hovered, they get a muted green (background and text) instead of the site's red hover.
   //
   // Rule 12 (cont'd): on /profile (the user's own profile page), give div.mt-2 a max-width of 50rem, and keep its
   // tags' text from being clipped at the bottom (span.truncate inherits the pill's leading-none line-height).
@@ -801,6 +802,13 @@ const MY_USERNAME = "xxx";
     GM_addStyle(`
       .wm-profile-btn:not(:hover) {
         color: #ccc;
+      }
+
+      /* The site's own red hover (made for "Signaler") is too aggressive: every button of the row goes a muted
+         green instead. A followed player's "Suivi" button keeps its red (Feature FOL). */
+      .wm-profile-btn:not([aria-pressed="true"]):hover {
+        background-color: rgba(52, 211, 153, 0.1) !important;
+        color: rgba(52, 211, 153, 0.85) !important;
       }
 
       .wm-own-profile-tag-list {
@@ -3864,6 +3872,10 @@ const MY_USERNAME = "xxx";
       id: "rule-38",
       label: "Halo rouge sur les cartes sans estimation (collection)",
     },
+    {
+      id: "feature-uds",
+      label: "Description personnelle des joueurs (profil et amis)",
+    },
   ];
 
   function readFeatureFlags() {
@@ -4087,8 +4099,8 @@ const MY_USERNAME = "xxx";
       .wm-settings-modal {
         display: flex;
         flex-direction: column;
-        width: 75vw;
-        max-height: 80vh;
+        width: 50vw;
+        max-height: 50vh;
         border-radius: 0.75rem;
         border: 1px solid var(--color-border);
         background-color: var(--color-surface-light);
@@ -4266,6 +4278,10 @@ const MY_USERNAME = "xxx";
     {
       title: "Suivre un joueur",
       text: "Sur le profil d'un joueur, le bouton « Suivre » en forme d'œil, à côté de « Signaler », le suit : l'œil devient rouge, et un petit œil rouge apparaît à côté de son pseudo sur les pages d'enchère. Cliquez à nouveau pour ne plus le suivre.",
+    },
+    {
+      title: "Décrire un joueur",
+      text: "Sur le profil d'un autre joueur, le bouton « Description » ouvre une modale où noter en max. 128 caractères ce qu'il cherche ou propose. Entrée enregistre, un texte vide efface la description. Elle s'affiche à côté de son pseudo sur son profil et sur la page des amis, et reste dans votre navigateur.",
     },
   ];
 
@@ -7520,6 +7536,287 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Feature UDS: a short, personal description for other players, to remember what they are after, etc. On another
+  // user's profile (/profile/{username}), a "Description" button (pencil icon) is added to the top-right row
+  // (div.-mt-0.5), right before Feature FOL's follow button (or the "Signaler" one when that feature is off) and
+  // styled after "Signaler". It opens a modal with a textarea holding the description, saved with the "Enregistrer"
+  // button or Enter (an empty text deletes it); Escape, a click outside or the "✕" close the modal. The description
+  // is kept in localStorage under "desc-{username}", must be max. 128 characters (the textarea's maxlength is
+  // 127, a live counter is shown) and is single-line (line breaks are turned into spaces).
+  //
+  // Feature UDS (cont'd): the description is displayed, muted and not truncated, right after the username: on that
+  // profile (div.flex-1.min-w-0 > h1.truncate) and on /friends (each friend's a[href^="/profile/"] > div.min-w-0 >
+  // p.truncate). It is a span.wm-user-desc inserted as a sibling of the name element (the site's framework owns the
+  // name's content); the name's parent becomes a wrapping flex row (wm-user-desc-host) so both sit on one line,
+  // wrapping the description below the name when it doesn't fit.
+  // ============================================================
+  const USER_DESC_KEY_PREFIX = "desc-";
+  const USER_DESC_MAX_LENGTH = 128;
+  const USER_DESC_PENCIL_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>';
+
+  function readUserDescription(username) {
+    try {
+      return localStorage.getItem(`${USER_DESC_KEY_PREFIX}${username}`) ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  function writeUserDescription(username, text) {
+    const key = `${USER_DESC_KEY_PREFIX}${username}`;
+    const clean = text
+      .replace(/\s*[\r\n]+\s*/g, " ")
+      .trim()
+      .slice(0, USER_DESC_MAX_LENGTH);
+    if (clean) localStorage.setItem(key, clean);
+    else localStorage.removeItem(key);
+  }
+
+  function syncUserDescription(nameEl, username) {
+    const host = nameEl.parentElement;
+    if (!host || !username) return;
+
+    const text = readUserDescription(username);
+    const existing = host.querySelector(":scope > .wm-user-desc");
+
+    if (!text) {
+      existing?.remove();
+      host.classList.remove("wm-user-desc-host");
+      return;
+    }
+
+    host.classList.add("wm-user-desc-host");
+    if (existing) {
+      if (existing.textContent !== text) existing.textContent = text;
+      existing.title = text;
+      return;
+    }
+
+    const span = document.createElement("span");
+    span.className = "wm-user-desc";
+    span.textContent = text;
+    span.title = text;
+    nameEl.after(span);
+  }
+
+  function updateUserDescriptions() {
+    const path = window.location.pathname;
+
+    if (path.startsWith("/profile/")) {
+      const username = getViewedProfileUsername();
+      const nameEl = document.querySelector("div.flex-1.min-w-0 > h1.truncate");
+      if (username && nameEl && nameEl.textContent.trim() === username) {
+        syncUserDescription(nameEl, username);
+      }
+    }
+
+    if (path.startsWith("/friends")) {
+      document
+        .querySelectorAll('a[href^="/profile/"] > div.min-w-0 > p.truncate')
+        .forEach((nameEl) => {
+          const href = nameEl.closest("a").getAttribute("href");
+          const username = decodeURIComponent(href.slice("/profile/".length));
+          syncUserDescription(nameEl, username);
+        });
+    }
+  }
+
+  function buildUserDescriptionModal(username, onSave) {
+    const overlay = document.createElement("div");
+    overlay.className = "wm-settings-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "wm-settings-modal wm-user-desc-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", `Description de ${username}`);
+
+    const header = document.createElement("div");
+    header.className = "wm-settings-header";
+
+    const title = document.createElement("h2");
+    title.className = "wm-settings-title";
+    title.textContent = `✏️ Description de ${username}`;
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "wm-settings-close";
+    closeBtn.setAttribute("aria-label", "Fermer");
+    closeBtn.textContent = "✕";
+
+    header.append(title, closeBtn);
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "wm-user-desc-input";
+    textarea.rows = 3;
+    textarea.maxLength = USER_DESC_MAX_LENGTH;
+    textarea.placeholder = "Ce qu'il cherche, ce qu'il propose…";
+    textarea.value = readUserDescription(username);
+
+    const footer = document.createElement("div");
+    footer.className = "wm-user-desc-footer";
+
+    const counter = document.createElement("span");
+    counter.className = "wm-user-desc-counter";
+    const updateCounter = () => {
+      counter.textContent = `${textarea.value.length} / ${USER_DESC_MAX_LENGTH}`;
+    };
+    updateCounter();
+    textarea.addEventListener("input", updateCounter);
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "wm-user-desc-save";
+    saveBtn.textContent = "Enregistrer";
+
+    footer.append(counter, saveBtn);
+    modal.append(header, textarea, footer);
+    overlay.appendChild(modal);
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeydown);
+    };
+    const save = () => {
+      writeUserDescription(username, textarea.value);
+      onSave();
+      close();
+    };
+
+    textarea.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey) return;
+      event.preventDefault();
+      save();
+    });
+    saveBtn.addEventListener("click", save);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", onKeydown);
+
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }, 0);
+
+    return overlay;
+  }
+
+  function insertUserDescriptionButton() {
+    const username = getViewedProfileUsername();
+    if (!username) return;
+
+    const reportBtn = document.querySelector(
+      'div.-mt-0\\.5 button[title^="Signaler"]',
+    );
+    const row = reportBtn?.parentElement;
+    if (!reportBtn || !row) return;
+
+    const existing = row.querySelector(":scope > .wm-user-desc-btn");
+    if (existing) {
+      // The viewed profile can change without the row being rebuilt
+      existing.dataset.wmDescUser = username;
+      return;
+    }
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${reportBtn.className.replace("wm-profile-btn", "").trim()} wm-user-desc-btn`;
+    btn.dataset.wmDescUser = username;
+    btn.title = "Modifier la description de ce joueur";
+    btn.setAttribute("aria-haspopup", "dialog");
+    btn.innerHTML = `${USER_DESC_PENCIL_SVG}<span>Description</span>`;
+    btn
+      .querySelector("svg")
+      .setAttribute("class", "size-2.5 shrink-0 opacity-80");
+
+    btn.addEventListener("click", () => {
+      if (document.querySelector(".wm-settings-overlay")) return;
+      document.body.appendChild(
+        buildUserDescriptionModal(
+          btn.dataset.wmDescUser,
+          updateUserDescriptions,
+        ),
+      );
+    });
+
+    (row.querySelector(":scope > .wm-follow-btn") ?? reportBtn).before(btn);
+  }
+
+  function watchUserDescriptions() {
+    GM_addStyle(`
+      .wm-user-desc-host {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        column-gap: 0.5rem;
+      }
+      .wm-user-desc-host > h1 ~ p {
+        flex-basis: 100%;
+      }
+      .wm-user-desc {
+        align-self: center;
+        font-size: 0.75rem;
+        font-weight: 400;
+        color: var(--color-foreground);
+        opacity: 0.5;
+        overflow-wrap: anywhere;
+      }
+      .wm-user-desc-modal {
+        width: min(28rem, 90vw);
+      }
+      .wm-user-desc-input {
+        width: 100%;
+        resize: vertical;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--color-border);
+        background-color: var(--color-surface);
+        color: var(--color-foreground);
+        font: inherit;
+        font-size: 0.875rem;
+      }
+      .wm-user-desc-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 0.5rem;
+      }
+      .wm-user-desc-counter {
+        font-size: 0.75rem;
+        opacity: 0.6;
+      }
+      .wm-user-desc-save {
+        padding: 0.3rem 0.9rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 0.5rem;
+        background: transparent;
+        color: var(--color-accent);
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .wm-user-desc-save:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+    `);
+
+    const update = () => {
+      insertUserDescriptionButton();
+      updateUserDescriptions();
+    };
+    update();
+
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -7595,6 +7892,7 @@ const MY_USERNAME = "xxx";
     run("feature-fol", watchFollowedUsers);
     run("rule-37", watchBulkActionFavoriteButtons);
     run("rule-38", watchNoEvalHalo);
+    run("feature-uds", watchUserDescriptions);
 
     watchFeatureConfigButton();
     watchTutorialButton();
