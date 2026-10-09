@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.23.8
+// @version      0.23.10
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
+// @exclude      https://www.wiki-masters.com/battle*
+// @exclude      https://www.wiki-masters.com/settings*
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -533,22 +535,26 @@ const MY_USERNAME = "xxx";
   }
 
   function watchMarkAllReadTrigger() {
-    document.addEventListener("click", (event) => {
-      const container = document.querySelector("div.min-h-0.flex-1");
-      if (!container) return;
+    document.addEventListener(
+      "click",
+      (event) => {
+        const container = document.querySelector("div.min-h-0.flex-1");
+        if (!container) return;
 
-      const firstButton = Array.from(
-        container.querySelectorAll(NOTIFICATION_ITEM_SELECTOR),
-      ).find((btn) => btn.style.display !== "none");
-      if (!firstButton) return;
-      if (event.target !== firstButton && !firstButton.contains(event.target))
-        return;
+        const firstButton = Array.from(
+          container.querySelectorAll(NOTIFICATION_ITEM_SELECTOR),
+        ).find((btn) => btn.style.display !== "none");
+        if (!firstButton) return;
+        if (event.target !== firstButton && !firstButton.contains(event.target))
+          return;
 
-      const markAllReadBtn = findMarkAllReadButton();
-      if (markAllReadBtn && markAllReadBtn !== firstButton) {
-        markAllReadBtn.click();
-      }
-    }, true);
+        const markAllReadBtn = findMarkAllReadButton();
+        if (markAllReadBtn && markAllReadBtn !== firstButton) {
+          markAllReadBtn.click();
+        }
+      },
+      true,
+    );
   }
 
   // ============================================================
@@ -3843,6 +3849,10 @@ const MY_USERNAME = "xxx";
       id: "rule-37",
       label: "Masquer les boutons « favori » de la barre d'actions groupées",
     },
+    {
+      id: "rule-38",
+      label: "Halo rouge sur les cartes sans estimation (collection)",
+    },
   ];
 
   function readFeatureFlags() {
@@ -4844,7 +4854,9 @@ const MY_USERNAME = "xxx";
       button.textContent = `Retrait des cartes possédées... (${removed + 1})`;
       (card.querySelector("div.inset-0") ?? card).click();
 
-      const unwishBtn = await waitForElement("button.transition-colors.border:nth-child(1)");
+      const unwishBtn = await waitForElement(
+        "button.transition-colors.border:nth-child(1)",
+      );
       unwishBtn?.click();
       removed++;
 
@@ -7384,6 +7396,118 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 38: on /collection, a toggle button is appended right after Rule 35's "Top 40" button (.wm-top-evals-btn,
+  // or at the end of the heading when that rule is off). While on, every card of the page that has no eval gets a
+  // light red halo. "No eval" means no "eval-{name}" localStorage entry (Feature ETS): a stored "?" is an eval and
+  // does not count. Cards are re-flagged (debounced) on every DOM mutation, since evals get recorded as cards are
+  // opened; the halo itself is driven by a body attribute, so flipping the toggle needs no re-scan. The toggle
+  // state is persisted in localStorage under "wm-no-eval-halo".
+  // ============================================================
+  const NO_EVAL_HALO_KEY = "wm-no-eval-halo";
+
+  function readNoEvalHaloState() {
+    try {
+      return localStorage.getItem(NO_EVAL_HALO_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function applyNoEvalHaloState(on) {
+    document.body.toggleAttribute("data-wm-no-eval-halo", on);
+  }
+
+  function flagCardsWithoutEval() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    const grid = document.querySelector("div.gap-3.justify-center");
+    if (!grid) return;
+
+    Array.from(grid.children).forEach((card) => {
+      const cardName = card.querySelector("h3")?.textContent.trim();
+      if (!cardName) return;
+
+      const hasEval = !!localStorage.getItem(`eval-${cardName}`);
+      card.classList.toggle("wm-no-eval-card", !hasEval);
+    });
+  }
+
+  function insertNoEvalHaloToggle() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    const heading = document.querySelector("div.gap-3.animate-fade-in-up h1");
+    if (!heading || heading.querySelector(":scope > .wm-no-eval-toggle"))
+      return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-no-eval-toggle";
+    btn.textContent = "Sans estimation";
+    btn.title = "Entourer d'un halo rouge les cartes sans estimation";
+
+    const sync = () => {
+      const on = readNoEvalHaloState();
+      btn.setAttribute("aria-pressed", String(on));
+      btn.classList.toggle("wm-no-eval-toggle-on", on);
+      applyNoEvalHaloState(on);
+    };
+    btn.addEventListener("click", () => {
+      try {
+        localStorage.setItem(NO_EVAL_HALO_KEY, String(!readNoEvalHaloState()));
+      } catch {
+        // storage unavailable: the toggle simply won't persist
+      }
+      sync();
+    });
+    sync();
+
+    const topBtn = heading.querySelector(":scope > .wm-top-evals-btn");
+    if (topBtn) topBtn.after(btn);
+    else heading.appendChild(btn);
+  }
+
+  function watchNoEvalHalo() {
+    GM_addStyle(`
+      .wm-no-eval-toggle {
+        margin-left: 0.5rem;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid #ff8080;
+        border-radius: 0.5rem;
+        background: transparent;
+        color: #ff8080;
+        font-size: 0.8rem;
+        font-weight: 600;
+        vertical-align: middle;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-no-eval-toggle:hover,
+      .wm-no-eval-toggle-on {
+        opacity: 1;
+        background: rgba(255, 128, 128, 0.15);
+      }
+      body[data-wm-no-eval-halo] .wm-no-eval-card {
+        box-shadow: 0 0 14px 4px rgba(255, 128, 128, 0.55);
+        border-radius: 0.75rem;
+      }
+    `);
+
+    applyNoEvalHaloState(readNoEvalHaloState());
+
+    let debounceId = null;
+    const update = () => {
+      insertNoEvalHaloToggle();
+      clearTimeout(debounceId);
+      debounceId = setTimeout(flagCardsWithoutEval, 300);
+    };
+    update();
+
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -7458,6 +7582,7 @@ const MY_USERNAME = "xxx";
     run("feature-bbs", watchBestTradesButtons);
     run("feature-fol", watchFollowedUsers);
     run("rule-37", watchBulkActionFavoriteButtons);
+    run("rule-38", watchNoEvalHalo);
 
     watchFeatureConfigButton();
     watchTutorialButton();
