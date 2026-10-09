@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.24.2
+// @version      0.24.7
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -246,6 +246,40 @@ const MY_USERNAME = "xxx";
       .forEach((label) => {
         label.style.display = "none";
       });
+
+    hideTradesMessageButtonLabels();
+  }
+
+  // Rule 5 (cont'd): on /trades (the "Envoyées" and "Historique" tabs show a "Message" button per trade), the same
+  // shortening is applied to every button that reads "Message" or is titled/labelled as a message button. Its markup
+  // there isn't known for sure, so the label is hidden whichever way it is rendered: a span carrying the text is
+  // hidden; when the text is a bare text node of the button (which the site's framework owns, so it can't be
+  // removed), the button's font-size is zeroed instead, the icon keeping its own size.
+  function hideTradesMessageButtonLabels() {
+    if (!window.location.pathname.startsWith("/trades")) return;
+
+    document.querySelectorAll("button").forEach((btn) => {
+      if (btn.dataset.wmLabelHidden === "true") return;
+
+      const hint = `${btn.title} ${btn.getAttribute("aria-label") ?? ""}`;
+      const isMessageBtn =
+        /^message$/i.test(btn.textContent.trim()) || /message/i.test(hint);
+      if (!isMessageBtn || !btn.querySelector("svg")) return;
+
+      btn.dataset.wmLabelHidden = "true";
+
+      const labelSpans = Array.from(btn.querySelectorAll("span")).filter(
+        (span) => span.textContent.trim(),
+      );
+      if (labelSpans.length > 0) {
+        labelSpans.forEach((span) => {
+          span.style.display = "none";
+          span.parentElement.style.margin = "0";
+        });
+      } else {
+        btn.style.fontSize = "0";
+      }
+    });
   }
 
   function watchActionButtonLabels() {
@@ -2002,72 +2036,11 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Feature PLB: on a bid page (/marketplace/{UUID}), for each entry of ul.card-frame, insert an "@" anchor right
-  // before its first child (a <span> holding the bidder's name), linking to /profile/{name}; also give the entry's
-  // last child the "ml-auto" class. Also insert the same "@" link right before the username (a <span> inside p.text-sm.mt-1)
+  // Feature PLB (OBSOLETE — its code has been removed and it no longer does anything; the number is kept so the
+  // numbering of the other rules/features stays stable). It used to insert an "@" anchor linking to /profile/{name}
+  // on a bid page (/marketplace/{UUID}): right before the first child of each ul.card-frame entry (the bidder's name),
+  // and right before the seller's name (the <span> inside p.text-sm.mt-1).
   // ============================================================
-  function createProfileLink(name) {
-    const link = document.createElement("a");
-    link.className = "wm-profile-link";
-    link.href = `/profile/${encodeURIComponent(name)}`;
-    link.rel = "noopener noreferrer";
-    link.textContent = "@";
-    return link;
-  }
-
-  function insertBidEntryProfileLinks() {
-    document.querySelectorAll("ul.card-frame").forEach((list) => {
-      Array.from(list.children).forEach((entry) => {
-        if (entry.querySelector(":scope > .wm-profile-link")) return;
-
-        const nameSpan = entry.firstElementChild;
-        if (!nameSpan) return;
-
-        const name = nameSpan.textContent.trim();
-        if (!name) return;
-
-        nameSpan.before(createProfileLink(name));
-
-        entry.lastElementChild?.classList.add("ml-auto");
-      });
-    });
-
-    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
-
-    const nameSpan = document.querySelector("p.text-sm.mt-1 span");
-    if (
-      !nameSpan ||
-      nameSpan.previousElementSibling?.classList.contains("wm-profile-link")
-    )
-      return;
-
-    const name = nameSpan.textContent.trim();
-    if (!name) return;
-
-    const profileLink = createProfileLink(name);
-    profileLink.style.marginRight = "0.125rem";
-    nameSpan.before(profileLink);
-  }
-
-  function watchBidEntryProfileLinks() {
-    GM_addStyle(`
-      .wm-profile-link {
-        margin-right: 0.25rem;
-        color: var(--color-accent);
-        text-decoration: none;
-        opacity: 0.7;
-      }
-      .wm-profile-link:hover {
-        opacity: 1;
-        text-decoration: underline;
-      }
-    `);
-
-    insertBidEntryProfileLinks();
-
-    const observer = new MutationObserver(() => insertBidEntryProfileLinks());
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
 
   // ============================================================
   // Rule 33: on a bid page (/marketplace/{UUID}), force button.bg-[var(--color-accent)] (the "place a bid" button)
@@ -2115,7 +2088,8 @@ const MY_USERNAME = "xxx";
 
   // ============================================================
   // Feature BSP: on a bid page, once span.font-medium reads "Vendue" or "Non vendue" (a cancelled auction,
-  // "Annulée", is neither and is never recorded — findAuctionOutcomeSpan only matches text ending in "endue") and
+  // "Annulée", is neither and is never recorded — findAuctionOutcomeSpan only matches text ending in "endue"), the
+  // viewer isn't the seller of the auction (unsold or not) and
   // the viewer isn't the winning bidder (Rule 33's isMyUsernameLeadingBid — not the owned-card label,
   // span.bg-emerald-600/90, which is present whenever the viewer owns the card at all, won here or not), record
   // the final displayed price (span.text-2xl) — whether the auction actually sold or not, it's still useful
@@ -2190,11 +2164,10 @@ const MY_USERNAME = "xxx";
     return match?.[1]?.split("-")[1] ?? null;
   }
 
-  // The seller's username: on a bid page, the <span> inside p.text-sm.mt-1 (right after "Mis en vente par"),
-  // also used by Feature PLB to insert its "@" profile link.
+  // The seller's username: on a bid page, the <span> inside p.text-sm.mt-1 (right after "Mis en vente par").
   function getBidPageSellerUsername() {
     return (
-      document.querySelector("p.text-sm.mt-1 span")?.textContent.trim() ?? null
+      document.querySelector("p a.hover:underline")?.textContent.trim() ?? null
     );
   }
 
@@ -2214,7 +2187,8 @@ const MY_USERNAME = "xxx";
     if (isMyUsernameLeadingBid()) return;
 
     // Feature BSP (cont'd) handles the seller's own completed sales instead (see updateSnipableBadge) — don't let them
-    // pollute the market-observed average.
+    // pollute the market-observed average. Applies to the viewer's own auctions whatever their outcome, an unsold
+    // ("Non vendue") one included.
     if (getBidPageSellerUsername() === MY_USERNAME) return;
 
     // Read h1.flex-1's own text node directly (rather than its full textContent) since Feature CNC prepends a
@@ -3744,7 +3718,6 @@ const MY_USERNAME = "xxx";
       label: "Encadrer le nom de carte des notifications de liste de souhaits",
     },
     { id: "rule-15", label: "Re-labelliser le bouton retour d'une enchère" },
-    { id: "feature-plb", label: "Liens de profil sur la page d'enchère" },
     {
       id: "rule-16",
       label: "Défilement vers la dernière notification non lue",
@@ -3875,6 +3848,10 @@ const MY_USERNAME = "xxx";
     {
       id: "feature-uds",
       label: "Description personnelle des joueurs (profil et amis)",
+    },
+    {
+      id: "rule-39",
+      label: "Barres de progression des succès en bas à droite",
     },
   ];
 
@@ -4259,7 +4236,7 @@ const MY_USERNAME = "xxx";
     },
     {
       title: "Accéder à un profil en un clic",
-      text: "Un petit « @ » à côté d'un pseudo (sur une page d'enchère, ou à côté du nom d'un ami dans la liste de souhaits) ouvre directement son profil.",
+      text: "Dans la liste de souhaits globale, cliquer sur le pseudo d'un ami qui possède une carte ouvre directement son profil.",
     },
     {
       title: "Filtrer les notifications",
@@ -5826,13 +5803,11 @@ const MY_USERNAME = "xxx";
   function watchCardModalNameCopyButton() {
     GM_addStyle(`
       .wm-copy-name {
-        margin-right: 0.125rem;
         background: none;
         border: none;
         cursor: pointer;
         font-size: 0.9rem;
-        line-height: 1;
-        opacity: 0.7;
+        opacity: 0.75;
         vertical-align: middle;
         transition: opacity 0.15s ease;
       }
@@ -7845,6 +7820,43 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Rule 39: on /achievements, every 10 seconds, look for a div.mt-2 (an achievement's progress bar, rendered once the
+  // list has loaded). As soon as there is one, every div.mt-2 of the page is pinned to the bottom right of its card
+  // ("position: absolute; bottom: 1rem; width: 50%; right: 1rem; margin: 0") and its first child gets "margin: 0".
+  // The styles are inline and applied once per visit: the check is only repeated after leaving /achievements and
+  // coming back (the site re-renders the list, so the elements are new ones).
+  // ============================================================
+  const ACHIEVEMENT_BARS_POLL_MS = 100;
+
+  function pinAchievementProgressBars() {
+    const bars = document.querySelectorAll("div.mt-2");
+    if (bars.length === 0) return false;
+
+    bars.forEach((bar) => {
+      bar.style.cssText +=
+        "position: absolute; bottom: 1rem; width: 40%; right: 1rem; margin: 0;";
+      if (bar.firstElementChild) bar.firstElementChild.style.margin = "0";
+    });
+    return true;
+  }
+
+  function watchAchievementProgressBars() {
+    let applied = false;
+
+    const check = () => {
+      if (!window.location.pathname.startsWith("/achievements")) {
+        applied = false;
+        return;
+      }
+      if (applied) return;
+      applied = pinAchievementProgressBars();
+    };
+
+    check();
+    setInterval(check, ACHIEVEMENT_BARS_POLL_MS);
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -7881,7 +7893,6 @@ const MY_USERNAME = "xxx";
     run("feature-lbd", watchStartingBidEnterKey);
     run("rule-14", watchWishlistToastWrap);
     run("rule-15", watchMarketplaceBackButtonLabel);
-    run("feature-plb", watchBidEntryProfileLinks);
     run("rule-16", watchUnreadNotificationScrollOnCardFrameArrival);
     run("feature-bsp", watchSoldBidPriceRecording);
     run("feature-bsp", watchSnipableBadge);
@@ -7921,6 +7932,7 @@ const MY_USERNAME = "xxx";
     run("rule-37", watchBulkActionFavoriteButtons);
     run("rule-38", watchNoEvalHalo);
     run("feature-uds", watchUserDescriptions);
+    run("rule-39", watchAchievementProgressBars);
 
     watchFeatureConfigButton();
     watchTutorialButton();

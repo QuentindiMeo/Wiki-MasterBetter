@@ -87,7 +87,6 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Alertes d'expiration** : Une notification push prévient qu'il reste 30 secondes sur une enchère ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut, par onglet)
 - **Lueur rouge en fin d'enchère** : Le décompte « Se termine dans... » se met à luire en rouge quand il reste moins de 10 secondes
 - **Bouton de mise en rouge si vous menez** : Le bouton pour enchérir devient rouge clair quand vous êtes déjà le meilleur enchérisseur
-- **Liens de profil de la salle de vente** : Un lien « @ » à côté du nom de chaque enchérisseur, et du vendeur
 - **Rechargement automatique si enchère introuvable** : Si la page affiche « Enchère introuvable », elle se recharge d'elle-même peu après
 - **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
@@ -111,12 +110,14 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🏆 Succès
 
 - **Tout réclamer** : Un bouton additionne toutes les récompenses non réclamées et les réclame en une fois
+- **Barres de progression repositionnées** : Sur `/achievements`, les barres de progression des succès sont placées en bas à droite de leur carte, sur la moitié de sa largeur
 
 ## 📖 Utilisation
 
 1. Naviguez sur [wiki-masters.com](https://www.wiki-masters.com) comme d'habitude — chaque ajustement s'applique automatiquement
 2. La permission de notifications peut être demandée pour les fonctionnalités de notification push (paquets qui s'accumulent, enchère bientôt expirée)
 3. Certaines données (préférence de navbar repliée, regroupement des enchères, suivi des prix de vente) persistent d'une visite à l'autre via le stockage de Tampermonkey et `localStorage`
+4. Remplacez la valeur de `MY_USERNAME` dans le script par votre pseudo WikiMasters pour activer toutes les fonctionnalités liées aux ventes
 
 ---
 
