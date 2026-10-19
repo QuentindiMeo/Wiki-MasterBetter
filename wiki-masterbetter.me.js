@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.24.7
+// @version      0.24.8
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2164,10 +2164,14 @@ const MY_USERNAME = "xxx";
     return match?.[1]?.split("-")[1] ?? null;
   }
 
-  // The seller's username: on a bid page, the <span> inside p.text-sm.mt-1 (right after "Mis en vente par").
+  // The seller's username: on a bid page, the link (a.hover:underline) inside a p (right after "Mis en vente par").
+  // The colon of Tailwind's "hover:underline" class must be escaped in a selector — unescaped, it reads as a
+  // pseudo-class and querySelector throws, which silently broke every caller (Feature BSP's recording included).
   function getBidPageSellerUsername() {
     return (
-      document.querySelector("p a.hover:underline")?.textContent.trim() ?? null
+      document
+        .querySelector("p a.hover\\:underline")
+        ?.textContent.trim() ?? null
     );
   }
 
@@ -7514,7 +7518,7 @@ const MY_USERNAME = "xxx";
   // (div.-mt-0.5), right before Feature FOL's follow button (or the "Signaler" one when that feature is off) and
   // styled after "Signaler". It opens a modal with a textarea holding the description, saved with the "Enregistrer"
   // button or Enter (an empty text deletes it); Escape, a click outside or the "✕" close the modal. The description
-  // is kept in localStorage under "desc-{username}", must be max. 128 characters (the textarea's maxlength is
+  // is kept in localStorage under "desc-{username}", must be max. 128 characters (the textarea's max length is
   // 127, a live counter is shown) and is single-line (line breaks are turned into spaces).
   //
   // Feature UDS (cont'd): the description is displayed, muted and not truncated, right after the username: on that
