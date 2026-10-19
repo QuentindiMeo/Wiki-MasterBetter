@@ -3437,7 +3437,8 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Feature ETS: on /pulls and /collection, once span.tabular-nums appears, store its value in localStorage
+  // Feature ETS: on /pulls and /collection, once the "Moyenne" row's span.tabular-nums appears (not the first
+  // span.tabular-nums, which is the "Ventes" count), store its value in localStorage
   // under "eval-{name}", name being the text content of p.truncate. If it's missing but div.mb-5 p.mt-1\.5 reads
   // "Aucune vente" (no sales recorded yet for that card), stores the "?" placeholder (UNKNOWN_EVAL_VALUE) instead
   // of leaving that card unrecorded. p.truncate's own text node is read directly (rather than its full
@@ -3448,6 +3449,15 @@ const MY_USERNAME = "xxx";
   // ============================================================
   const UNKNOWN_EVAL_VALUE = "?";
 
+  function findAverageValueEl(root = document) {
+    for (const label of root.querySelectorAll("span.uppercase")) {
+      if (label.textContent.trim() !== "Moyenne") continue;
+      const valueEl = label.parentElement?.querySelector("span.tabular-nums");
+      if (valueEl) return valueEl;
+    }
+    return null;
+  }
+
   function recordTabularNumsValue() {
     if (
       !window.location.pathname.startsWith("/pulls") &&
@@ -3455,7 +3465,7 @@ const MY_USERNAME = "xxx";
     )
       return;
 
-    const valueEl = document.querySelector("span.tabular-nums");
+    const valueEl = findAverageValueEl();
     const cardNameEl = document.querySelector("p.truncate");
     const cardName = cardNameEl
       ? Array.from(cardNameEl.childNodes)
