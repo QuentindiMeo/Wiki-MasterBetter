@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.24.8
+// @version      0.25.3
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2169,9 +2169,8 @@ const MY_USERNAME = "xxx";
   // pseudo-class and querySelector throws, which silently broke every caller (Feature BSP's recording included).
   function getBidPageSellerUsername() {
     return (
-      document
-        .querySelector("p a.hover\\:underline")
-        ?.textContent.trim() ?? null
+      document.querySelector("p a.hover\\:underline")?.textContent.trim() ??
+      null
     );
   }
 
@@ -3681,10 +3680,11 @@ const MY_USERNAME = "xxx";
   // (nav h1's closest nav). Clicking it opens a modal listing every rule/feature documented above, each with its own
   // checkbox; unchecking one disables it. A pill next to the hint text toggles every checkbox at once — reading
   // "Tout désélectionner" when all are checked, "Tout sélectionner" otherwise, and flipping to match whichever it
-  // said. The choice is stored in localStorage under "wm-feature-flags" (default: everything enabled) and, since
-  // most rules only wire themselves up once at page load, applies after the next reload — hence the "Recharger la
-  // page" button in the modal's footer. Styled independently of .wm-fold-toggle's own stylesheet (injected by rule
-  // 6) so this button and modal always work even when every other rule/feature is disabled.
+  // said. The choice is stored in localStorage under "wm-feature-flags" (default: everything enabled, except entries
+  // with defaultEnabled: false, e.g. Feature TBD) and, since most rules only wire themselves up once at page load,
+  // applies after the next reload — hence the "Recharger la page" button in the modal's footer. Styled independently of
+  // .wm-fold-toggle's own stylesheet (injected by rule 6) so this button and modal always work even when every other
+  // rule/feature is disabled.
   // ============================================================
   const FEATURE_FLAGS_KEY = "wm-feature-flags";
 
@@ -3867,6 +3867,12 @@ const MY_USERNAME = "xxx";
       id: "rule-39",
       label: "Barres de progression des succès en bas à droite",
     },
+    {
+      id: "feature-tbd",
+      label:
+        "Étiqueter « TBD » les cartes sans estimation (estimation en masse)",
+      defaultDisabled: true,
+    },
   ];
 
   function readFeatureFlags() {
@@ -3878,8 +3884,8 @@ const MY_USERNAME = "xxx";
     }
 
     const flags = {};
-    FEATURE_REGISTRY.forEach(({ id }) => {
-      flags[id] = stored[id] !== false;
+    FEATURE_REGISTRY.forEach(({ id, defaultDisabled }) => {
+      flags[id] = stored[id] ?? !defaultDisabled;
     });
     return flags;
   }
@@ -4149,6 +4155,8 @@ const MY_USERNAME = "xxx";
         background: color-mix(in srgb, var(--color-accent) 10%, transparent);
       }
       .wm-settings-list {
+        max-height: 60vh;
+        max-width: 80vw;
         display: grid;
         grid-template-columns: repeat(3, 1fr);
         gap: 0.75rem 0.5rem;
@@ -4271,6 +4279,10 @@ const MY_USERNAME = "xxx";
     {
       title: "Décrire un joueur",
       text: "Sur le profil d'un autre joueur, le bouton « Description » ouvre une modale où noter en max. 128 caractères ce qu'il cherche ou propose. Entrée enregistre, un texte vide efface la description. Elle s'affiche à côté de son pseudo sur son profil et sur la page des amis, et reste dans votre navigateur.",
+    },
+    {
+      title: "Repérer les cartes impossibles à estimer",
+      text: "Option désactivée par défaut (⚙️) : pendant une estimation en masse, chaque carte dont l'estimation reste « ? » reçoit l'étiquette « TBD », pour la retrouver facilement ensuite.",
     },
   ];
 
@@ -5293,6 +5305,61 @@ const MY_USERNAME = "xxx";
     btn.textContent = label;
   }
 
+  // Feature TBD (cont'd of EBC, off by default): once a batch evaluation has ended on "?" for a card, the market
+  // modal is closed (div.max-w-lg button.absolute), "TBD" is typed into the card modal's tag input
+  // (div.relative input) and submitted with Enter, then the card's active tags (div.space-y-2 div.gap-1.5) are
+  // awaited until one <span> reads "TBD". Typing goes through the native value setter, like Rule 28's clearing.
+  const TBD_TAG = "TBD";
+
+  async function tagCardAsToBeDetermined() {
+    const state = { stopped: false };
+
+    document.querySelector("div.max-w-lg button.absolute")?.click();
+
+    const hasInput = await waitUntil(
+      () => document.querySelector("div.relative input") !== null,
+      state,
+    );
+    if (!hasInput) return;
+
+    const input = document.querySelector("div.relative input");
+    input.focus();
+    NATIVE_INPUT_VALUE_SETTER.call(input, TBD_TAG);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      input.dispatchEvent(
+        new KeyboardEvent(type, {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+        }),
+      );
+    }
+
+    await waitUntil(
+      () =>
+        Array.from(
+          document.querySelectorAll("div.space-y-2 div.gap-1\\.5 span"),
+        ).some((span) => span.textContent.includes(TBD_TAG)),
+      state,
+    );
+
+    // Escape goes through the input (still focused, and bubbling up to the document) so the card modal closes
+    // right away; evaluateCollectionCards then presses it once more on the document, which is harmless.
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        code: "Escape",
+        keyCode: 27,
+        which: 27,
+        bubbles: true,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
   // Feature EBC (cont'd): accepts an optional externally-owned state/stop-button instead of always creating its
   // own — used by the "Estimation en masse" button below to share a single stop button across a whole multi-page
   // run rather than spawning a new one for every page. The two original callers below don't pass one, so their
@@ -5330,6 +5397,14 @@ const MY_USERNAME = "xxx";
       }
       if (!recorded && previousValue !== null) {
         localStorage.setItem(key, previousValue);
+      }
+
+      if (
+        recorded &&
+        localStorage.getItem(key) === UNKNOWN_EVAL_VALUE &&
+        readFeatureFlags()["feature-tbd"]
+      ) {
+        await tagCardAsToBeDetermined();
       }
 
       document.dispatchEvent(
@@ -6863,11 +6938,11 @@ const MY_USERNAME = "xxx";
         to { opacity: 1; }
       }
       .wm-top-evals-modal {
-        width: min(60rem, 92vw);
+        width: 80vw;
       }
       .wm-top-evals-grid {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 0.5rem 0.75rem;
         overflow-y: auto;
         padding-top: 0.5rem;
@@ -6943,10 +7018,11 @@ const MY_USERNAME = "xxx";
       .wm-top-evals-max .wm-top-evals-value {
         font-size: 1.1rem;
       }
-      /* overflow: hidden would clip the inherited text-shadow to the span's box instead of following the glyphs */
+      /* overflow: hidden clips the inherited text-shadow to the span's box, so the box is padded to leave the glow
+         room (and the padding cancelled by a negative margin) while the ellipsis prevents horizontal overflow */
       .wm-top-evals-max .wm-top-evals-name {
-        overflow: visible;
-        text-overflow: clip;
+        padding: 0.4rem;
+        margin: -0.4rem;
       }
       .wm-top-evals-max .wm-top-evals-value {
         color: #ffd700;
@@ -6963,6 +7039,7 @@ const MY_USERNAME = "xxx";
         }
       }
       .wm-top-evals-name {
+        min-width: 0;
         font-size: 0.825rem;
         font-weight: 600;
         overflow: hidden;
@@ -6970,6 +7047,7 @@ const MY_USERNAME = "xxx";
         white-space: nowrap;
       }
       .wm-top-evals-value {
+        flex-shrink: 0;
         margin-left: auto;
         width: max-content;
         color: #8db600;
