@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.26.7
+// @version      0.26.8
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -3622,11 +3622,11 @@ const MY_USERNAME = "xxx";
     const actionsRow = document.createElement("div");
     actionsRow.className = "wm-bsp-dump-actions";
 
-    const totalCacheSizeBytes = entries.reduce((sum, [cardName, prices]) => {
-      const key = getBspObservedStorageKey(cardName);
-      const raw = JSON.stringify(prices);
-      return sum + (key.length + raw.length) * 2;
-    }, 0);
+    // The whole cache, i.e. everything the export carries (prices, estimates, followed players, descriptions), as
+    // stored: localStorage keeps UTF-16, so 2 bytes per character of every key and raw value
+    const totalCacheSizeBytes = Object.entries(
+      collectTaggedCacheEntries(),
+    ).reduce((sum, [key, raw]) => sum + (key.length + raw.length) * 2, 0);
     const totalCacheSizeKb = (totalCacheSizeBytes / 1024).toFixed(1);
 
     const clearCacheBtn = document.createElement("button");
@@ -3664,7 +3664,7 @@ const MY_USERNAME = "xxx";
     const importHint = document.createElement("span");
     importHint.className = "wm-bsp-dump-import-hint";
     importHint.textContent =
-      "N.B. : l'import ajoute des informations sans supprimer à l'existant.";
+      "N.B. : l'import ajoute des informations sans supprimer l'existant.";
     actionsRow.appendChild(importHint);
 
     grid.after(actionsRow, dump);

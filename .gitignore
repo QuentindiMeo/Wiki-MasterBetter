@@ -4,3 +4,6 @@ scripts/
 *.html
 *.json
 *.log
+
+# sed files
+sed*
