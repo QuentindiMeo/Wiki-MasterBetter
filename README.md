@@ -67,6 +67,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - ⚠️ Pour ces deux évaluations en masse, gardez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan, le navigateur ralentit les temporisations dont elles dépendent, ce qui les rend peu fiables
 - **Tri par prix décroissant** : Un bouton permet de trier les cartes de la page par prix décroissant, pour repérer rapidement les plus chères
 - **Top 40 des estimations** : Un bouton « Top 40 » à droite du titre ouvre en fondu une modale listant les 40 plus grosses estimations mémorisées en trois colonnes, la première mise en avant par une lueur dorée pulsante ; un ✕ supprime une estimation du cache
+- **Étiquetage « TBD » (désactivée par défaut)** : Les évaluations en masse étiquettent « TBD » les cartes sans valeur déclarée sur le marché — à condition qu'elles n'aient encore aucune étiquette
 - **Halo sur les cartes sans estimation** : Un interrupteur « Sans estimation » après le bouton « Top 40 » entoure d'un halo rouge clair les cartes de la page sans estimation (un « ? » compte comme une estimation) ; son état est mémorisé
 - **Rechargement automatique en cas d'échec** : Si la page affiche un message rouge « a échoué », elle se recharge d'elle-même peu après
 - **Liste d'étiquettes lisible** : Plus de place pour afficher les étiquettes, et la liste se trie par ordre décroissant dès que les compteurs sont chargés ; à l'ouverture du filtre, le clavier navigue directement dans la liste (flèches, Début/Fin, saisie des premières lettres d'un nom)
@@ -88,24 +89,25 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Lueur rouge en fin d'enchère** : Le décompte « Se termine dans... » se met à luire en rouge quand il reste moins de 10 secondes
 - **Bouton de mise en rouge si vous menez** : Le bouton pour enchérir devient rouge clair quand vous êtes déjà le meilleur enchérisseur
 - **Rechargement automatique si enchère introuvable** : Si la page affiche « Enchère introuvable », elle se recharge d'elle-même peu après
-- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées par carte, puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
+- **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées (jusqu'à 7 prix par carte, dont les 5 moins chers servent au calcul de la référence), puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par à ceux que vous avez observés
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Un indice de fiabilité accompagne le tag
-  - Les prix enregistrés sont listés dans une grille sur votre propre profil
-  - Un bouton Exporter/Importer permet de télécharger ce cache (prix de vente, estimations et joueurs suivis) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil
-- **Mes plus grosses ventes et achats** : Les 40 plus grosses ventes et les 40 plus gros achats sont mémorisés (depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché) ; deux boutons sur votre profil les listent dans une modale, la première mise en avant par une lueur dorée, un ✕ retire une entrée du cache
+  - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
+- **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
 
 ### 📦 Catalogue
 
-- **Nettoyage de la liste de souhaits** : Quand le filtre « uniquement les cartes de ma liste de souhaits » est actif, un bouton retire d'un coup toutes celles que vous possédez déjà
+- **Nettoyage de la liste de souhaits** : Un bouton retire d'un coup toutes les cartes que vous possédez déjà de votre liste de souhaits ; quand le filtre « uniquement les cartes de ma liste de souhaits » est inactif, il n'affiche pas de nombre et se contente de fermer la fiche des cartes qui n'y figurent pas, sans jamais les ajouter
 
 ### 👤 Profil & Amis
 
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits
-- **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche à côté de leur pseudo sur leur profil et sur la page des amis
+- **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche à côté de leur pseudo sur leur profil et sur la page des amis, et sous leur pseudo dans la liste des joueurs suivis
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 - **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre
+- **Mes plus grosses ventes et achats** : Les 40 plus grosses ventes et les 40 plus gros achats sont mémorisés (depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché) ; deux boutons sur votre profil les listent dans une modale, la première mise en avant par une lueur dorée, un ✕ retire une entrée du cache
+- **Un bouton Exporter/Importer** permet de télécharger le cache du script (prix de vente, estimations, joueurs suivis et descriptions de joueurs) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil ; l'import est strictement additif : il ne supprime ni n'écrase jamais rien d'utile dans votre cache actuel
 
 ### 🏆 Succès
 

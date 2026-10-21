@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.25.6
+// @version      0.26.7
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -222,7 +222,7 @@ const MY_USERNAME = "xxx";
       .friend-list-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 0.75rem;
+        gap: 0 0.75rem;
       }
       .friend-list-grid-full {
         grid-column: 1 / -1;
@@ -2612,6 +2612,29 @@ const MY_USERNAME = "xxx";
     excessive: "vente décevante",
   };
 
+  // Buyer-facing grade of a price against the reference average (see the thresholds above); shared by the bid page's
+  // badge and Feature MPA's marketplace arrows.
+  function computeBuyStatus(price, referenceValue, observedEntryCount) {
+    const isBackedEnough =
+      observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES;
+
+    if (
+      price < referenceValue * LEGENDARY_THRESHOLD_RATIO &&
+      referenceValue - price >= LEGENDARY_MIN_DIFFERENCE &&
+      isBackedEnough
+    )
+      return "legendary";
+    if (
+      price < referenceValue * EXTRAORDINARY_THRESHOLD_RATIO &&
+      isBackedEnough
+    )
+      return "extraordinary";
+    if (price < referenceValue * EXCELLENT_THRESHOLD_RATIO) return "excellent";
+    if (price < referenceValue * TOLERABLE_THRESHOLD_RATIO) return "agreeable";
+    if (price < referenceValue * EXCESSIVE_THRESHOLD_RATIO) return "tolerable";
+    return "excessive";
+  }
+
   // The buy/sale status badge and the reliability tag are grouped into a single wrapper div (nameEl's actual
   // next sibling) so they move and get cleaned up together, rather than tracking each as its own sibling.
   function findBadgeGroup(nameEl) {
@@ -2784,24 +2807,7 @@ const MY_USERNAME = "xxx";
         status = "tolerable";
       else status = "excessive";
     } else {
-      if (
-        price < referenceValue * LEGENDARY_THRESHOLD_RATIO &&
-        referenceValue - price >= LEGENDARY_MIN_DIFFERENCE &&
-        observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES
-      )
-        status = "legendary";
-      else if (
-        price < referenceValue * EXTRAORDINARY_THRESHOLD_RATIO &&
-        observedEntryCount >= EXTRAORDINARY_MIN_OBSERVED_ENTRIES
-      )
-        status = "extraordinary";
-      else if (price < referenceValue * EXCELLENT_THRESHOLD_RATIO)
-        status = "excellent";
-      else if (price < referenceValue * TOLERABLE_THRESHOLD_RATIO)
-        status = "agreeable";
-      else if (price < referenceValue * EXCESSIVE_THRESHOLD_RATIO)
-        status = "tolerable";
-      else status = "excessive";
+      status = computeBuyStatus(price, referenceValue, observedEntryCount);
     }
 
     const isReliable =
@@ -2927,6 +2933,196 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Feature MPA: on /marketplace, while the "Parcourir" or "Mes enchères" tab (a button of div.overflow-x-auto,
+  // carrying border-b-2 when active) is the active one — the latter's cards may be nested in Feature TMB's group lists,
+  // hence the snapshot below reads every auction card inside the container rather than its direct children — every listed card (div[id^="marketplace-auction-"], the container's children; div.hover:z-10 is only the card's image frame, which doesn't hold the price) whose name (h3) has an "observed-" cache entry
+  // (Feature BSP) gets a colored arrow appended inside its price (span.inline-flex.gap-1, the "Mise de départ" amount). The price is graded exactly like the bid
+  // page's buyer-facing badge (computeBuyStatus, against computeWeightedAveragePrice of the stored prices), so the
+  // colors are the badge's: gold (légendaire), cyan (extraordinaire), purple (excellent), green (agréable), amber
+  // (tolérable), red (excessif). ▼ means the price sits below the reference average (légendaire to agréable), ▲ at or
+  // above it (tolérable, excessif). Hovering the arrow tells the grade and the reference; with 2 stored prices or
+  // fewer the reference is flagged as unreliable (dimmed arrow), as the bid page's "indice peu fiable" tag does.
+  // Cards without a cache entry get no arrow; arrows are removed when leaving the tab. Updated in place when a card's
+  // price changes, since the site re-renders the list.
+  // The search results vary with every search and take a while to resolve: changes are watched inside
+  // div.md:p-6 div.md:gap-5 (the results container), and only handled once the snapshot of its children's ids (the
+  // auction ids) differs from the last handled one; the container is re-attached whenever the site replaces it, and
+  // the tab's active state is tracked separately.
+  // ============================================================
+  const MPA_ARROW_CLASS = "wm-mpa-arrow";
+
+  // The tabs the arrows apply to: "Parcourir" and "Mes enchères"
+  const MPA_TAB_LABELS = ["Parcourir", "Mes enchères"];
+
+  function isBrowseTabActive() {
+    return Array.from(
+      document.querySelectorAll("div.overflow-x-auto button"),
+    ).some(
+      (btn) =>
+        MPA_TAB_LABELS.some((label) =>
+          btn.textContent.trim().startsWith(label),
+        ) && btn.classList.contains("border-b-2"),
+    );
+  }
+
+  function updateMarketplaceArrows() {
+    if (!window.location.pathname.startsWith("/marketplace")) return;
+
+    if (!isBrowseTabActive()) {
+      document
+        .querySelectorAll(`.${MPA_ARROW_CLASS}`)
+        .forEach((el) => el.remove());
+      return;
+    }
+
+    document
+      .querySelectorAll('div[id^="marketplace-auction-"]')
+      .forEach((card) => {
+        const priceEl = card.querySelector("span.gap-1");
+        const cardName = card.querySelector("h3")?.textContent.trim();
+        const existing = card.querySelector(`.${MPA_ARROW_CLASS}`);
+        if (!priceEl || !cardName) return;
+
+        let stored = [];
+        try {
+          stored = readBspEntries(cardName);
+        } catch {
+          stored = [];
+        }
+        const price = parseInt(
+          priceEl.textContent
+            .match(/\d[\d\s\u00a0\u202f]*/)?.[0]
+            .replace(/\s/g, ""),
+          10,
+        );
+        const reference = isValidBspPriceArray(stored)
+          ? computeWeightedAveragePrice(stored.map((e) => parseInt(e, 10)))
+          : null;
+
+        if (reference === null || Number.isNaN(price)) {
+          existing?.remove();
+          return;
+        }
+
+        const unreliable = stored.length <= 2;
+        const status = computeBuyStatus(price, reference, stored.length);
+        const arrow = price < reference * TOLERABLE_THRESHOLD_RATIO ? "▼" : "▲";
+        const title = `${BUY_STATUS_LABELS[status]} (obj. ${Math.round(reference)})${unreliable ? " — indice peu fiable" : ""}`;
+        const className = `${MPA_ARROW_CLASS} wm-mpa-${status}${unreliable ? " wm-mpa-unreliable" : ""}`;
+
+        if (
+          existing &&
+          existing.parentElement === priceEl &&
+          existing.textContent === arrow &&
+          existing.title === title &&
+          existing.className === className
+        )
+          return;
+
+        existing?.remove();
+        const el = document.createElement("span");
+        el.className = className;
+        el.textContent = arrow;
+        el.title = title;
+        priceEl.append(el);
+      });
+  }
+
+  function watchMarketplaceArrows() {
+    GM_addStyle(`
+      .${MPA_ARROW_CLASS} {
+        font-weight: 700;
+        cursor: help;
+      }
+      .wm-mpa-unreliable {
+        opacity: 0.5;
+      }
+      .wm-mpa-legendary { color: #ffd700; text-shadow: 0 0 6px rgba(255, 215, 0, 0.8); }
+      .wm-mpa-extraordinary { color: #22d3ee; }
+      .wm-mpa-excellent { color: #d8b4fe; }
+      .wm-mpa-agreeable { color: #4ade80; }
+      .wm-mpa-tolerable { color: #fbbf24; }
+      .wm-mpa-excessive { color: #ef2222; }
+    `);
+
+    // Debounce: the list re-renders heavily while it loads, and our own insertions also trigger the observers
+    let debounceId = null;
+    const scheduleUpdate = () => {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(updateMarketplaceArrows, 300);
+    };
+
+    // The search results change with every search/filter/page and take a while to resolve: they are watched where
+    // they live (the results container), rather than through the whole body, and only acted on once they have
+    // actually landed. Each result is a child div whose id is its auction's id, so the ids of those children,
+    // joined, make a snapshot of what the container currently shows: while it is empty (still loading) or the
+    // loading spinner is up nothing is done, and an update is only scheduled when a new snapshot differs from the
+    // last one handled. The container itself is replaced when the SPA navigates or re-renders its layout, hence the
+    // body observer below, which re-attaches the results observer to the new container (forgetting the snapshot)
+    // and notices tab switches — it never schedules an update for unrelated mutations.
+    let watchedContainer = null;
+    let wasBrowseTabActive = false;
+    let handledSnapshot = null;
+
+    const snapshotResults = () =>
+      watchedContainer
+        ? Array.from(
+            watchedContainer.querySelectorAll(
+              'div[id^="marketplace-auction-"]',
+            ),
+          )
+            .map((child) => child.id)
+            .join("|")
+        : "";
+
+    const checkResults = () => {
+      if (document.querySelector("div.animate-spin")) return;
+
+      const snapshot = snapshotResults();
+      if (snapshot === "" || snapshot === handledSnapshot) return;
+
+      handledSnapshot = snapshot;
+      scheduleUpdate();
+    };
+    const resultsObserver = new MutationObserver(checkResults);
+
+    const syncObservers = () => {
+      const container = document.querySelector("div.md\\:p-6 div.md\\:gap-5");
+      if (container !== watchedContainer) {
+        resultsObserver.disconnect();
+        watchedContainer = container;
+        handledSnapshot = null;
+        if (container) {
+          resultsObserver.observe(container, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+          });
+        }
+        checkResults();
+      }
+
+      const isActive = isBrowseTabActive();
+      if (isActive !== wasBrowseTabActive) {
+        wasBrowseTabActive = isActive;
+        handledSnapshot = null;
+        scheduleUpdate();
+        checkResults();
+      }
+    };
+
+    syncObservers();
+
+    const observer = new MutationObserver(syncObservers);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+
+  // ============================================================
   // Feature BSP (cont'd): on the user's own profile (/profile), dump every card's stored sold prices into a grid,
   // inserted as a sibling right after div.grid; each entry gets a "✕" button to clear its stored data. Next to
   // "Vider le cache", an import/export pill copies/restores every "observed-"/"eval-" localStorage entry as JSON.
@@ -3011,14 +3207,17 @@ const MY_USERNAME = "xxx";
   // BSP) and "eval-" (Feature ETS) localStorage entry as a downloadable "key,value" CSV file, so that cache can be
   // moved to another browser/device. Values are carried as their raw stored strings (not re-parsed), since Feature
   // BSP's entries are JSON-encoded arrays while Feature ETS's are plain strings; both are CSV-quoted as needed.
-  // Feature FOL's followed-users list is carried too.
+  // Feature FOL's followed-users list and Feature UDS's player descriptions are carried too.
   const TAGGED_CACHE_PREFIXES = [BSP_KEY_PREFIX, "eval-"];
 
   // Feature FOL's followed-users list (FOLLOWED_USERS_KEY, declared further down, hence the function) travels with
-  // that cache too; on import it's merged into the local list rather than replacing it.
+  // that cache too; on import it's merged into the local list rather than replacing it. Feature UDS's "desc-{username}"
+  // entries (USER_DESC_KEY_PREFIX, also declared further down) travel with it as well; on import, a description is
+  // only taken for a player you have none for.
   function isTaggedCacheKey(key) {
     return (
       key === FOLLOWED_USERS_KEY ||
+      key.startsWith(USER_DESC_KEY_PREFIX) ||
       TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))
     );
   }
@@ -3253,6 +3452,18 @@ const MY_USERNAME = "xxx";
             return;
           }
 
+          if (key.startsWith(USER_DESC_KEY_PREFIX)) {
+            const text = value.trim();
+            if (!text || text.length > USER_DESC_MAX_LENGTH) return;
+
+            validCount++;
+            if (readUserDescription(key.slice(USER_DESC_KEY_PREFIX.length)))
+              return;
+            localStorage.setItem(key, text);
+            importedCount++;
+            return;
+          }
+
           const isEval = key.startsWith("eval-");
           const isBsp = key.startsWith(BSP_KEY_PREFIX);
           if (!isEval && !isBsp) return;
@@ -3280,7 +3491,7 @@ const MY_USERNAME = "xxx";
           return;
         }
 
-        // Every consumer of this cache (profile grid, ETS modal, trades, followed users) reads it at render time,
+        // Every consumer of this cache (profile grid, ETS modal, trades, followed users, descriptions) reads it at render time,
         // so without a reload an import looks like it did nothing
         alert(
           `${importedCount} entrée(s) importée(s). La page va se recharger.`,
@@ -3296,11 +3507,16 @@ const MY_USERNAME = "xxx";
     input.click();
   }
 
+  // The block is folded by default: only its title shows, with a switch at its right end that unfolds it (state
+  // not remembered between visits).
   function renderStoredBidPricesGrid() {
     if (window.location.pathname !== "/profile") return;
 
     const grid = document.querySelector("div.grid");
-    if (!grid || grid.nextElementSibling?.classList.contains("wm-bsp-dump"))
+    if (
+      !grid ||
+      grid.nextElementSibling?.classList.contains("wm-bsp-dump-actions")
+    )
       return;
 
     const entries = collectStoredBidPrices();
@@ -3317,6 +3533,30 @@ const MY_USERNAME = "xxx";
     titlePrecision.className = "wm-bsp-dump-title-precision";
     titlePrecision.textContent = "(max 7, moyenne sur les 5 moins chères)";
     title.appendChild(titlePrecision);
+
+    // Folded by default; the switch (aria-pressed = unfolded) shows/hides everything but the title
+    dump.classList.add("wm-bsp-dump-folded");
+    const foldSwitchContainer = document.createElement("span");
+    foldSwitchContainer.className = "wm-bsp-dump-switch-container";
+    const foldSwitchLabel = document.createElement("span");
+    foldSwitchLabel.className = "wm-bsp-dump-switch-label";
+    foldSwitchLabel.textContent = "Déplier / replier";
+    foldSwitchContainer.appendChild(foldSwitchLabel);
+    const foldSwitch = document.createElement("button");
+    foldSwitch.type = "button";
+    foldSwitch.className = "wm-bsp-dump-switch";
+    foldSwitch.setAttribute("role", "switch");
+    foldSwitch.setAttribute("aria-checked", "false");
+    foldSwitch.setAttribute("aria-pressed", "false");
+    foldSwitch.title = "Déplier / replier la liste des prix observés";
+    foldSwitch.addEventListener("click", () => {
+      const unfolded = foldSwitch.getAttribute("aria-checked") !== "true";
+      foldSwitch.setAttribute("aria-checked", String(unfolded));
+      foldSwitch.setAttribute("aria-pressed", String(unfolded));
+      dump.classList.toggle("wm-bsp-dump-folded", !unfolded);
+    });
+    foldSwitchContainer.appendChild(foldSwitch);
+    title.appendChild(foldSwitchContainer);
 
     dump.appendChild(title);
 
@@ -3381,7 +3621,6 @@ const MY_USERNAME = "xxx";
 
     const actionsRow = document.createElement("div");
     actionsRow.className = "wm-bsp-dump-actions";
-    dump.appendChild(actionsRow);
 
     const totalCacheSizeBytes = entries.reduce((sum, [cardName, prices]) => {
       const key = getBspObservedStorageKey(cardName);
@@ -3422,7 +3661,13 @@ const MY_USERNAME = "xxx";
     importExportPill.append(exportBtn, importBtn);
     actionsRow.appendChild(importExportPill);
 
-    grid.after(dump);
+    const importHint = document.createElement("span");
+    importHint.className = "wm-bsp-dump-import-hint";
+    importHint.textContent =
+      "N.B. : l'import ajoute des informations sans supprimer à l'existant.";
+    actionsRow.appendChild(importHint);
+
+    grid.after(actionsRow, dump);
   }
 
   function watchStoredBidPricesGrid() {
@@ -3430,13 +3675,57 @@ const MY_USERNAME = "xxx";
       .wm-bsp-dump {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 0.75rem 1.5rem;
+        gap: 0.5rem;
         margin-top: 1rem;
         padding: 0.75rem 1rem;
         border-radius: 0.75rem;
         border: 1px solid var(--color-border);
       }
+      .wm-bsp-dump-folded > :not(.wm-bsp-dump-title) {
+        display: none;
+      }
+      .wm-bsp-dump-switch-container {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .wm-bsp-dump-switch-label {
+        font-size: small;
+        font-weight: normal;
+      }
+      .wm-bsp-dump-switch {
+        position: relative;
+        flex-shrink: 0;
+        margin-left: auto;
+        width: 2.25rem;
+        height: 1.25rem;
+        border: none;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.2);
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      .wm-bsp-dump-switch::after {
+        content: "";
+        position: absolute;
+        top: 0.15rem;
+        left: 0.15rem;
+        width: 0.95rem;
+        height: 0.95rem;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.2s ease;
+      }
+      .wm-bsp-dump-switch[aria-checked="true"] {
+        background: var(--color-accent);
+      }
+      .wm-bsp-dump-switch[aria-checked="true"]::after {
+        transform: translateX(1rem);
+      }
       .wm-bsp-dump-title {
+        display: flex;
+        align-items: center;
         grid-column: 1 / -1;
         margin: 0;
         font-size: 1.1rem;
@@ -3449,9 +3738,9 @@ const MY_USERNAME = "xxx";
         opacity: 0.6;
       }
       .wm-bsp-dump-actions {
-        grid-column: 1 / -1;
         display: flex;
         gap: 0.5rem;
+        margin-top: 1rem;
         margin-bottom: 0.25rem;
       }
       .wm-bsp-dump-update-cache,
@@ -3487,6 +3776,11 @@ const MY_USERNAME = "xxx";
         border: 1px solid var(--color-accent);
         border-radius: 999px;
         overflow: hidden;
+      }
+      .wm-bsp-dump-import-hint {
+        align-self: center;
+        font-size: 0.75rem;
+        opacity: 0.5;
       }
       .wm-bsp-dump-import-export-btn {
         padding: 0.35rem 0.75rem;
@@ -3960,7 +4254,7 @@ const MY_USERNAME = "xxx";
     },
     {
       id: "rule-25",
-      label: "Retirer les cartes possédées de la liste de souhaits",
+      label: "Dé-lister les cartes possédées de la liste de souhaits",
     },
     {
       id: "rule-26",
@@ -4034,6 +4328,10 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-39",
       label: "Barres de progression des succès en bas à droite",
+    },
+    {
+      id: "feature-mpa",
+      label: "Flèches de prix sur les cartes connues de /marketplace",
     },
     {
       id: "feature-tbd",
@@ -4446,7 +4744,11 @@ const MY_USERNAME = "xxx";
     },
     {
       title: "Décrire un joueur",
-      text: "Sur le profil d'un autre joueur, le bouton « Description » ouvre une modale où noter en max. 128 caractères ce qu'il cherche ou propose. Entrée enregistre, un texte vide efface la description. Elle s'affiche à côté de son pseudo sur son profil et sur la page des amis, et reste dans votre navigateur.",
+      text: "Sur le profil d'un autre joueur, le bouton « Description » ouvre une modale où noter en max. 128 caractères ce qu'il cherche ou propose. Entrée enregistre, un texte vide efface la description. Elle s'affiche à côté de son pseudo sur son profil, sur la page des amis et dans la liste des joueurs suivis, et reste dans votre navigateur.",
+    },
+    {
+      title: "Repérer les bonnes affaires sur le marché",
+      text: "Sur /marketplace, onglet « Parcourir », une flèche colorée apparaît à côté du prix des cartes déjà observées : ▼ si le prix est sous la valeur de référence, ▲ s'il est au-dessus. Les couleurs sont celles des étiquettes de la page d'enchère. Survolez la flèche pour le détail.",
     },
     {
       title: "Repérer les cartes impossibles à estimer",
@@ -4985,8 +5287,8 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 25: on /global-collection, once the "wishlist only" toggle (button.gap-1\.5) is checked (class ring-2),
-  // add a button next to it — much like Feature EBC's own bulk-action buttons — offering to remove every card
+  // Rule 25: on /global-collection, add a button next to the "wishlist only" toggle (button.gap-1\.5) — much like
+  // Feature EBC's own bulk-action buttons — offering to remove every card
   // showing the "Possédée" tag (span.bg-emerald-600\/90 inside its description, div.top-\[45\%\]) from the
   // wishlist. Removing one is: click the card (opens its modal), click button.w-full.transition-colors (the
   // modal's "unwish" button), then Escape to close it before moving to the next; cancellable via a fixed stop
@@ -4995,6 +5297,11 @@ const MY_USERNAME = "xxx";
   // (re)populated after the toggle is flipped — so rather than watching for the container's arrival, every
   // mutation restarts a short debounce (same rationale as Feature BSP's own scheduleUpdate: avoid reading a
   // still-repopulating list) and the button's label only updates once the DOM has settled.
+  //
+  // Rule 25 (cont'd): with the toggle unchecked the page lists every card, so there is no telling which owned ones
+  // are wishlisted: the button then shows no count, and a card whose modal button reads "Ajouter à la liste de
+  // souhaits" (not wishlisted) is not clicked — its modal is just closed and the card skipped for the rest of the
+  // run (tracked by name, as the list keeps showing it).
   // ============================================================
   function getWishlistOwnedCards(cardList) {
     return Array.from(cardList.children).filter((card) =>
@@ -5004,20 +5311,31 @@ const MY_USERNAME = "xxx";
     );
   }
 
-  function waitForElement(selector, timeout = 4000, interval = 100) {
+  function getWishlistCardName(card) {
+    return card.querySelector("h3")?.textContent.trim() ?? "";
+  }
+
+  function isWishlistOnlyToggleChecked() {
+    return !!document
+      .querySelector("button.gap-1\\.5:nth-child(1)")
+      ?.classList.contains("ring-2");
+  }
+
+  // The card modal's wishlist button: "Retirer…" (wishlisted, button.border) or "Ajouter à la liste de souhaits"
+  function waitForWishlistModalButton(timeout = 4000, interval = 100) {
     return new Promise((resolve) => {
       const start = Date.now();
       const check = () => {
-        const el = document.querySelector(selector);
-        if (el) {
-          resolve(el);
-          return;
-        }
-        if (Date.now() - start >= timeout) {
-          resolve(null);
-          return;
-        }
-        setTimeout(check, interval);
+        const btn =
+          document.querySelector(
+            "button.transition-colors.border:nth-child(1)",
+          ) ??
+          Array.from(document.querySelectorAll("div.card-frame button")).find(
+            (b) => /liste de souhaits/i.test(b.textContent),
+          );
+        if (btn) resolve(btn);
+        else if (Date.now() - start >= timeout) resolve(null);
+        else setTimeout(check, interval);
       };
       check();
     });
@@ -5042,19 +5360,27 @@ const MY_USERNAME = "xxx";
     const stopBtn = insertStopWishlistCleanupButton(state);
 
     let removed = 0;
+    const skippedNames = new Set();
     while (!state.stopped) {
       const cardList = document.querySelector("div.gap-3.justify-center");
-      const card = cardList ? getWishlistOwnedCards(cardList)[0] : null;
+      const card = cardList
+        ? getWishlistOwnedCards(cardList).find(
+            (c) => !skippedNames.has(getWishlistCardName(c)),
+          )
+        : null;
       if (!card) break;
 
       button.textContent = `Retrait des cartes possédées... (${removed + 1})`;
       (card.querySelector("div.inset-0") ?? card).click();
 
-      const unwishBtn = await waitForElement(
-        "button.transition-colors.border:nth-child(1)",
-      );
-      unwishBtn?.click();
-      removed++;
+      const wishBtn = await waitForWishlistModalButton();
+      if (wishBtn && /^\s*ajouter/i.test(wishBtn.textContent)) {
+        // Not wishlisted: clicking would add it. Only close the modal.
+        skippedNames.add(getWishlistCardName(card));
+      } else {
+        wishBtn?.click();
+        removed++;
+      }
 
       document.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
@@ -5081,10 +5407,15 @@ const MY_USERNAME = "xxx";
     const ownedCount = cardList ? getWishlistOwnedCards(cardList).length : 0;
 
     button.style.display = ownedCount === 0 ? "none" : "";
+    // Unchecked toggle: owned cards aren't known to be wishlisted, so no count
+    if (!isWishlistOnlyToggleChecked()) {
+      button.textContent = "Dé-lister les cartes possédées";
+      return;
+    }
     button.textContent =
       ownedCount > 1
-        ? `Retirer les ${ownedCount} cartes possédées`
-        : `Retirer la carte possédée`;
+        ? `Dé-lister les ${ownedCount} cartes possédées`
+        : `Dé-lister la carte possédée`;
   }
 
   function insertWishlistCleanupButton(toggle) {
@@ -5140,11 +5471,7 @@ const MY_USERNAME = "xxx";
       if (!window.location.pathname.startsWith("/global-collection")) return;
 
       const toggle = document.querySelector("button.gap-1\\.5:nth-child(1)");
-      const existingBtn = document.querySelector(".wm-wishlist-cleanup");
-      if (!toggle?.classList.contains("ring-2")) {
-        if (existingBtn) existingBtn.style.display = "none";
-        return;
-      }
+      if (!toggle) return;
 
       const btn = insertWishlistCleanupButton(toggle);
       updateWishlistCleanupButtonLabel(btn);
@@ -5476,7 +5803,7 @@ const MY_USERNAME = "xxx";
   // Feature TBD (cont'd of EBC, off by default): once a batch evaluation has ended on "?" for a card, the market
   // modal is closed (div.max-w-lg button.absolute), "TBD" is typed into the card modal's tag input
   // (div.relative input) and submitted with Enter, then the card's active tags (div.space-y-2 div.gap-1.5) are
-  // awaited until one <span> reads "TBD". Typing goes through the native value setter, like Rule 28's clearing.
+  // awaited until one <span> reads "TBD". Cards that already carry any tag are left untouched. Typing goes through the native value setter, like Rule 28's clearing.
   const TBD_TAG = "TBD";
 
   async function tagCardAsToBeDetermined() {
@@ -5489,6 +5816,9 @@ const MY_USERNAME = "xxx";
       state,
     );
     if (!hasInput) return;
+
+    // Only untagged cards get "TBD": any active tag already there (TBD included) means leaving the card alone
+    if (document.querySelector("div.space-y-2 div.gap-1\\.5 span")) return;
 
     const input = document.querySelector("div.relative input");
     input.focus();
@@ -7368,7 +7698,8 @@ const MY_USERNAME = "xxx";
   // Feature BSP's div.wm-bsp-dump (or after div.grid when that one isn't there), sorted alphabetically, each as a
   // link to their profile with a "✕" that unfollows them and grays the entry out, like the dump's own entries. It
   // reuses none of the dump's classes — wm-bsp-dump in particular is how Feature BSP spots its own block. Nothing is
-  // shown while nobody is followed.
+  // shown while nobody is followed. Each entry also shows the player's personal description (Feature UDS), if any,
+  // muted under their name.
   // ============================================================
   const FOLLOWED_USERS_KEY = "wm-followed-users";
   const FOLLOW_EYE_SVG =
@@ -7542,7 +7873,19 @@ const MY_USERNAME = "xxx";
         entryEl.classList.add("wm-followed-dump-entry-cleared");
       });
 
-      entryEl.append(clearBtn, nameLink);
+      const textEl = document.createElement("div");
+      textEl.className = "wm-followed-dump-text";
+      textEl.appendChild(nameLink);
+      const description = readUserDescription(username);
+      if (description) {
+        const descEl = document.createElement("span");
+        descEl.className = "wm-user-desc";
+        descEl.textContent = description;
+        descEl.title = description;
+        textEl.appendChild(descEl);
+      }
+
+      entryEl.append(clearBtn, textEl);
       list.appendChild(entryEl);
     });
 
@@ -7554,7 +7897,7 @@ const MY_USERNAME = "xxx";
       .wm-followed-dump {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 0.75rem 1.5rem;
+        gap: 0.5rem;
         margin-top: 1rem;
         padding: 0.75rem 1rem;
         border-radius: 0.75rem;
@@ -7577,6 +7920,11 @@ const MY_USERNAME = "xxx";
       }
       .wm-followed-dump-entry-cleared {
         opacity: 0.35;
+      }
+      .wm-followed-dump-text {
+        min-width: 0;
+        display: flex;
+        gap: 0.5rem;
       }
       .wm-followed-dump-name {
         font-size: 0.825rem;
@@ -8193,6 +8541,7 @@ const MY_USERNAME = "xxx";
     run("rule-38", watchNoEvalHalo);
     run("feature-uds", watchUserDescriptions);
     run("rule-39", watchAchievementProgressBars);
+    run("feature-mpa", watchMarketplaceArrows);
 
     watchFeatureConfigButton();
     watchTutorialButton();
