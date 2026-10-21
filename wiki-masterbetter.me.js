@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.27.1
+// @version      0.29.3
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -22,7 +22,7 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Feature LOG: WMB's internal logger, same pattern as BC-Plume's: logger(CPL.LEVEL, ...toPrint) prints to the
   // matching console method, prefixed with the script's version, a padded level tag and a millisecond timestamp,
-  // e.g. "[WMB_0.26.8 INFO. | 14:02:11.042] message". The version is read from the userscript manager (GM_info), so
+  // e.g. "[WMB_0.26.8 INFO. | 14:02:11.042] message". The version is read from the user script manager (GM_info), so
   // the docblock stays the only place it is written.
   //
   // Level policy — what makes an action traceable without flooding the console (hand-written calls stay out of
@@ -940,29 +940,85 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Feature LBD: on /collection, pressing Enter while focus is inside the <input aria-label="Mise de départ"> clicks
-  // the button labelled "Lancer l'enchère"
+  // Feature LBD: while the card sell modal is open, pressing Enter with focus inside any <input> of that modal clicks
+  // its button labelled "Lancer l'enchère" (button inside div.mt-6). The sell modal is the div.card-frame holding
+  // that button, so this works on any page and for any of its fields, not only the starting bid (input
+  // [aria-label="Mise de départ"]) — an input of another modal has no such button in its card frame and is left alone.
   // ============================================================
+  function findSellModalLaunchButton(input) {
+    const scope = input.closest("div.card-frame") ?? document;
+    return Array.from(scope.querySelectorAll("div.mt-6 button")).find(
+      (btn) => btn.textContent.trim() === "Lancer l'enchère",
+    );
+  }
+
   function watchStartingBidEnterKey() {
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
-      if (!window.location.pathname.startsWith("/collection")) return;
 
       const input = event.target;
-      if (
-        !(input instanceof HTMLInputElement) ||
-        input.getAttribute("aria-label") !== "Mise de départ"
-      )
-        return;
+      if (!(input instanceof HTMLInputElement)) return;
 
-      const launchBtn = Array.from(document.querySelectorAll("button")).find(
-        (btn) => btn.textContent.trim() === "Lancer l'enchère",
-      );
+      const launchBtn = findSellModalLaunchButton(input);
       if (!launchBtn) return;
 
       event.preventDefault();
+      logger(
+        CPL.INFO,
+        "Enter pressed in the sell modal: launching the auction",
+      );
       launchBtn.click();
     });
+  }
+
+  // ============================================================
+  // Feature DAD: when the card sell modal opens (it is recognized by its input[aria-label="Mise de départ"], on any
+  // page), click the duration button (button.py-1\.5 inside div.gap-2, searched in the modal's div.card-frame) whose
+  // text is the "Durée par défaut d'enchère" chosen in the settings' Config tab (Feature CFG; default "1 h"). Texts
+  // are compared ignoring spaces and case, so "1 h" matches "1h". It acts once per input element: while no duration
+  // button is rendered yet nothing is flagged and the next mutation retries; once they are there, the input is
+  // flagged whether or not one matched (none matching is logged as a warning).
+  // ============================================================
+  function normalizeDurationText(text) {
+    return text.replace(/[\s\u00a0\u202f]/g, "").toLowerCase();
+  }
+
+  function applyDefaultAuctionDuration() {
+    const input = document.querySelector('input[aria-label="Mise de départ"]');
+    if (!input || input.dataset.wmDurationApplied === "true") return;
+
+    const scope = input.closest("div.card-frame") ?? document;
+    const buttons = Array.from(
+      scope.querySelectorAll("div.gap-2 button.py-1\\.5"),
+    );
+    if (buttons.length === 0) return;
+
+    input.dataset.wmDurationApplied = "true";
+
+    const wanted = readConfig()[AUCTION_DURATION_CONFIG_ID];
+    const target = buttons.find(
+      (btn) =>
+        normalizeDurationText(btn.textContent) ===
+        normalizeDurationText(wanted),
+    );
+    if (!target) {
+      logger(
+        CPL.WARN,
+        `Default auction duration "${wanted}" not offered`,
+        buttons.map((btn) => btn.textContent.trim()),
+      );
+      return;
+    }
+
+    target.click();
+    logger(CPL.INFO, `Default auction duration applied: ${wanted}`);
+  }
+
+  function watchDefaultAuctionDuration() {
+    applyDefaultAuctionDuration();
+
+    const observer = new MutationObserver(() => applyDefaultAuctionDuration());
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ============================================================
@@ -4613,6 +4669,14 @@ const MY_USERNAME = "xxx";
         "Étiqueter « TBD » les cartes sans estimation (estimation en masse)",
       defaultDisabled: true,
     },
+    {
+      id: "feature-dad",
+      label: "Choisir la durée d'enchère par défaut à l'ouverture de la vente",
+    },
+    {
+      id: "feature-wat",
+      label: "Surveiller des enchères et les retrouver depuis /marketplace",
+    },
   ];
 
   function readFeatureFlags() {
@@ -4636,6 +4700,97 @@ const MY_USERNAME = "xxx";
     logger(CPL.INFO, "Feature flags saved", flags);
   }
 
+  // ============================================================
+  // Feature CFG: the settings modal's "Config" tab holds business values (as opposed to the "Fonctionnalités" tab's
+  // on/off switches), each chosen with a horizontal pill selector. They are kept together in localStorage under
+  // "wm-config" (a JSON object, id -> chosen option) and saved as soon as one is picked — no reload needed, since
+  // whatever reads them does so when it acts. A stored value that is no longer one of the entry's options falls back
+  // to its default. The first entry is Feature DAD's default auction duration.
+  // ============================================================
+  const CONFIG_KEY = "wm-config";
+
+  const AUCTION_DURATION_CONFIG_ID = "auction-duration";
+
+  const CONFIG_REGISTRY = [
+    {
+      id: AUCTION_DURATION_CONFIG_ID,
+      label: "Durée par défaut d'enchère",
+      options: ["10 min", "30 min", "1 h", "3 h", "6 h", "12 h"],
+      defaultValue: "1 h",
+    },
+  ];
+
+  function readConfig() {
+    let stored = {};
+    try {
+      stored = JSON.parse(localStorage.getItem(CONFIG_KEY) ?? "{}");
+    } catch (error) {
+      logger(CPL.WARN, "Config unreadable, defaults restored", error);
+    }
+
+    const config = {};
+    CONFIG_REGISTRY.forEach(({ id, options, defaultValue }) => {
+      config[id] = options.includes(stored?.[id]) ? stored[id] : defaultValue;
+    });
+    return config;
+  }
+
+  function writeConfigValue(id, value) {
+    const config = { ...readConfig(), [id]: value };
+    try {
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+      logger(CPL.INFO, `Config saved: ${id} = ${value}`);
+    } catch (error) {
+      logger(CPL.ERROR, `Config not saved: ${id} = ${value}`, error);
+    }
+  }
+
+  function buildConfigPanel() {
+    const panel = document.createElement("div");
+    panel.className = "wm-settings-config";
+
+    const config = readConfig();
+    CONFIG_REGISTRY.forEach(({ id, label, options }) => {
+      const row = document.createElement("div");
+      row.className = "wm-config-row";
+
+      const rowLabel = document.createElement("p");
+      rowLabel.className = "wm-config-label";
+      rowLabel.textContent = label;
+
+      const pill = document.createElement("div");
+      pill.className = "wm-config-pill";
+      pill.setAttribute("role", "radiogroup");
+      pill.setAttribute("aria-label", label);
+
+      const buttons = options.map((option) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "wm-config-pill-btn";
+        btn.setAttribute("role", "radio");
+        btn.textContent = option;
+        btn.addEventListener("click", () => {
+          writeConfigValue(id, option);
+          sync(option);
+        });
+        return btn;
+      });
+      const sync = (value) =>
+        buttons.forEach((btn) => {
+          const selected = btn.textContent === value;
+          btn.setAttribute("aria-checked", String(selected));
+          btn.classList.toggle("wm-config-pill-btn-selected", selected);
+        });
+      sync(config[id]);
+
+      pill.append(...buttons);
+      row.append(rowLabel, pill);
+      panel.appendChild(row);
+    });
+
+    return panel;
+  }
+
   function buildFeatureConfigModal(flags) {
     const overlay = document.createElement("div");
     overlay.className = "wm-settings-overlay";
@@ -4651,7 +4806,7 @@ const MY_USERNAME = "xxx";
 
     const title = document.createElement("h2");
     title.className = "wm-settings-title";
-    title.textContent = "⚙️ Fonctionnalités";
+    title.textContent = "⚙️ Réglages";
 
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
@@ -4744,7 +4899,45 @@ const MY_USERNAME = "xxx";
 
     footer.appendChild(reloadBtn);
 
-    modal.append(header, hintRow, list, footer);
+    const featuresPanel = document.createElement("div");
+    featuresPanel.className = "wm-settings-panel";
+    featuresPanel.append(hintRow, list, footer);
+
+    featuresPanel.hidden = true;
+
+    const configPanel = document.createElement("div");
+    configPanel.className = "wm-settings-panel";
+    configPanel.appendChild(buildConfigPanel());
+
+    const tabs = document.createElement("div");
+    tabs.className = "wm-settings-tabs";
+    tabs.setAttribute("role", "tablist");
+    [
+      { name: "Configuration", panel: configPanel },
+      { name: "Fonctionnalités", panel: featuresPanel },
+    ].forEach(({ name, panel }, index, all) => {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "wm-settings-tab";
+      tab.setAttribute("role", "tab");
+      tab.textContent = name;
+      tab.addEventListener("click", () => {
+        all.forEach((other) => {
+          other.panel.hidden = other.panel !== panel;
+        });
+        tabs.querySelectorAll(".wm-settings-tab").forEach((btn) => {
+          const selected = btn === tab;
+          btn.setAttribute("aria-selected", String(selected));
+          btn.classList.toggle("wm-settings-tab-selected", selected);
+        });
+        logger(CPL.LOG, `Settings tab: ${name}`);
+      });
+      tab.setAttribute("aria-selected", String(index === 0));
+      tab.classList.toggle("wm-settings-tab-selected", index === 0);
+      tabs.appendChild(tab);
+    });
+
+    modal.append(header, tabs, configPanel, featuresPanel);
     overlay.appendChild(modal);
 
     const onKeydown = (event) => {
@@ -4939,6 +5132,78 @@ const MY_USERNAME = "xxx";
         flex-shrink: 0;
         accent-color: var(--color-accent);
       }
+      .wm-settings-tabs {
+        display: flex;
+        gap: 0.25rem;
+        margin-bottom: 0.75rem;
+        border-bottom: 1px solid rgba(128, 128, 128, 0.4);
+      }
+      .wm-settings-tab {
+        padding: 0.4rem 0.9rem;
+        border: none;
+        border-bottom: 2px solid transparent;
+        background: transparent;
+        color: inherit;
+        font-size: 0.85rem;
+        font-weight: 600;
+        opacity: 0.6;
+        cursor: pointer;
+        transition: opacity 0.2s ease, border-color 0.2s ease;
+      }
+      .wm-settings-tab:hover {
+        opacity: 1;
+      }
+      .wm-settings-tab-selected {
+        opacity: 1;
+        border-bottom-color: var(--color-accent);
+        color: var(--color-accent);
+      }
+      .wm-settings-config {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        min-width: 28rem;
+        max-width: 80vw;
+      }
+      .wm-config-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      .wm-config-label {
+        margin: 0;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+      .wm-config-pill {
+        display: flex;
+        align-self: flex-start;
+        border: 1px solid var(--color-accent);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .wm-config-pill-btn {
+        padding: 0.35rem 0.9rem;
+        border: none;
+        background: transparent;
+        color: var(--color-accent);
+        font-size: 0.8rem;
+        font-weight: 600;
+        opacity: 0.7;
+        cursor: pointer;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-config-pill-btn + .wm-config-pill-btn {
+        border-left: 1px solid var(--color-accent);
+      }
+      .wm-config-pill-btn:hover {
+        opacity: 1;
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+      }
+      .wm-config-pill-btn-selected {
+        opacity: 1;
+        background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+      }
       .wm-settings-footer {
         margin-top: 0.75rem;
       }
@@ -5032,6 +5297,14 @@ const MY_USERNAME = "xxx";
     {
       title: "Repérer les cartes impossibles à estimer",
       text: "Option désactivée par défaut (⚙️) : pendant une estimation en masse, chaque carte dont l'estimation reste « ? » reçoit l'étiquette « TBD », pour la retrouver facilement ensuite.",
+    },
+    {
+      title: "Choisir la durée d'enchère par défaut",
+      text: "Dans ⚙️, l'onglet « Config » permet de choisir la durée proposée par défaut quand vous mettez une carte en vente (de 10 min à 12 h, 1 h au départ). Le choix est enregistré dès que vous cliquez, et le bouton de durée correspondant est sélectionné à l'ouverture de la vente.",
+    },
+    {
+      title: "Surveiller une enchère",
+      text: "Sur la page d'une enchère, le bouton « 📌 Surveiller » la garde de côté (recliquez pour la retirer). Sur /marketplace, le bouton « 📌 Surveillées » ouvre la liste de ces enchères, avec depuis quand vous les surveillez ; cliquez sur une carte pour y retourner. Les enchères surveillées depuis plus de 7 jours sont retirées quand vous allez sur votre profil.",
     },
   ];
 
@@ -8011,10 +8284,12 @@ const MY_USERNAME = "xxx";
   // / "Suivi" label). That row is there on every other user's profile, friend or not, unlike the message / trade
   // buttons. Clicking it adds the user to — or removes them from — the followed list kept in localStorage under FOLLOWED_USERS_KEY (a
   // JSON array of usernames), and the button turns red while the user is followed. On a bid page
-  // (/marketplace/{UUID}), a red eye icon (span.wm-follow-eye) is then put right after every followed user's name:
+  // (/marketplace/{UUID}), a red eye icon (span.wm-follow-eye) is then appended at the end of every followed user's
+  // name span, inside it (so it can't wrap away from the name: the span is made nowrap and the eye starts with a word
+  // joiner). The site's framework may rewrite that span's text and drop the eye, which the next pass puts back:
   // the seller (p.text-sm.mt-1 span), each bidder of ul.card-frame (the first span of the entry) and the leading
-  // bidder (div.card-frame p.text-xs span). The icon is a sibling of the name span rather than a child, since the
-  // site's own framework owns that span's content. Icons of users no longer followed are removed.
+  // bidder (div.card-frame p.text-xs span). The icon holds no text, so the span's textContent still reads as the
+  // bare name. Icons of users no longer followed are removed.
   //
   // Feature FOL (cont'd): on your own profile (/profile), the followed users are listed in a block placed right after
   // Feature BSP's div.wm-bsp-dump (or after div.grid when that one isn't there), sorted alphabetically, each as a
@@ -8130,23 +8405,27 @@ const MY_USERNAME = "xxx";
 
     nameSpans.forEach((span) => {
       const name = span.textContent.trim();
-      const eye = span.nextElementSibling?.classList.contains("wm-follow-eye")
-        ? span.nextElementSibling
-        : null;
+      const eye = span.querySelector(":scope > .wm-follow-eye");
 
       if (!followed.has(name)) {
         eye?.remove();
+        span.classList.remove("wm-follow-name");
       } else if (!eye || eye.dataset.wmFollowName !== name) {
         eye?.remove();
-        span.after(createFollowEye(name));
+        span.classList.add("wm-follow-name");
+        span.appendChild(createFollowEye(name));
+        traceOnce(`[FOL] eye shown next to followed player ${name}`);
       }
     });
 
     // Eyes whose name span changed to someone else, or is gone
     document.querySelectorAll(".wm-follow-eye").forEach((eye) => {
-      const name = eye.previousElementSibling?.textContent.trim();
-      if (!name || name !== eye.dataset.wmFollowName || !followed.has(name))
+      const nameSpan = eye.parentElement;
+      const name = nameSpan?.textContent.trim();
+      if (!name || name !== eye.dataset.wmFollowName || !followed.has(name)) {
+        nameSpan?.classList.remove("wm-follow-name");
         eye.remove();
+      }
     });
   }
 
@@ -8277,14 +8556,24 @@ const MY_USERNAME = "xxx";
       .wm-follow-btn[aria-pressed="true"]:not(:hover) {
         color: #ef4444 !important;
       }
+      .wm-follow-name {
+        white-space: nowrap;
+      }
       .wm-follow-eye {
-        display: inline-flex;
+        display: inline;
+        white-space: nowrap;
         vertical-align: middle;
         margin-top: 2px;
         margin-left: 0.25rem;
         color: #ef4444;
       }
+      .wm-follow-eye::before {
+        /* Word joiner: no line break between the name and its eye */
+        content: "\\2060";
+      }
       .wm-follow-eye svg {
+        display: inline-block;
+        vertical-align: central;
         width: 1em;
         height: 1em;
       }
@@ -8795,6 +9084,508 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Feature WAT: watch auctions to find them back later. On an auction page (/marketplace/{UUID}), a "Surveiller"
+  // button is added right after the back button (button.text-sm.gap-1\.5); clicking it stores the entry
+  // "watched-{auction id}-{epoch in ms}-{card name}" in the array kept in localStorage under "wm-saved" (the button
+  // then reads "Surveillée"; clicking it again removes the auction from the array). On the marketplace's list page,
+  // a "Surveillées" button is appended to h1.text-2xl.gap-2: it opens a popover listing the watched auctions,
+  // newest first, each a link to its page with how long ago it was watched and a "✕" to stop watching it. Every
+  // time /profile is reached, the watched entries whose epoch is more than 7 days old (or that can't be read) are
+  // removed from the array; any other entry of "wm-saved" is left alone.
+  //
+  // Feature WAT (cont'd): on the marketplace's list page, every card (div[id^="marketplace-auction-"], whose id ends
+  // with the auction's UUID) also gets a small pin button docked at its top right corner (button.wm-card-pin)
+  // that watches / unwatches that auction the same way, without opening the card (its click is stopped before it
+  // reaches the card). The pin is filled while the auction is watched.
+  // ============================================================
+  const WATCHED_KEY = "wm-saved";
+  const WATCHED_PREFIX = "watched-";
+  const WATCHED_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const WATCHED_ENTRY_REGEX =
+    /^watched-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(\d+)-(.*)$/is;
+
+  function readSavedEntries() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(WATCHED_KEY) ?? "[]");
+      return Array.isArray(parsed)
+        ? parsed.filter((entry) => typeof entry === "string")
+        : [];
+    } catch (error) {
+      logger(CPL.WARN, `${WATCHED_KEY} unreadable, treated as empty`, error);
+      return [];
+    }
+  }
+
+  function writeSavedEntries(entries) {
+    try {
+      localStorage.setItem(WATCHED_KEY, JSON.stringify(entries));
+      return true;
+    } catch (error) {
+      logger(CPL.ERROR, `${WATCHED_KEY} not saved`, error);
+      return false;
+    }
+  }
+
+  function parseWatchedEntry(entry) {
+    const match = entry.match(WATCHED_ENTRY_REGEX);
+    if (!match) return null;
+    return {
+      entry,
+      id: match[1],
+      epoch: parseInt(match[2], 10),
+      name: match[3],
+    };
+  }
+
+  function readWatchedAuctions() {
+    return readSavedEntries()
+      .filter((entry) => entry.startsWith(WATCHED_PREFIX))
+      .map(parseWatchedEntry)
+      .filter((watched) => watched !== null);
+  }
+
+  function formatWatchAge(epoch) {
+    const minutes = Math.floor((Date.now() - epoch) / 60000);
+    if (minutes < 1) return "à l'instant";
+    if (minutes < 60) return `il y a ${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `il y a ${hours} h`;
+    return `il y a ${Math.floor(hours / 24)} j`;
+  }
+
+  function getBidPageCardName() {
+    const nameEl = document.querySelector("h1.flex-1");
+    if (!nameEl) return "";
+    return Array.from(nameEl.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join("")
+      .trim();
+  }
+
+  // Watches the auction, or stops watching it when it already is. Returns whether it is now watched, or null when
+  // nothing could be done (no card name to store, or storage refused the write).
+  function toggleWatchedAuction(id, name) {
+    const entries = readSavedEntries();
+
+    if (readWatchedAuctions().some((w) => w.id === id)) {
+      const kept = entries.filter(
+        (entry) => parseWatchedEntry(entry)?.id !== id,
+      );
+      if (!writeSavedEntries(kept)) return null;
+      logger(CPL.INFO, `Auction unwatched: "${name}" (${id})`);
+      return false;
+    }
+
+    if (!name) {
+      logger(CPL.WARN, `Auction ${id} not watched: card name not found`);
+      return null;
+    }
+    const entry = `${WATCHED_PREFIX}${id}-${Date.now()}-${name}`;
+    if (!writeSavedEntries([...entries, entry])) return null;
+    logger(CPL.INFO, `Auction watched: "${name}" (${id})`);
+    return true;
+  }
+
+  function setWatchButtonState(btn, watched) {
+    btn.setAttribute("aria-pressed", String(watched));
+    btn.textContent = watched ? "📌 Surveillée" : "📌 Surveiller";
+    btn.title = watched
+      ? "Ne plus surveiller cette enchère"
+      : "Surveiller cette enchère";
+  }
+
+  function ensureWatchButton() {
+    const existing = document.querySelector(".wm-watch-btn");
+    const match = window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX);
+    if (!match) {
+      existing?.remove();
+      return;
+    }
+
+    const id = match[1];
+    const backBtn = document.querySelector("button.text-sm.gap-1\\.5");
+    if (!backBtn) return;
+
+    if (existing && existing.dataset.wmWatchId !== id) existing.remove();
+    let btn = existing?.dataset.wmWatchId === id ? existing : null;
+    const isWatched = readWatchedAuctions().some((w) => w.id === id);
+
+    if (btn) {
+      if (btn.getAttribute("aria-pressed") !== String(isWatched))
+        setWatchButtonState(btn, isWatched);
+      return;
+    }
+
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-watch-btn";
+    btn.dataset.wmWatchId = id;
+    setWatchButtonState(btn, isWatched);
+
+    btn.addEventListener("click", () => {
+      const watchedNow = toggleWatchedAuction(id, getBidPageCardName());
+      if (watchedNow !== null) setWatchButtonState(btn, watchedNow);
+    });
+
+    backBtn.after(btn);
+  }
+
+  function closeWatchPopover() {
+    document.querySelector(".wm-watch-popover")?.remove();
+  }
+
+  function renderWatchPopover(popover) {
+    popover.textContent = "";
+
+    const watched = readWatchedAuctions().sort((a, b) => b.epoch - a.epoch);
+    if (watched.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-watch-empty";
+      empty.textContent = "Aucune enchère surveillée.";
+      popover.appendChild(empty);
+      return;
+    }
+
+    watched.forEach(({ entry, id, epoch, name }) => {
+      const row = document.createElement("div");
+      row.className = "wm-watch-row";
+
+      const link = document.createElement("a");
+      link.className = "wm-watch-link";
+      link.href = `/marketplace/${id}`;
+      link.textContent = name;
+      link.title = name;
+      link.addEventListener("click", () =>
+        logger(CPL.INFO, `Watched auction opened: "${name}" (${id})`),
+      );
+
+      const age = document.createElement("span");
+      age.className = "wm-watch-age";
+      age.textContent = formatWatchAge(epoch);
+      age.title = new Date(epoch).toLocaleString();
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "wm-watch-remove";
+      removeBtn.setAttribute("aria-label", `Ne plus surveiller ${name}`);
+      removeBtn.textContent = "✕";
+      removeBtn.addEventListener("click", () => {
+        const kept = readSavedEntries().filter((saved) => saved !== entry);
+        if (!writeSavedEntries(kept)) return;
+        logger(CPL.INFO, `Auction unwatched: "${name}" (${id})`);
+        renderWatchPopover(popover);
+        updateWatchListButtonCount();
+      });
+
+      row.append(link, age, removeBtn);
+      popover.appendChild(row);
+    });
+  }
+
+  function updateWatchListButtonCount() {
+    const btn = document.querySelector(".wm-watch-list-btn");
+    if (!btn) return;
+    const label = `📌 Surveillées (${readWatchedAuctions().length})`;
+    if (btn.textContent !== label) btn.textContent = label;
+  }
+
+  function openWatchPopover(btn) {
+    const popover = document.createElement("div");
+    popover.className = "wm-watch-popover";
+    popover.setAttribute("role", "dialog");
+    popover.setAttribute("aria-label", "Enchères surveillées");
+    renderWatchPopover(popover);
+    document.body.appendChild(popover);
+
+    const rect = btn.getBoundingClientRect();
+    popover.style.top = `${rect.bottom + 8}px`;
+    popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - popover.offsetWidth - 8))}px`;
+    logger(
+      CPL.LOG,
+      `Watched auctions popover opened (${popover.querySelectorAll(".wm-watch-row").length})`,
+    );
+
+    const dismiss = (event) => {
+      const outside =
+        event.type === "keydown"
+          ? event.key === "Escape"
+          : !popover.contains(event.target) && !btn.contains(event.target);
+      if (!outside) return;
+      closeWatchPopover();
+      document.removeEventListener("click", dismiss, true);
+      document.removeEventListener("keydown", dismiss);
+    };
+    document.addEventListener("click", dismiss, true);
+    document.addEventListener("keydown", dismiss);
+  }
+
+  function ensureWatchListButton() {
+    const isListPage =
+      window.location.pathname.startsWith("/marketplace") &&
+      !MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname);
+    const existing = document.querySelector(".wm-watch-list-btn");
+    if (!isListPage) {
+      existing?.remove();
+      closeWatchPopover();
+      return;
+    }
+
+    const h1 = document.querySelector("h1.text-2xl.gap-2");
+    if (!h1) return;
+
+    if (existing && existing.parentElement === h1) {
+      updateWatchListButtonCount();
+      return;
+    }
+    existing?.remove();
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-watch-list-btn";
+    btn.title = "Enchères surveillées";
+    btn.setAttribute("aria-haspopup", "dialog");
+    btn.addEventListener("click", () => {
+      if (document.querySelector(".wm-watch-popover")) return;
+      openWatchPopover(btn);
+    });
+    h1.appendChild(btn);
+    updateWatchListButtonCount();
+  }
+
+  const WATCH_PIN_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg>';
+  const WATCH_CARD_ID_PREFIX = "marketplace-auction-";
+
+  function setCardPinState(pin, watched) {
+    pin.setAttribute("aria-pressed", String(watched));
+    pin.title = watched
+      ? "Ne plus surveiller cette enchère"
+      : "Surveiller cette enchère";
+  }
+
+  function ensureCardPins() {
+    const pins = document.querySelectorAll(".wm-card-pin");
+    const isListPage =
+      window.location.pathname.startsWith("/marketplace") &&
+      !MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname);
+    if (!isListPage) {
+      pins.forEach((pin) => pin.remove());
+      return;
+    }
+
+    const watchedIds = new Set(readWatchedAuctions().map((w) => w.id));
+    let added = 0;
+
+    document
+      .querySelectorAll(`div[id^="${WATCH_CARD_ID_PREFIX}"]`)
+      .forEach((card) => {
+        const id = card.id.slice(WATCH_CARD_ID_PREFIX.length);
+        if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+
+        const existing = card.querySelector(":scope > .wm-card-pin");
+        if (existing) {
+          const isWatched = watchedIds.has(id);
+          if (existing.getAttribute("aria-pressed") !== String(isWatched))
+            setCardPinState(existing, isWatched);
+          return;
+        }
+
+        if (getComputedStyle(card).position === "static")
+          card.style.position = "relative";
+
+        const pin = document.createElement("button");
+        pin.type = "button";
+        pin.className = "wm-card-pin";
+        pin.innerHTML = WATCH_PIN_SVG;
+        setCardPinState(pin, watchedIds.has(id));
+        // The card itself opens the auction on click: keep this click for the pin
+        pin.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const name = card.querySelector("h3")?.textContent.trim() ?? "";
+          const watchedNow = toggleWatchedAuction(id, name);
+          if (watchedNow === null) return;
+          setCardPinState(pin, watchedNow);
+          updateWatchListButtonCount();
+          const popover = document.querySelector(".wm-watch-popover");
+          if (popover) renderWatchPopover(popover);
+        });
+        card.appendChild(pin);
+        added++;
+      });
+
+    if (added > 0) traceOnce(`[WAT] pin added on ${added} marketplace card(s)`);
+  }
+
+  let watchedCleanedForVisit = false;
+
+  function cleanupWatchedAuctions() {
+    if (!/^\/profile\/?$/.test(window.location.pathname)) {
+      watchedCleanedForVisit = false;
+      return;
+    }
+    if (watchedCleanedForVisit) return;
+    watchedCleanedForVisit = true;
+
+    const entries = readSavedEntries();
+    const limit = Date.now() - WATCHED_MAX_AGE_MS;
+    const kept = entries.filter((entry) => {
+      if (!entry.startsWith(WATCHED_PREFIX)) return true;
+      const watched = parseWatchedEntry(entry);
+      if (!watched) {
+        logger(CPL.WARN, `Unreadable watched entry removed: ${entry}`);
+        return false;
+      }
+      return watched.epoch >= limit;
+    });
+
+    if (kept.length === entries.length) {
+      logger(CPL.LOG, "Watched auctions cleanup: nothing to remove");
+      return;
+    }
+    if (writeSavedEntries(kept))
+      logger(
+        CPL.INFO,
+        `Watched auctions cleanup: ${entries.length - kept.length} removed, ${kept.length} kept`,
+      );
+  }
+
+  function watchWatchedAuctions() {
+    GM_addStyle(`
+      .wm-watch-btn,
+      .wm-watch-list-btn {
+        font-size: 0.9rem;
+        margin-left: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        line-height: 1;
+        border: none;
+        background: #ffffff0f;
+        color: var(--color-foreground);
+        cursor: pointer;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+      .wm-watch-btn:hover,
+      .wm-watch-list-btn:hover {
+        background: #ffffff3f;
+      }
+      .wm-watch-btn[aria-pressed="true"] {
+        color: var(--color-accent);
+      }
+      .wm-card-pin {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        padding: 0;
+        border: none;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        opacity: 0.7;
+        cursor: pointer;
+        transition: opacity 0.2s ease, color 0.2s ease, background 0.2s ease;
+      }
+      .wm-card-pin:hover {
+        opacity: 1;
+        background: rgba(0, 0, 0, 0.8);
+      }
+      .wm-card-pin svg {
+        width: 1rem;
+        height: 1rem;
+      }
+      .wm-card-pin[aria-pressed="true"] {
+        opacity: 1;
+        color: var(--color-accent);
+      }
+      .wm-card-pin[aria-pressed="true"] svg {
+        fill: currentColor;
+      }
+      .wm-watch-popover {
+        position: fixed;
+        z-index: 9998;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        min-width: 20rem;
+        max-width: 90vw;
+        max-height: 60vh;
+        overflow-y: auto;
+        padding: 0.5rem;
+        border-radius: 0.75rem;
+        border: 1px solid var(--color-border);
+        background-color: var(--color-surface-light);
+        color: var(--color-foreground);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      }
+      .wm-watch-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.35rem 0.5rem;
+        border-radius: 0.5rem;
+      }
+      .wm-watch-row:hover {
+        background: #ffffff0f;
+      }
+      .wm-watch-link {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .wm-watch-link:hover {
+        text-decoration: underline;
+      }
+      .wm-watch-age {
+        flex-shrink: 0;
+        font-size: 0.75rem;
+        opacity: 0.55;
+      }
+      .wm-watch-remove {
+        border: none;
+        background: transparent;
+        color: var(--color-foreground);
+        opacity: 0.5;
+        cursor: pointer;
+        line-height: 1;
+        transition: opacity 0.2s ease, color 0.2s ease;
+      }
+      .wm-watch-remove:hover {
+        opacity: 1;
+        color: #ef2222;
+      }
+      .wm-watch-empty {
+        margin: 0;
+        padding: 0.5rem;
+        font-size: 0.85rem;
+        opacity: 0.6;
+      }
+    `);
+
+    const update = () => {
+      ensureWatchButton();
+      ensureWatchListButton();
+      ensureCardPins();
+      cleanupWatchedAuctions();
+    };
+    update();
+
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -8879,6 +9670,8 @@ const MY_USERNAME = "xxx";
     run("feature-uds", watchUserDescriptions);
     run("rule-39", watchAchievementProgressBars);
     run("feature-mpa", watchMarketplaceArrows);
+    run("feature-dad", watchDefaultAuctionDuration);
+    run("feature-wat", watchWatchedAuctions);
 
     watchFeatureConfigButton();
     watchTutorialButton();

@@ -44,7 +44,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🔔 Barre de navigation & Notifications
 
 - **Barre de navigation repliable** : Se replie en icônes par défaut, se déplie en douceur au survol — ou épinglez-la grâce au bouton en haut de la barre
-- **Panneau de configuration** : Un bouton à roue crantée, à côté de celui d'épinglage, ouvre une modale pour activer/désactiver individuellement chaque fonctionnalité du script ; les choix sont sauvegardés dans votre cache de navigateur
+- **Panneau de configuration** : Un bouton à roue crantée, à côté de celui d'épinglage, ouvre une modale à deux onglets : « Configuration » (affiché en premier) pour régler des valeurs métier avec des sélecteurs en pilule (aujourd'hui, la durée d'enchère par défaut), et « Fonctionnalités » pour activer/désactiver individuellement chaque fonctionnalité du script ; les choix sont sauvegardés instantanément dans votre cache de navigateur
 - **Tutoriels intégrés** : Un bouton « ❓ » juste à côté ouvre une modale avec de courtes explications pour les fonctionnalités les moins évidentes du script
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
@@ -71,6 +71,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Halo sur les cartes sans estimation** : Un interrupteur « Sans estimation » après le bouton « Top 40 » entoure d'un halo rouge clair les cartes de la page sans estimation (un « ? » compte comme une estimation) ; son état est mémorisé
 - **Rechargement automatique en cas d'échec** : Si la page affiche un message rouge « a échoué », elle se recharge d'elle-même peu après
 - **Liste d'étiquettes lisible** : Plus de place pour afficher les étiquettes, et la liste se trie par ordre décroissant dès que les compteurs sont chargés ; à l'ouverture du filtre, le clavier navigue directement dans la liste (flèches, Début/Fin, saisie des premières lettres d'un nom)
+- **Durée d'enchère par défaut** : À l'ouverture de la modale de vente d'une carte, le bouton de durée choisi dans le panneau de configuration est sélectionné automatiquement
 - **Copier le nom d'une carte** : Un bouton 📋 à côté du nom, dans la modale de carte comme dans la modale d'enchère
 - **Aller directement à une page** : Une fois le catalogue chargé, cliquer sur l'indicateur « Page X / Y » le remplace par un champ numérique ; Entrée mène à la page saisie en enchaînant les boutons précédent/suivant du site, Échap annule
 - **Effacer la recherche** : Un bouton ✕ dans le champ de recherche de la collection vide son contenu
@@ -94,6 +95,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Un indice de fiabilité accompagne le tag
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
+- **Enchères surveillées** : Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle en haut à droite de chaque carte de `/marketplace`) la garde de côté ; un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, avec depuis quand vous les surveillez, pour y retourner d'un clic. Celles surveillées depuis plus de 7 jours sont retirées à chaque visite de votre profil
 - **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
 
 ### 📦 Catalogue

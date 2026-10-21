@@ -1,5 +1,9 @@
 ## Principles
 
+### Development
+
+When features are edited, soldered or added, always add the logger calls relevant to its processes.
+
 ### Docs
 
 NEVER bump the version in the docblock at the top of the JS file.
@@ -42,7 +46,7 @@ When updating the README, check ALL rules/features (both from the documentation 
 - **Enchère perdue clarifiée** : « {enchérisseur} a misé {mise} wikibidous sur « {carte} ». Vos {remise} wikibidous vous ont été remboursés. » devient « Enchère pour « {carte} » : {mise} > {remise}. Réenchérissez pour gagner la carte. », avec la mise adverse mise en évidence en jaune
 - **Vente et achat de cartes mis en évidence** : les notifications de carte vendue ou remportée affichent le montant en couleur — vert pour une vente, rouge pour un achat
 - **Favicon personnalisé** : L'onglet du navigateur affiche le logo Wiki-MasterBetter à la place du favicon du site
-- **Bouton retour plus clair** : Relabellisé « Retour en arrière » sur les pages d'enchère
+- **Bouton retour plus clair** : Re-labellisé « Retour en arrière » sur les pages d'enchère
 - **Modale de carte épurée** : Sur `/collection` et `/pulls`, les mentions légales n'apparaissent plus dans la modale d'une carte, laissant plus de place à l'essentiel
 - **Bouton « tout marquer comme lu » à gauche** : Repositionné du côté gauche du panneau de notifications
 - **Boutons de profil plus lisibles** : Meilleur contraste pour les boutons d'action affichés sur les pages de profil
