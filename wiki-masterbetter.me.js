@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.25.3
+// @version      0.25.6
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2100,7 +2100,10 @@ const MY_USERNAME = "xxx";
   // Each card keeps at most N entries: once full, a new price replaces the array's current highest value, but only
   // when it's strictly lower than that value.
   // ============================================================
-  const MAX_STORED_PRICES = 5;
+  const MAX_STORED_PRICES = 7;
+  // Only this many of the stored prices (the lowest ones) feed the reference average; the extra stored ones are a
+  // buffer that keeps a card's recent history without letting its higher prices weigh on the reference.
+  const REFERENCE_PRICES_COUNT = 5;
   const PRICE_ENTRY_REGEX = /^\d+-[0-9a-f]+$/i;
   const BSP_KEY_PREFIX = "observed-";
 
@@ -2139,13 +2142,16 @@ const MY_USERNAME = "xxx";
     return JSON.parse(raw ?? "[]");
   }
 
-  // Feature BSP (cont'd): the reference price averaged from stored entries is weighted rather than plain —
+  // Feature BSP (cont'd): the reference price averaged from stored entries is weighted rather than plain, and only
+  // covers the REFERENCE_PRICES_COUNT lowest of them (a card stores up to MAX_STORED_PRICES) —
   // out of N prices, the lowest weighs N, the second-lowest N-1, ... the highest weighs 1 — so a single high
   // outlier among mostly-low sales pulls the reference up less than an unweighted average would.
   function computeWeightedAveragePrice(numericPrices) {
     if (!numericPrices.length) return null;
 
-    const sorted = [...numericPrices].sort((a, b) => a - b);
+    const sorted = [...numericPrices]
+      .sort((a, b) => a - b)
+      .slice(0, REFERENCE_PRICES_COUNT);
     const n = sorted.length;
 
     let weightedSum = 0;
@@ -2546,7 +2552,7 @@ const MY_USERNAME = "xxx";
   // weighs 1, so a single high outlier pulls the reference up less than a plain average would), "agréable" when
   // it's between 80% and 100% of that average, "tolérable" when it's between 100% and 120%, or "excessive" when it's
   // above 120%; unflag it as soon as none of those is true. Below 50% of that average, with at least 5 stored sold
-  // prices backing it — i.e. that card's cache is at its full MAX_STORED_PRICES capacity, so the average is
+  // prices backing it — i.e. that card's cache holds a full REFERENCE_PRICES_COUNT, so the average is
   // actually meaningful — it's flagged "prix extraordinaire" instead of "EXCELLENT"; below 20%, with that same
   // 5-entry restriction, and the price is at least LEGENDARY_MIN_DIFFERENCE below that average, it's flagged
   // "prix légendaire" instead (a smaller gap falls back to the lower tiers). When this bid's own price is
@@ -3115,6 +3121,96 @@ const MY_USERNAME = "xxx";
     });
   }
 
+  // Feature BSP/ETS (cont'd): importing is strictly additive — nothing already in the local cache is ever deleted,
+  // and an imported row only changes a local entry when business rules prove it adds information. Each merge
+  // function returns the value to store, or null when the local entry must stay untouched (so re-importing the
+  // same file is a no-op):
+  //  - "eval-{name}" (Feature ETS): a genuine numeric eval always beats the "?" placeholder (same invariant as
+  //    recordTabularNumsValue: "?" never replaces a real value); absent locally -> imported one is added; two
+  //    different numeric evals -> the local one stays, since it's the one this browser observed itself and keeps
+  //    refreshing every time the card's market modal opens, whereas the file carries no timestamp to tell which is
+  //    fresher. A value that is neither "?" nor a number is invalid and skipped.
+  //  - "observed-{name}" (Feature BSP): the union of both arrays, deduplicated — tagged entries by their tag (the
+  //    same bid is the same trade, whichever side recorded it; local copy kept), legacy plain numbers by
+  //    multiplicity (max of both sides' counts, so they aren't doubled by a second import). Over MAX_STORED_PRICES,
+  //    the lowest prices are kept — the outcome the cap rule of recordSoldBidPrice converges to (a full list only
+  //    ever swaps its highest price for a lower one) — so the only entries ever evicted are the surplus highest,
+  //    exactly as a regular recording would have. An invalid array is skipped.
+  function parseEvalForMerge(raw) {
+    if (raw === UNKNOWN_EVAL_VALUE) return UNKNOWN_EVAL_VALUE;
+    const num = parseFloat(String(raw).replace(/\s/g, "").replace(",", "."));
+    return Number.isNaN(num) ? null : num;
+  }
+
+  function mergeImportedEval(localRaw, importedRaw) {
+    const imported = parseEvalForMerge(importedRaw);
+    if (imported === null) return null;
+    if (localRaw === null) return importedRaw;
+
+    const local = parseEvalForMerge(localRaw);
+    if (local === null)
+      return imported === UNKNOWN_EVAL_VALUE ? null : importedRaw; // corrupt local: repaired
+    if (local === UNKNOWN_EVAL_VALUE && imported !== UNKNOWN_EVAL_VALUE) {
+      return importedRaw;
+    }
+    return null;
+  }
+
+  function bspEntryPrice(entry) {
+    return typeof entry === "number" ? entry : parseInt(entry, 10);
+  }
+
+  function mergeImportedBspEntries(localRaw, importedRaw) {
+    let imported;
+    let local = [];
+    try {
+      imported = JSON.parse(importedRaw);
+      if (localRaw !== null) local = JSON.parse(localRaw);
+    } catch {
+      return null;
+    }
+    if (!isValidBspPriceArray(imported)) return null;
+    if (!isValidBspPriceArray(local)) local = [];
+
+    const merged = [...local];
+    const seenTags = new Set(
+      local.filter((e) => typeof e === "string").map((e) => e.split("-")[1]),
+    );
+    const legacyCount = (list, value) => list.filter((e) => e === value).length;
+
+    imported.forEach((entry) => {
+      if (typeof entry === "string") {
+        const tag = entry.split("-")[1];
+        if (seenTags.has(tag)) return;
+        seenTags.add(tag);
+        merged.push(entry);
+      } else if (legacyCount(merged, entry) < legacyCount(imported, entry)) {
+        merged.push(entry);
+      }
+    });
+
+    const kept = merged
+      .map((entry, index) => ({ entry, index }))
+      .sort(
+        (a, b) =>
+          bspEntryPrice(a.entry) - bspEntryPrice(b.entry) || a.index - b.index,
+      )
+      .slice(0, MAX_STORED_PRICES)
+      .sort((a, b) => a.index - b.index)
+      .map(({ entry }) => entry);
+
+    const result = JSON.stringify(kept);
+    return result === localRaw ? null : result;
+  }
+
+  function safeJsonParse(raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
   function importTaggedCacheEntries() {
     const input = document.createElement("input");
     input.type = "file";
@@ -3131,6 +3227,7 @@ const MY_USERNAME = "xxx";
       reader.onload = () => {
         const rows = parseCsvRows(String(reader.result ?? ""));
         let importedCount = 0;
+        let validCount = 0;
 
         rows.forEach(([key, value]) => {
           if (typeof key !== "string" || typeof value !== "string") return;
@@ -3145,20 +3242,41 @@ const MY_USERNAME = "xxx";
                 ...readFollowedUsers(),
                 ...imported.filter((u) => typeof u === "string"),
               ]);
-              localStorage.setItem(key, JSON.stringify([...merged]));
-              importedCount++;
+              validCount++;
+              if (merged.size !== readFollowedUsers().length) {
+                localStorage.setItem(key, JSON.stringify([...merged]));
+                importedCount++;
+              }
             } catch {
               // Not a followed-users list: skipped like any other invalid row
             }
             return;
           }
 
-          localStorage.setItem(key, value);
+          const isEval = key.startsWith("eval-");
+          const isBsp = key.startsWith(BSP_KEY_PREFIX);
+          if (!isEval && !isBsp) return;
+
+          const localRaw = localStorage.getItem(key);
+          const next = isEval
+            ? mergeImportedEval(localRaw, value)
+            : mergeImportedBspEntries(localRaw, value);
+          const isValid = isEval
+            ? parseEvalForMerge(value) !== null
+            : isValidBspPriceArray(safeJsonParse(value));
+          if (isValid) validCount++;
+          if (next === null) return;
+
+          localStorage.setItem(key, next);
           importedCount++;
         });
 
-        if (importedCount === 0) {
+        if (validCount === 0) {
           alert("Le fichier n'est pas un export valide.");
+          return;
+        }
+        if (importedCount === 0) {
+          alert("Aucune nouvelle entrée : votre cache contient déjà tout.");
           return;
         }
 
@@ -3197,7 +3315,7 @@ const MY_USERNAME = "xxx";
 
     const titlePrecision = document.createElement("span");
     titlePrecision.className = "wm-bsp-dump-title-precision";
-    titlePrecision.textContent = "(max 5, on garde les moins chères)";
+    titlePrecision.textContent = "(max 7, moyenne sur les 5 moins chères)";
     title.appendChild(titlePrecision);
 
     dump.appendChild(title);
@@ -3630,7 +3748,53 @@ const MY_USERNAME = "xxx";
   // Rule 18b: on arrival on /collection, focus input.rounded-lg as soon as it enters the DOM. Toggle-able on its own
   // as "rule-18b". Also suppresses the focus outline on nav a[href="/pulls"], left lingering from the click that
   // navigated there (always on, with either toggle).
+  // Rule 18 (cont'd): while that input is focused and its dropdown (ul.absolute) is open, Home/End select the first/last
+  // item instead of moving the text cursor. The site's own selection can only be moved by its ArrowDown/ArrowUp
+  // handlers, so those keys are replayed on the input, one per tick (React needs to re-render and update
+  // aria-selected in between), until the first/last li carries aria-selected="true" — bounded by the item count.
   // ============================================================
+  function selectCardModalListEdge(input, edge) {
+    const key = edge === "first" ? "ArrowUp" : "ArrowDown";
+    const press = () =>
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code: key, bubbles: true }),
+      );
+
+    const run = async () => {
+      const items = () =>
+        Array.from(
+          input
+            .closest("div.card-frame.p-6")
+            ?.querySelectorAll("ul.absolute li") ?? [],
+        );
+      const limit = items().length + 1;
+      for (let i = 0; i < limit; i++) {
+        const list = items();
+        if (!list.length) return;
+        const target = edge === "first" ? list[0] : list[list.length - 1];
+        if (target.getAttribute("aria-selected") === "true") return;
+        press();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    };
+    run();
+  }
+
+  function onCardModalInputHomeEnd(event) {
+    if (event.key !== "Home" && event.key !== "End") return;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)
+      return;
+
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || !input.matches("input.px-3"))
+      return;
+    const modal = input.closest("div.card-frame.p-6");
+    if (!modal || !modal.querySelector("ul.absolute li")) return;
+
+    event.preventDefault();
+    selectCardModalListEdge(input, event.key === "Home" ? "first" : "last");
+  }
+
   function focusCollectionModalInput() {
     if (
       !window.location.pathname.startsWith("/collection") &&
@@ -3664,6 +3828,10 @@ const MY_USERNAME = "xxx";
         outline: none;
       }
     `);
+
+    if (flags["rule-18"]) {
+      document.addEventListener("keydown", onCardModalInputHomeEnd, true);
+    }
 
     const onMutation = () => {
       if (flags["rule-18"]) focusCollectionModalInput();
