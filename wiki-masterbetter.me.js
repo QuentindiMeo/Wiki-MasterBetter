@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.26.8
+// @version      0.27.1
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -18,6 +18,227 @@ const MY_USERNAME = "xxx";
 
 (function () {
   "use strict";
+
+  // ============================================================
+  // Feature LOG: WMB's internal logger, same pattern as BC-Plume's: logger(CPL.LEVEL, ...toPrint) prints to the
+  // matching console method, prefixed with the script's version, a padded level tag and a millisecond timestamp,
+  // e.g. "[WMB_0.26.8 INFO. | 14:02:11.042] message". The version is read from the userscript manager (GM_info), so
+  // the docblock stays the only place it is written.
+  //
+  // Level policy — what makes an action traceable without flooding the console (hand-written calls stay out of
+  // render loops and MutationObserver callbacks, which fire constantly; the feature tracer below covers those):
+  //   ERROR  something broke: a feature that throws, a failed storage write, an unreadable import file.
+  //   WARN   a recoverable anomaly: corrupted stored data reset, an expected DOM element missing, a bulk-run step
+  //          retried, an auto-reload triggered by a site failure, an import row or file refused.
+  //   INFO   a deliberate state change or lifecycle step, by the user or by an automatic mechanism: initialization,
+  //          settings saved, follow/unfollow, description saved, cache export/import/clear, sent notifications,
+  //          bulk-run start/end (EBC, Rule 25), automatic and manual reloads.
+  //   LOG    routine, high-frequency traces: a price, estimate or best trade recorded, a UI toggle flipped, a
+  //          per-card step of a bulk run, a legacy key migrated.
+  //   DEBUG  development detail: features skipped at startup because they are disabled.
+  //
+  // Feature LOG (cont'd): feature tracer. Most rules/features are a MutationObserver (or a timer) that re-applies an
+  // idempotent tweak, so no hand-written call could tell "triggered" from "actually changed something" without
+  // flooding the console. Instead, main() runs each feature through trackFeature(), and the MutationObserver /
+  // setInterval / setTimeout seen by the code of this script (shadowed below) tag every callback created while a
+  // feature is starting — or while one of its callbacks runs — with that feature's id. Each tagged callback is then
+  // timed, and the DOM mutations it made synchronously are counted (a private observer's takeRecords() before and
+  // after the call). Per feature this feeds:
+  //   - one LOG line the first time it changes the DOM on a given page ("[rule-4] observer changed the DOM: ..."),
+  //   - a LOG digest of every feature that ran (runs, DOM changes, time) when the page's path changes, next to an
+  //     INFO "Navigation" line.
+  // A callback that throws is reported as an error instead of surfacing as an uncaught exception.
+  // traceOnce() is the hand-written counterpart for calculations: it logs a given message once per page.
+  // ============================================================
+  // Console printing levels for WMB's internal logger
+  const CPL = Object.freeze({
+    DEBUG: "debug",
+    INFO: "info",
+    LOG: "log",
+    WARN: "warn",
+    ERROR: "error",
+  });
+
+  const CONSOLE_PRINTING_PREFIX = {
+    [CPL.DEBUG]: "DEBUG",
+    [CPL.INFO]: "INFO.",
+    [CPL.LOG]: "LOG..",
+    [CPL.WARN]: "WARN?",
+    [CPL.ERROR]: "ERR?!",
+  };
+
+  const WMB_VERSION =
+    typeof GM_info !== "undefined" ? GM_info.script.version : "?";
+
+  function createLogger(prefix) {
+    return (method, ...toPrint) => {
+      const now = new Date();
+      const nowTime = now.toLocaleTimeString();
+      const nowMilliseconds = now.getMilliseconds().toString().padStart(3, "0");
+      console[method](
+        `[${prefix} ${CONSOLE_PRINTING_PREFIX[method]} | ${nowTime}.${nowMilliseconds}]`,
+        ...toPrint,
+      );
+    };
+  }
+
+  const logger = createLogger(`WMB_${WMB_VERSION}`);
+
+  const NativeMutationObserver = window.MutationObserver;
+  const nativeSetInterval = window.setInterval.bind(window);
+  const nativeSetTimeout = window.setTimeout.bind(window);
+
+  let currentFeatureId = null;
+  let tracedPath = window.location.pathname;
+  const featureStats = new Map(); // id -> { runs, changes, ms }
+  const tracedOnceKeys = new Set();
+  const tracedFeaturePaths = new Set();
+  const TRACED_ONCE_MAX = 500;
+
+  // Observes the whole page only to be drained synchronously with takeRecords(): its callback is never needed
+  const domEffectTracer = new NativeMutationObserver(() => {});
+  domEffectTracer.observe(document.documentElement, {
+    childList: true,
+    attributes: true,
+    characterData: true,
+    subtree: true,
+  });
+
+  function describeNode(node) {
+    const element =
+      node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (!element) return "#text";
+    const firstClass = element.classList?.[0];
+    return `${element.tagName.toLowerCase()}${firstClass ? `.${firstClass}` : ""}`;
+  }
+
+  function summarizeRecords(records) {
+    let added = 0;
+    let removed = 0;
+    const attributes = new Set();
+    const targets = new Set();
+    records.forEach((record) => {
+      added += record.addedNodes.length;
+      removed += record.removedNodes.length;
+      if (record.attributeName) attributes.add(record.attributeName);
+      if (targets.size < 3) targets.add(describeNode(record.target));
+    });
+    const parts = [];
+    if (added) parts.push(`+${added} node(s)`);
+    if (removed) parts.push(`-${removed} node(s)`);
+    if (attributes.size) parts.push(`attr ${[...attributes].join("/")}`);
+    return `${parts.join(", ") || "text"} on ${[...targets].join(", ")}`;
+  }
+
+  function flushPageDigest(previousPath) {
+    const ran = [...featureStats]
+      .filter(([, stat]) => stat.runs > 0)
+      .sort((a, b) => b[1].ms - a[1].ms);
+    featureStats.clear();
+    if (ran.length === 0) return;
+
+    logger(
+      CPL.LOG,
+      `Digest of ${previousPath}:`,
+      ran
+        .slice(0, 12)
+        .map(
+          ([id, stat]) =>
+            `${id} x${stat.runs} (${stat.changes} change(s), ${stat.ms.toFixed(1)} ms)`,
+        )
+        .join(" | "),
+    );
+  }
+
+  function checkNavigation() {
+    const path = window.location.pathname;
+    if (path === tracedPath) return;
+
+    const previousPath = tracedPath;
+    tracedPath = path;
+    tracedOnceKeys.clear();
+    tracedFeaturePaths.clear();
+    logger(CPL.INFO, `Navigation: ${previousPath} -> ${path}`);
+    flushPageDigest(previousPath);
+  }
+
+  function recordFeatureRun(id, kind, elapsed, records) {
+    checkNavigation();
+
+    const stat = featureStats.get(id) ?? { runs: 0, changes: 0, ms: 0 };
+    stat.runs++;
+    stat.changes += records.length;
+    stat.ms += elapsed;
+    featureStats.set(id, stat);
+
+    const pathKey = `${id}|${tracedPath}`;
+    if (records.length === 0 || tracedFeaturePaths.has(pathKey)) return;
+    tracedFeaturePaths.add(pathKey);
+    logger(
+      CPL.LOG,
+      `[${id}] ${kind} changed the DOM: ${summarizeRecords(records)}`,
+    );
+  }
+
+  // Runs fn as feature `id`: anything it creates with the shadowed observer/timer functions below is attributed to
+  // it. The callback's own mutations are the records that appear between the two takeRecords().
+  function trackFeature(id, fn, kind) {
+    return function (...args) {
+      const previousId = currentFeatureId;
+      currentFeatureId = id;
+      domEffectTracer.takeRecords();
+      const start = performance.now();
+      try {
+        return fn.apply(this, args);
+      } catch (error) {
+        logger(CPL.ERROR, `[${id}] ${kind} failed`, error);
+      } finally {
+        const elapsed = performance.now() - start;
+        const records = domEffectTracer.takeRecords();
+        currentFeatureId = previousId;
+        recordFeatureRun(id, kind, elapsed, records);
+      }
+    };
+  }
+
+  // Shadow the globals for the rest of this script only
+  const MutationObserver = class extends NativeMutationObserver {
+    constructor(callback, ...rest) {
+      super(
+        currentFeatureId
+          ? trackFeature(currentFeatureId, callback, "observer")
+          : callback,
+        ...rest,
+      );
+    }
+  };
+
+  const setInterval = (callback, delay, ...rest) =>
+    nativeSetInterval(
+      currentFeatureId && typeof callback === "function"
+        ? trackFeature(currentFeatureId, callback, "interval")
+        : callback,
+      delay,
+      ...rest,
+    );
+
+  const setTimeout = (callback, delay, ...rest) =>
+    nativeSetTimeout(
+      currentFeatureId && typeof callback === "function"
+        ? trackFeature(currentFeatureId, callback, "timer")
+        : callback,
+      delay,
+      ...rest,
+    );
+
+  // Logs a calculation's outcome once per page (the same message is not repeated until the path changes)
+  function traceOnce(message, ...extra) {
+    checkNavigation();
+    if (tracedOnceKeys.has(message)) return;
+    if (tracedOnceKeys.size >= TRACED_ONCE_MAX) tracedOnceKeys.clear();
+    tracedOnceKeys.add(message);
+    logger(CPL.LOG, message, ...extra);
+  }
 
   // ============================================================
   // Rule 1a: give div.overflow-hidden.card-frame.shadow-xl a max-height of 80vh and a width of 50vw
@@ -457,6 +678,7 @@ const MY_USERNAME = "xxx";
         ? "Barre latérale toujours dépliée (cliquer pour la rendre repliable)"
         : "Barre latérale repliable (cliquer pour toujours la déplier)";
       GM_setValue("wm-sidebar-pinned", next);
+      logger(CPL.LOG, `Sidebar pinned: ${next}`);
     });
 
     row.appendChild(toggle);
@@ -925,6 +1147,7 @@ const MY_USERNAME = "xxx";
 
       const next = !isPullsNotificationMuted();
       localStorage.setItem(PNP_MUTE_KEY, String(next));
+      logger(CPL.LOG, `Pulls notification muted: ${next}`);
       applyState(next);
     });
 
@@ -967,6 +1190,7 @@ const MY_USERNAME = "xxx";
       const notificationText =
         `Vous avez ${newPackageCount} paquets à ouvrir !` +
         (newPackageCount !== MAX_PILE_SIZE ? fullPileText : "");
+      logger(CPL.INFO, "Notification: pulls", newPackageCount);
       GM_notification({
         title: "Wiki-Masters",
         text: notificationText,
@@ -1078,6 +1302,7 @@ const MY_USERNAME = "xxx";
 
     pullsReloadTimerId = setInterval(() => {
       if (isPullsPileFull()) {
+        logger(CPL.INFO, "Auto-reload: pack pile still full");
         window.location.reload();
       }
     }, PULLS_RELOAD_INTERVAL_MS);
@@ -1101,6 +1326,7 @@ const MY_USERNAME = "xxx";
     auctionNotFoundReloadTimerId = setTimeout(() => {
       auctionNotFoundReloadTimerId = null;
       if (isAuctionNotFoundShowing()) {
+        logger(CPL.WARN, "Auto-reload: auction not found");
         window.location.reload();
       }
     }, AUCTION_NOT_FOUND_RELOAD_DELAY_MS);
@@ -1120,6 +1346,7 @@ const MY_USERNAME = "xxx";
     collectionFailureReloadTimerId = setTimeout(() => {
       collectionFailureReloadTimerId = null;
       if (isCollectionFailureShowing()) {
+        logger(CPL.WARN, "Auto-reload: collection failed to load");
         window.location.reload();
       }
     }, COLLECTION_FAILURE_RELOAD_DELAY_MS);
@@ -1358,6 +1585,7 @@ const MY_USERNAME = "xxx";
       const next = toggle.getAttribute("aria-pressed") !== "true";
       toggle.setAttribute("aria-pressed", String(next));
       GM_setValue("wm-auction-grouped", next);
+      logger(CPL.LOG, `Auctions grouped: ${next}`);
       applyAuctionGrouping(wrap, next);
     });
 
@@ -1545,6 +1773,10 @@ const MY_USERNAME = "xxx";
       if (notifiedForPath === window.location.pathname) return;
       notifiedForPath = window.location.pathname;
 
+      logger(
+        CPL.INFO,
+        `Bid timer reached 30s (notification ${isBidTimerNotificationMuted() ? "muted" : "enabled"})`,
+      );
       if (isBidTimerNotificationMuted()) return;
 
       const cardNameEl = document.querySelector("h1.min-w-0");
@@ -1556,6 +1788,7 @@ const MY_USERNAME = "xxx";
         ? `Il reste 30 secondes pour enchérir sur la carte « ${cardName} » !`
         : "Il reste 30 secondes pour enchérir sur cette carte !";
 
+      logger(CPL.INFO, "Notification: bid timer", cardName);
       GM_notification({
         title: "Wiki-Masters",
         text: notificationText,
@@ -1664,6 +1897,7 @@ const MY_USERNAME = "xxx";
       return sum + (match ? parseInt(match[1], 10) : 0);
     }, 0);
 
+    traceOnce(`[CAR] ${count} reward(s) to claim, +${total} wb in total`);
     const claimAllBtn = existing ?? document.createElement("button");
     if (!existing) {
       claimAllBtn.type = "button";
@@ -2135,6 +2369,7 @@ const MY_USERNAME = "xxx";
       if (legacyRaw !== null) {
         localStorage.setItem(key, legacyRaw);
         localStorage.removeItem(cardName);
+        logger(CPL.LOG, `Legacy price key migrated: "${cardName}"`);
         raw = legacyRaw;
       }
     }
@@ -2248,6 +2483,7 @@ const MY_USERNAME = "xxx";
       getBspObservedStorageKey(cardName),
       JSON.stringify(prices),
     );
+    logger(CPL.LOG, `Sale price recorded: "${cardName}" ${entry}`);
   }
 
   function watchSoldBidPriceRecording() {
@@ -2393,6 +2629,9 @@ const MY_USERNAME = "xxx";
   function buildBestTradeValue(cardName, amount, tag) {
     const base = `${amount}-${tag}`;
     const cutoff = computeBestTradeCutoff(cardName, amount);
+    traceOnce(
+      `[BBS] "${cardName}": ${amount} vs estimate -> ${cutoff === null ? "no estimate" : `${cutoff}%`}`,
+    );
     return cutoff === null ? base : `${base}-${cutoff}`;
   }
 
@@ -2453,6 +2692,7 @@ const MY_USERNAME = "xxx";
     trades.sort((a, b) => amountOf(b) - amountOf(a));
 
     localStorage.setItem(BEST_TRADE_KINDS[kind].key, JSON.stringify(trades));
+    logger(CPL.LOG, `Best ${kind} recorded: "${cardName}" ${amount}`);
   }
 
   function recordBestTradesFromBidPage() {
@@ -2777,6 +3017,7 @@ const MY_USERNAME = "xxx";
         group = getOrCreateBadgeGroup(nameEl);
         setBadge(group, existing, "wm-new-entry", "désormais observé");
         removeReliabilityTag(group);
+        traceOnce(`[BSP] "${cardName}" is the first observed price: ${price}`);
         return;
       }
 
@@ -2790,6 +3031,9 @@ const MY_USERNAME = "xxx";
         group = getOrCreateBadgeGroup(nameEl);
         setBadge(group, existing, "wm-new-entry", "vente non comparable");
         removeReliabilityTag(group);
+        traceOnce(
+          `[BSP] my sale of "${cardName}" (${price}) has no estimate to compare to`,
+        );
         return;
       }
 
@@ -2822,6 +3066,9 @@ const MY_USERNAME = "xxx";
     }
     group = getOrCreateBadgeGroup(nameEl);
     setBadge(group, existing, `wm-${status}`, label);
+    traceOnce(
+      `[BSP] "${cardName}": ${price} vs reference ${Math.round(referenceValue)} (${isMySoldAuction ? "my sale, estimate" : `${observedEntryCount} observed price(s)`}) -> ${status}${isReliable ? ", reliable" : ""}`,
+    );
 
     if (isMySoldAuction) {
       removeReliabilityTag(group);
@@ -2975,57 +3222,64 @@ const MY_USERNAME = "xxx";
       return;
     }
 
-    document
-      .querySelectorAll('div[id^="marketplace-auction-"]')
-      .forEach((card) => {
-        const priceEl = card.querySelector("span.gap-1");
-        const cardName = card.querySelector("h3")?.textContent.trim();
-        const existing = card.querySelector(`.${MPA_ARROW_CLASS}`);
-        if (!priceEl || !cardName) return;
+    let graded = 0;
+    const auctionCards = document.querySelectorAll(
+      'div[id^="marketplace-auction-"]',
+    );
+    auctionCards.forEach((card) => {
+      const priceEl = card.querySelector("span.gap-1");
+      const cardName = card.querySelector("h3")?.textContent.trim();
+      const existing = card.querySelector(`.${MPA_ARROW_CLASS}`);
+      if (!priceEl || !cardName) return;
 
-        let stored = [];
-        try {
-          stored = readBspEntries(cardName);
-        } catch {
-          stored = [];
-        }
-        const price = parseInt(
-          priceEl.textContent
-            .match(/\d[\d\s\u00a0\u202f]*/)?.[0]
-            .replace(/\s/g, ""),
-          10,
-        );
-        const reference = isValidBspPriceArray(stored)
-          ? computeWeightedAveragePrice(stored.map((e) => parseInt(e, 10)))
-          : null;
+      let stored = [];
+      try {
+        stored = readBspEntries(cardName);
+      } catch {
+        stored = [];
+      }
+      const price = parseInt(
+        priceEl.textContent
+          .match(/\d[\d\s\u00a0\u202f]*/)?.[0]
+          .replace(/\s/g, ""),
+        10,
+      );
+      const reference = isValidBspPriceArray(stored)
+        ? computeWeightedAveragePrice(stored.map((e) => parseInt(e, 10)))
+        : null;
 
-        if (reference === null || Number.isNaN(price)) {
-          existing?.remove();
-          return;
-        }
-
-        const unreliable = stored.length <= 2;
-        const status = computeBuyStatus(price, reference, stored.length);
-        const arrow = price < reference * TOLERABLE_THRESHOLD_RATIO ? "▼" : "▲";
-        const title = `${BUY_STATUS_LABELS[status]} (obj. ${Math.round(reference)})${unreliable ? " — indice peu fiable" : ""}`;
-        const className = `${MPA_ARROW_CLASS} wm-mpa-${status}${unreliable ? " wm-mpa-unreliable" : ""}`;
-
-        if (
-          existing &&
-          existing.parentElement === priceEl &&
-          existing.textContent === arrow &&
-          existing.title === title &&
-          existing.className === className
-        )
-          return;
-
+      if (reference === null || Number.isNaN(price)) {
         existing?.remove();
-        const el = document.createElement("span");
-        el.className = className;
-        el.textContent = arrow;
-        el.title = title;
-        priceEl.append(el);
-      });
+        return;
+      }
+
+      const unreliable = stored.length <= 2;
+      const status = computeBuyStatus(price, reference, stored.length);
+      const arrow = price < reference * TOLERABLE_THRESHOLD_RATIO ? "▼" : "▲";
+      const title = `${BUY_STATUS_LABELS[status]} (obj. ${Math.round(reference)})${unreliable ? " — indice peu fiable" : ""}`;
+      const className = `${MPA_ARROW_CLASS} wm-mpa-${status}${unreliable ? " wm-mpa-unreliable" : ""}`;
+
+      if (
+        existing &&
+        existing.parentElement === priceEl &&
+        existing.textContent === arrow &&
+        existing.title === title &&
+        existing.className === className
+      )
+        return;
+
+      existing?.remove();
+      const el = document.createElement("span");
+      el.className = className;
+      el.textContent = arrow;
+      el.title = title;
+      priceEl.append(el);
+      graded++;
+    });
+    if (graded > 0)
+      traceOnce(
+        `[MPA] ${graded} of ${auctionCards.length} listed card(s) graded`,
+      );
   }
 
   function watchMarketplaceArrows() {
@@ -3313,6 +3567,7 @@ const MY_USERNAME = "xxx";
     link.remove();
     URL.revokeObjectURL(url);
 
+    logger(CPL.INFO, `Cache exported (${count} entries)`);
     GM_notification({
       title: "Wiki-Masters",
       text: `${count} entrée(s) exportée(s) en CSV.`,
@@ -3446,7 +3701,12 @@ const MY_USERNAME = "xxx";
                 localStorage.setItem(key, JSON.stringify([...merged]));
                 importedCount++;
               }
-            } catch {
+            } catch (error) {
+              logger(
+                CPL.WARN,
+                "Cache import: followed users row skipped",
+                error,
+              );
               // Not a followed-users list: skipped like any other invalid row
             }
             return;
@@ -3483,22 +3743,29 @@ const MY_USERNAME = "xxx";
         });
 
         if (validCount === 0) {
+          logger(CPL.WARN, "Cache import refused: no valid entry in the file");
           alert("Le fichier n'est pas un export valide.");
           return;
         }
         if (importedCount === 0) {
+          logger(CPL.INFO, `Cache import: nothing new (${validCount} valid)`);
           alert("Aucune nouvelle entrée : votre cache contient déjà tout.");
           return;
         }
 
         // Every consumer of this cache (profile grid, ETS modal, trades, followed users, descriptions) reads it at render time,
         // so without a reload an import looks like it did nothing
+        logger(
+          CPL.INFO,
+          `Cache imported (${importedCount} of ${validCount} valid entries), reloading`,
+        );
         alert(
           `${importedCount} entrée(s) importée(s). La page va se recharger.`,
         );
         window.location.reload();
       };
       reader.onerror = () => {
+        logger(CPL.ERROR, "Cache import: file unreadable", reader.error);
         alert("Le fichier n'a pas pu être lu.");
       };
       reader.readAsText(file);
@@ -3606,6 +3873,7 @@ const MY_USERNAME = "xxx";
       pricesCell.appendChild(pricesListCell);
 
       clearBtn.addEventListener("click", () => {
+        logger(CPL.INFO, `Prices cleared: "${cardName}"`);
         localStorage.removeItem(getBspObservedStorageKey(cardName));
         clearBtn.remove();
         entryEl.classList.add("wm-bsp-dump-entry-cleared");
@@ -3636,6 +3904,7 @@ const MY_USERNAME = "xxx";
     actionsRow.appendChild(clearCacheBtn);
 
     clearCacheBtn.addEventListener("click", () => {
+      logger(CPL.INFO, `Cache cleared (${rows.length} card(s))`);
       rows.forEach(({ cardName, entryEl, clearBtn }) => {
         localStorage.removeItem(getBspObservedStorageKey(cardName));
         clearBtn.remove();
@@ -3911,6 +4180,7 @@ const MY_USERNAME = "xxx";
       return;
 
     localStorage.setItem(key, value);
+    logger(CPL.LOG, `Estimate recorded: "${cardName}" ${value}`);
   }
 
   function watchTabularNumsRecording() {
@@ -3961,6 +4231,7 @@ const MY_USERNAME = "xxx";
     const grid = document.querySelector("div.gap-3.justify-center");
     if (!grid) return;
 
+    let appended = 0;
     Array.from(grid.children).forEach((card) => {
       const nameEl = card.querySelector("h3");
       const rarityEl = card.querySelector("div.top-2.left-2");
@@ -3987,7 +4258,10 @@ const MY_USERNAME = "xxx";
       if (appendix.textContent === appendixText) return;
 
       appendix.textContent = appendixText;
+      appended++;
     });
+    if (appended > 0)
+      traceOnce(`[ETS] estimate shown on ${appended} card tag(s)`);
   }
 
   function watchRarityEvalTags() {
@@ -4345,7 +4619,8 @@ const MY_USERNAME = "xxx";
     let stored = {};
     try {
       stored = JSON.parse(localStorage.getItem(FEATURE_FLAGS_KEY) ?? "{}");
-    } catch {
+    } catch (error) {
+      logger(CPL.WARN, "Feature flags unreadable, defaults restored", error);
       stored = {};
     }
 
@@ -4358,6 +4633,7 @@ const MY_USERNAME = "xxx";
 
   function writeFeatureFlags(flags) {
     localStorage.setItem(FEATURE_FLAGS_KEY, JSON.stringify(flags));
+    logger(CPL.INFO, "Feature flags saved", flags);
   }
 
   function buildFeatureConfigModal(flags) {
@@ -4461,7 +4737,10 @@ const MY_USERNAME = "xxx";
     reloadBtn.type = "button";
     reloadBtn.className = "wm-settings-reload";
     reloadBtn.textContent = "Recharger la page";
-    reloadBtn.addEventListener("click", () => window.location.reload());
+    reloadBtn.addEventListener("click", () => {
+      logger(CPL.INFO, "Manual reload from the settings modal");
+      window.location.reload();
+    });
 
     footer.appendChild(reloadBtn);
 
@@ -5000,10 +5279,7 @@ const MY_USERNAME = "xxx";
 
         p.dataset.wmNotificationRewritten = "true";
       } catch (error) {
-        console.error(
-          "[Wiki-MasterBetter] Rule 19 failed on a notification",
-          error,
-        );
+        logger(CPL.ERROR, "Rule 19 failed on a notification", error);
       }
     });
   }
@@ -5072,6 +5348,7 @@ const MY_USERNAME = "xxx";
   }
 
   function setNotificationFilter(type) {
+    logger(CPL.LOG, `Notification filter: ${type ?? "none"}`);
     if (type) localStorage.setItem(NOTIFICATION_FILTER_STORAGE_KEY, type);
     else localStorage.removeItem(NOTIFICATION_FILTER_STORAGE_KEY);
   }
@@ -5271,6 +5548,7 @@ const MY_USERNAME = "xxx";
 
     event.preventDefault();
     event.stopPropagation();
+    logger(CPL.LOG, `Friend name clicked: ${username}`);
     window.location.href = `/profile/${encodeURIComponent(username)}`;
   }
 
@@ -5361,6 +5639,7 @@ const MY_USERNAME = "xxx";
 
     let removed = 0;
     const skippedNames = new Set();
+    logger(CPL.INFO, "Wishlist cleanup started");
     while (!state.stopped) {
       const cardList = document.querySelector("div.gap-3.justify-center");
       const card = cardList
@@ -5377,9 +5656,24 @@ const MY_USERNAME = "xxx";
       if (wishBtn && /^\s*ajouter/i.test(wishBtn.textContent)) {
         // Not wishlisted: clicking would add it. Only close the modal.
         skippedNames.add(getWishlistCardName(card));
+        logger(
+          CPL.LOG,
+          `Not wishlisted, skipped: "${getWishlistCardName(card)}"`,
+        );
+      } else if (!wishBtn) {
+        // Same: skipped, or the loop would reopen this card forever
+        skippedNames.add(getWishlistCardName(card));
+        logger(
+          CPL.WARN,
+          `Wishlist button not found in the modal of "${getWishlistCardName(card)}"`,
+        );
       } else {
         wishBtn?.click();
         removed++;
+        logger(
+          CPL.LOG,
+          `Removed from wishlist: "${getWishlistCardName(card)}"`,
+        );
       }
 
       document.dispatchEvent(
@@ -5395,6 +5689,10 @@ const MY_USERNAME = "xxx";
     // outside the modal would.
     document.querySelector("div.backdrop-blur-sm")?.click();
 
+    logger(
+      CPL.INFO,
+      `Wishlist cleanup ${state.stopped ? "stopped" : "complete"}: ${removed} removed, ${skippedNames.size} skipped`,
+    );
     stopBtn.remove();
     button.disabled = false;
     updateWishlistCleanupButtonLabel(button);
@@ -5815,7 +6113,10 @@ const MY_USERNAME = "xxx";
       () => document.querySelector("div.relative input") !== null,
       state,
     );
-    if (!hasInput) return;
+    if (!hasInput) {
+      logger(CPL.WARN, "TBD tagging: tag input not found");
+      return;
+    }
 
     // Only untagged cards get "TBD": any active tag already there (TBD included) means leaving the card alone
     if (document.querySelector("div.space-y-2 div.gap-1\\.5 span")) return;
@@ -5836,13 +6137,15 @@ const MY_USERNAME = "xxx";
       );
     }
 
-    await waitUntil(
+    const tagged = await waitUntil(
       () =>
         Array.from(
           document.querySelectorAll("div.space-y-2 div.gap-1\\.5 span"),
         ).some((span) => span.textContent.includes(TBD_TAG)),
       state,
     );
+    if (tagged) logger(CPL.LOG, "Card tagged TBD");
+    else logger(CPL.WARN, "TBD tagging: tag never showed up");
 
     // Escape goes through the input (still focused, and bubbling up to the document) so the card modal closes
     // right away; evaluateCollectionCards then presses it once more on the document, which is harmless.
@@ -5866,6 +6169,7 @@ const MY_USERNAME = "xxx";
     const state = sharedState ?? { stopped: false };
     const stopBtn = sharedState ? null : insertStopEvaluationButton(state);
 
+    logger(CPL.INFO, `Evaluating ${cards.length} card(s)`);
     for (let i = 0; i < cards.length; i++) {
       if (state.stopped) break;
 
@@ -5885,6 +6189,10 @@ const MY_USERNAME = "xxx";
       // rather than skipping the card, until a value is recorded or the run is stopped.
       let recorded = await waitForCardEvaluation(cardName, state);
       while (!recorded && !state.stopped) {
+        logger(
+          CPL.WARN,
+          `No estimate yet for "${cardName}", reopening its modal`,
+        );
         document.dispatchEvent(
           new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
         );
@@ -5912,6 +6220,10 @@ const MY_USERNAME = "xxx";
       if (state.stopped) break;
     }
 
+    logger(
+      CPL.INFO,
+      `Card evaluation ${state.stopped ? "stopped" : "complete"}`,
+    );
     stopBtn?.remove();
   }
 
@@ -5990,8 +6302,10 @@ const MY_USERNAME = "xxx";
     const stopBtn = insertStopEvaluationButton(state);
 
     let page = 1;
+    logger(CPL.INFO, "Full-collection evaluation started");
     while (!state.stopped) {
       button.textContent = `Estimation en masse... (page ${page})`;
+      logger(CPL.LOG, `Full-collection evaluation: page ${page}`);
 
       const cards = getUnevaluatedCollectionCards() ?? [];
       await evaluateCollectionCards(button, cards, state);
@@ -6013,6 +6327,10 @@ const MY_USERNAME = "xxx";
       }, state);
     }
 
+    logger(
+      CPL.INFO,
+      `Full-collection evaluation ${state.stopped ? "stopped" : "complete"} (${page} page(s))`,
+    );
     stopBtn.remove();
     button.textContent = "🗃️📈";
     button.disabled = false;
@@ -7195,6 +7513,7 @@ const MY_USERNAME = "xxx";
         const next = sortBtn.getAttribute("aria-pressed") !== "true";
         sortBtn.setAttribute("aria-pressed", String(next));
         localStorage.setItem(sortToggle.storageKey, String(next));
+        logger(CPL.LOG, `${sortToggle.storageKey}: ${next}`);
         render();
       });
     }
@@ -7227,7 +7546,10 @@ const MY_USERNAME = "xxx";
       entries: collectTopEvals().map(({ cardName, value }) => ({
         cardName,
         valueText: formatEvalValue(String(value)),
-        onClear: () => localStorage.removeItem(`${EVAL_KEY_PREFIX}${cardName}`),
+        onClear: () => {
+          logger(CPL.INFO, `Estimate cleared: "${cardName}"`);
+          localStorage.removeItem(`${EVAL_KEY_PREFIX}${cardName}`);
+        },
       })),
     });
   }
@@ -7722,6 +8044,7 @@ const MY_USERNAME = "xxx";
     const users = readFollowedUsers().filter((u) => u !== username);
     if (followed) users.push(username);
     localStorage.setItem(FOLLOWED_USERS_KEY, JSON.stringify(users));
+    logger(CPL.INFO, `${followed ? "Following" : "Unfollowed"} ${username}`);
   }
 
   function getViewedProfileUsername() {
@@ -8061,9 +8384,11 @@ const MY_USERNAME = "xxx";
     };
     btn.addEventListener("click", () => {
       try {
-        localStorage.setItem(NO_EVAL_HALO_KEY, String(!readNoEvalHaloState()));
+        const next = !readNoEvalHaloState();
+        localStorage.setItem(NO_EVAL_HALO_KEY, String(next));
+        logger(CPL.LOG, `No-estimate halo: ${next}`);
       } catch {
-        // storage unavailable: the toggle simply won't persist
+        logger(CPL.ERROR, "Failed to save no-estimate halo state");
       }
       sync();
     });
@@ -8154,9 +8479,14 @@ const MY_USERNAME = "xxx";
     try {
       if (clean) localStorage.setItem(key, clean);
       else localStorage.removeItem(key);
+      logger(
+        CPL.INFO,
+        `Description ${clean ? "saved" : "deleted"} for ${username}`,
+      );
       return true;
-    } catch {
+    } catch (error) {
       // Storage blocked, or its quota exhausted
+      logger(CPL.ERROR, `Description not saved for ${username}`, error);
       return false;
     }
   }
@@ -8469,8 +8799,15 @@ const MY_USERNAME = "xxx";
   // ============================================================
   function main() {
     const flags = readFeatureFlags();
+    logger(CPL.INFO, "Initialization start");
     const run = (id, fn) => {
-      if (flags[id]) fn();
+      if (!flags[id]) {
+        logger(CPL.DEBUG, `${id} is disabled, skipped`);
+        return;
+      }
+      logger(CPL.DEBUG, `${id} starting (${fn.name})`);
+      // One failing feature must not keep the following ones from starting: trackFeature reports it and moves on
+      trackFeature(id, fn, "start")();
     };
 
     run("rule-1a", applyCardFrameMaxHeight);
@@ -8545,6 +8882,7 @@ const MY_USERNAME = "xxx";
 
     watchFeatureConfigButton();
     watchTutorialButton();
+    logger(CPL.LOG, "Initialization complete");
   }
 
   main();
