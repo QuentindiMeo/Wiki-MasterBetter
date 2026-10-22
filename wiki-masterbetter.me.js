@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.29.3
+// @version      0.29.10
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -11,8 +11,10 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_notification
+// @grant        GM_openInTab
 // ==/UserScript==
 //! Regarde Naïm, c'est comme ça qu'on vibe-claude.
+//* Merci @Petipoirou67 pour ses feedbacks et son support (pour son courage et sa persévérance, wébé !)
 
 const MY_USERNAME = "xxx";
 
@@ -4705,11 +4707,22 @@ const MY_USERNAME = "xxx";
   // on/off switches), each chosen with a horizontal pill selector. They are kept together in localStorage under
   // "wm-config" (a JSON object, id -> chosen option) and saved as soon as one is picked — no reload needed, since
   // whatever reads them does so when it acts. A stored value that is no longer one of the entry's options falls back
-  // to its default. The first entry is Feature DAD's default auction duration.
+  // to its default. The entries are laid out in a 2-column grid (1 column on narrow screens). The first entry is Feature DAD's default auction duration; the second is the age after which
+  // Feature WAT's watched auctions are removed automatically.
   // ============================================================
   const CONFIG_KEY = "wm-config";
 
   const AUCTION_DURATION_CONFIG_ID = "auction-duration";
+  const WATCHED_MAX_AGE_CONFIG_ID = "watched-max-age";
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const WATCHED_MAX_AGE_OPTIONS_MS = {
+    "1 jour": DAY_MS,
+    "3 jours": 3 * DAY_MS,
+    "7 jours": 7 * DAY_MS,
+    "30 jours": 30 * DAY_MS,
+    "1 an": 365 * DAY_MS,
+  };
 
   const CONFIG_REGISTRY = [
     {
@@ -4717,6 +4730,12 @@ const MY_USERNAME = "xxx";
       label: "Durée par défaut d'enchère",
       options: ["10 min", "30 min", "1 h", "3 h", "6 h", "12 h"],
       defaultValue: "1 h",
+    },
+    {
+      id: WATCHED_MAX_AGE_CONFIG_ID,
+      label: "Suppression automatique des enchères surveillées",
+      options: Object.keys(WATCHED_MAX_AGE_OPTIONS_MS),
+      defaultValue: "7 jours",
     },
   ];
 
@@ -4791,6 +4810,50 @@ const MY_USERNAME = "xxx";
     return panel;
   }
 
+  // Runs `apply` (which swaps the modal's content) and eases the modal from its previous width/height to the new
+  // natural ones instead of letting it jump. Skipped when the user prefers reduced motion or the size is unchanged.
+  const MODAL_RESIZE_MS = 250;
+
+  function animateModalResize(modal, apply) {
+    const from = modal.getBoundingClientRect();
+    modal.style.transition = "none";
+    modal.style.width = "";
+    modal.style.height = "";
+    apply();
+    const to = modal.getBoundingClientRect();
+
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (
+      reduced ||
+      (Math.abs(from.width - to.width) < 1 &&
+        Math.abs(from.height - to.height) < 1)
+    ) {
+      modal.style.transition = "";
+      return;
+    }
+
+    modal.style.boxSizing = "border-box";
+    modal.style.overflow = "hidden";
+    modal.style.width = `${from.width}px`;
+    modal.style.height = `${from.height}px`;
+    void modal.offsetWidth;
+    modal.style.transition = `width ${MODAL_RESIZE_MS}ms ease, height ${MODAL_RESIZE_MS}ms ease`;
+    modal.style.width = `${to.width}px`;
+    modal.style.height = `${to.height}px`;
+
+    setTimeout(() => {
+      ["transition", "width", "height", "boxSizing", "overflow"].forEach(
+        (prop) => (modal.style[prop] = ""),
+      );
+    }, MODAL_RESIZE_MS + 30);
+    logger(
+      CPL.LOG,
+      `Settings modal resized ${Math.round(from.width)}x${Math.round(from.height)} -> ${Math.round(to.width)}x${Math.round(to.height)}`,
+    );
+  }
+
   function buildFeatureConfigModal(flags) {
     const overlay = document.createElement("div");
     overlay.className = "wm-settings-overlay";
@@ -4821,8 +4884,7 @@ const MY_USERNAME = "xxx";
 
     const hint = document.createElement("p");
     hint.className = "wm-settings-hint";
-    hint.textContent =
-      "Tout est activé par défaut. Rechargez la page pour appliquer vos changements.";
+    hint.textContent = "Rechargez la page pour appliquer vos changements.";
 
     const selectAllBtn = document.createElement("button");
     selectAllBtn.type = "button";
@@ -4922,8 +4984,11 @@ const MY_USERNAME = "xxx";
       tab.setAttribute("role", "tab");
       tab.textContent = name;
       tab.addEventListener("click", () => {
-        all.forEach((other) => {
-          other.panel.hidden = other.panel !== panel;
+        if (tab.getAttribute("aria-selected") === "true") return;
+        animateModalResize(modal, () => {
+          all.forEach((other) => {
+            other.panel.hidden = other.panel !== panel;
+          });
         });
         tabs.querySelectorAll(".wm-settings-tab").forEach((btn) => {
           const selected = btn === tab;
@@ -5039,6 +5104,16 @@ const MY_USERNAME = "xxx";
         background-color: var(--color-surface-light);
         color: var(--color-foreground);
         padding: 1rem;
+      }
+      .wm-settings-panel:not([hidden]) {
+        animation: wm-settings-panel-in 0.25s ease;
+      }
+      @keyframes wm-settings-panel-in {
+        from { opacity: 0; transform: translateY(0.4rem); }
+        to { opacity: 1; transform: none; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .wm-settings-panel:not([hidden]) { animation: none; }
       }
       .wm-settings-header {
         display: flex;
@@ -5159,11 +5234,17 @@ const MY_USERNAME = "xxx";
         color: var(--color-accent);
       }
       .wm-settings-config {
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        min-width: 28rem;
-        max-width: 80vw;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem 1.5rem;
+        min-width: 46rem;
+        max-width: 90vw;
+      }
+      @media (max-width: 800px) {
+        .wm-settings-config {
+          grid-template-columns: minmax(0, 1fr);
+          min-width: 0;
+        }
       }
       .wm-config-row {
         display: flex;
@@ -5304,7 +5385,7 @@ const MY_USERNAME = "xxx";
     },
     {
       title: "Surveiller une enchère",
-      text: "Sur la page d'une enchère, le bouton « 📌 Surveiller » la garde de côté (recliquez pour la retirer). Sur /marketplace, le bouton « 📌 Surveillées » ouvre la liste de ces enchères, avec depuis quand vous les surveillez ; cliquez sur une carte pour y retourner. Les enchères surveillées depuis plus de 7 jours sont retirées quand vous allez sur votre profil.",
+      text: "Sur la page d'une enchère, le bouton « 📌 Surveiller » la garde de côté (re-cliquez pour la retirer ; une enchère terminée est retirée toute seule quand vous la visitez). Sur /marketplace, le bouton « 📌 Surveillées » ouvre la liste de ces enchères, avec depuis quand vous les surveillez ; cliquez sur une carte pour y retourner. Les enchères surveillées depuis plus de 7 jours sont retirées quand vous allez sur votre profil.",
     },
   ];
 
@@ -9090,19 +9171,51 @@ const MY_USERNAME = "xxx";
   // then reads "Surveillée"; clicking it again removes the auction from the array). On the marketplace's list page,
   // a "Surveillées" button is appended to h1.text-2xl.gap-2: it opens a popover listing the watched auctions,
   // newest first, each a link to its page with how long ago it was watched and a "✕" to stop watching it. Every
-  // time /profile is reached, the watched entries whose epoch is more than 7 days old (or that can't be read) are
+  // time /profile is reached, the watched entries whose epoch is older than the "Suppression auto." delay of the Config tab (Feature CFG, default 7 days), counted from the auction's end (or that can't be read) are
   // removed from the array; any other entry of "wm-saved" is left alone.
   //
   // Feature WAT (cont'd): on the marketplace's list page, every card (div[id^="marketplace-auction-"], whose id ends
   // with the auction's UUID) also gets a small pin button docked at its top right corner (button.wm-card-pin)
   // that watches / unwatches that auction the same way, without opening the card (its click is stopped before it
   // reaches the card). The pin is filled while the auction is watched.
+  //
+  // Feature WAT (cont'd): visiting a watched auction that is over unwatches it automatically. "Over" is: the page has
+  // finished loading (no div.animate-spin, h1.flex-1 and span.text-2xl present, and the DOM has been quiet for a
+  // second, so a page still hydrating isn't mistaken for an ended auction) and the "time left" span
+  // (span.tabular-nums.font-medium, same as Feature PNB's) is absent.
+  //
+  // Feature WAT (cont'd): the entry's epoch is the auction's END, not the moment it was watched: "watched-{auction
+  // id}-{end epoch in ms}-{card name}" (the end is estimated as now + the countdown, "Se termine dans 1h 44m"; "???"
+  // when it isn't known yet, e.g. a pin on a list card showing no countdown). It lets the popover sort the watched
+  // auctions by end date, soonest first. The legacy format held the watch epoch in that same slot. Both are told
+  // apart by a hardcoded reference, WATCHED_LEGACY_REFERENCE_EPOCH (the moment the new format shipped): a number up
+  // to it is a legacy watch epoch (no new entry can have an end before the reference), a larger one is an end. At
+  // startup every legacy entry is sanitized in place — rewritten with "???" as its end epoch, same id and name, so
+  // nothing is destroyed — and a "???" entry gets its real end the next time its auction page is displayed while
+  // running; the end is also corrected when it drifts by more than 2 minutes (e.g. a last-seconds bid extends it).
+  // The profile cleanup (Feature CFG's "Suppression auto." delay) now counts from the END of the auction, and keeps
+  // the "???" entries.
+  //
+  // Feature WAT (cont'd): at the top of the popover's rows, a centered "Ouvrir les enchères terminées (n)" pill opens
+  // every watched auction whose end epoch is known and past in its own background tab at once (GM_openInTab, which
+  // popup blockers leave alone, with window.open as a fallback). Each opened auction is then unwatched by the
+  // auto-unwatch of ended auctions. Disabled while none has expired.
+  //
+  // Feature WAT (cont'd): bidding on an auction watches it automatically. On a bid page, once it has finished loading
+  // (same readiness checks as the auto-unwatch above) and is still running (the "time left" span is there), the
+  // auction is watched as soon as MY_USERNAME is the current leader (Rule 33's isMyUsernameLeadingBid) or appears in
+  // the bids history (a.hover:underline linking to /profile/{MY_USERNAME} inside ul.card-frame's li). It is a
+  // one-way action: an auction already watched is left alone, and each auction is only evaluated once per page
+  // load (wmAutoWatchedIds), so stopping to watch it by hand sticks until the next reload.
   // ============================================================
   const WATCHED_KEY = "wm-saved";
   const WATCHED_PREFIX = "watched-";
-  const WATCHED_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   const WATCHED_ENTRY_REGEX =
-    /^watched-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(\d+)-(.*)$/is;
+    /^watched-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(\d+|\?\?\?)-(.*)$/is;
+  const WATCHED_END_DRIFT_MS = 2 * 60 * 1000;
+  const WATCHED_UNKNOWN_END = "???";
+  // Moment the "end epoch" format shipped: a numeric epoch up to it is a legacy watch epoch
+  const WATCHED_LEGACY_REFERENCE_EPOCH = 1792679868375;
 
   function readSavedEntries() {
     try {
@@ -9129,12 +9242,110 @@ const MY_USERNAME = "xxx";
   function parseWatchedEntry(entry) {
     const match = entry.match(WATCHED_ENTRY_REGEX);
     if (!match) return null;
+    const epoch =
+      match[2] === WATCHED_UNKNOWN_END ? null : parseInt(match[2], 10);
+    const isLegacy = epoch !== null && epoch <= WATCHED_LEGACY_REFERENCE_EPOCH;
     return {
       entry,
       id: match[1],
-      epoch: parseInt(match[2], 10),
       name: match[3],
+      isLegacy,
+      endEpoch: epoch === null || isLegacy ? null : epoch,
     };
+  }
+
+  function buildWatchedEntry(id, endEpoch, name) {
+    return `${WATCHED_PREFIX}${id}-${endEpoch ?? WATCHED_UNKNOWN_END}-${name}`;
+  }
+
+  // Rewrites every legacy entry with "???" as its end epoch (nothing is removed)
+  function sanitizeLegacyWatchedEntries() {
+    const entries = readSavedEntries();
+    let sanitized = 0;
+    const next = entries.map((entry) => {
+      if (!entry.startsWith(WATCHED_PREFIX)) return entry;
+      const watched = parseWatchedEntry(entry);
+      if (!watched?.isLegacy) return entry;
+      sanitized++;
+      return buildWatchedEntry(watched.id, null, watched.name);
+    });
+    if (sanitized === 0) return;
+    if (writeSavedEntries(next))
+      logger(
+        CPL.INFO,
+        `Watched auctions: ${sanitized} legacy entr${sanitized > 1 ? "ies" : "y"} sanitized (end epoch set to "${WATCHED_UNKNOWN_END}")`,
+      );
+  }
+
+  // "1h 44m", "2j 3h", "45s"... (j or d for days, min or m for minutes) -> milliseconds, null when it isn't one
+  const TIME_LEFT_TOKEN_REGEX = /(\d+)\s*(j|d|h|min|m|s)(?![a-zà-ÿ])/gi;
+  const TIME_LEFT_UNIT_MS = {
+    j: 86400000,
+    d: 86400000,
+    h: 3600000,
+    min: 60000,
+    m: 60000,
+    s: 1000,
+  };
+
+  function parseTimeLeftMs(text) {
+    const tokens = Array.from(text.matchAll(TIME_LEFT_TOKEN_REGEX));
+    if (tokens.length === 0) return null;
+    return tokens.reduce(
+      (sum, [, amount, unit]) =>
+        sum + parseInt(amount, 10) * TIME_LEFT_UNIT_MS[unit.toLowerCase()],
+      0,
+    );
+  }
+
+  function endEpochFromTimeLeft(text) {
+    const remaining = parseTimeLeftMs(text);
+    if (remaining === null) return null;
+    return Math.round((Date.now() + remaining) / 1000) * 1000;
+  }
+
+  function getBidPageEndEpoch() {
+    const span = document.querySelector("span.tabular-nums.font-medium");
+    const text = span?.textContent.trim() ?? "";
+    if (!/dans\s/i.test(text)) return null;
+    return endEpochFromTimeLeft(text.replace(/^.*?dans\s/i, ""));
+  }
+
+  // List cards: the countdown is the card's leaf element made only of time tokens, optionally after "dans"
+  const CARD_TIME_LEFT_REGEX =
+    /^(?:se termine\s+)?(?:dans\s+)?(?:\d+\s*(?:j|d|h|min|m|s)\s*)+$/i;
+
+  function getCardEndEpoch(card) {
+    for (const el of card.querySelectorAll("span, p, div")) {
+      if (el.children.length > 0) continue;
+      const text = el.textContent.trim();
+      if (text && CARD_TIME_LEFT_REGEX.test(text))
+        return endEpochFromTimeLeft(text.replace(/^.*?dans\s/i, ""));
+    }
+    return null;
+  }
+
+  function formatWatchEnd(endEpoch) {
+    const minutes = Math.ceil((endEpoch - Date.now()) / 60000);
+    if (minutes <= 0) return "terminée";
+    if (minutes < 60) return `dans ${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `dans ${hours} h ${minutes % 60} min`;
+    return `dans ${Math.floor(hours / 24)} j ${hours % 24} h`;
+  }
+
+  // Running auctions first (soonest end first), then unknown ends, then finished ones (oldest end first)
+  function watchedSortRank(watched) {
+    if (watched.endEpoch === null) return 1;
+    return watched.endEpoch > Date.now() ? 0 : 2;
+  }
+
+  function compareWatchedByEnd(a, b) {
+    const rank = watchedSortRank(a) - watchedSortRank(b);
+    if (rank !== 0) return rank;
+    if (a.endEpoch !== null && b.endEpoch !== null)
+      return a.endEpoch - b.endEpoch;
+    return a.name.localeCompare(b.name);
   }
 
   function readWatchedAuctions() {
@@ -9142,15 +9353,6 @@ const MY_USERNAME = "xxx";
       .filter((entry) => entry.startsWith(WATCHED_PREFIX))
       .map(parseWatchedEntry)
       .filter((watched) => watched !== null);
-  }
-
-  function formatWatchAge(epoch) {
-    const minutes = Math.floor((Date.now() - epoch) / 60000);
-    if (minutes < 1) return "à l'instant";
-    if (minutes < 60) return `il y a ${minutes} min`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `il y a ${hours} h`;
-    return `il y a ${Math.floor(hours / 24)} j`;
   }
 
   function getBidPageCardName() {
@@ -9165,7 +9367,7 @@ const MY_USERNAME = "xxx";
 
   // Watches the auction, or stops watching it when it already is. Returns whether it is now watched, or null when
   // nothing could be done (no card name to store, or storage refused the write).
-  function toggleWatchedAuction(id, name) {
+  function toggleWatchedAuction(id, name, endEpoch = null) {
     const entries = readSavedEntries();
 
     if (readWatchedAuctions().some((w) => w.id === id)) {
@@ -9181,9 +9383,12 @@ const MY_USERNAME = "xxx";
       logger(CPL.WARN, `Auction ${id} not watched: card name not found`);
       return null;
     }
-    const entry = `${WATCHED_PREFIX}${id}-${Date.now()}-${name}`;
+    const entry = buildWatchedEntry(id, endEpoch, name);
     if (!writeSavedEntries([...entries, entry])) return null;
-    logger(CPL.INFO, `Auction watched: "${name}" (${id})`);
+    logger(
+      CPL.INFO,
+      `Auction watched: "${name}" (${id}), ends ${endEpoch ? new Date(endEpoch).toISOString() : "at an unknown time"}`,
+    );
     return true;
   }
 
@@ -9224,7 +9429,11 @@ const MY_USERNAME = "xxx";
     setWatchButtonState(btn, isWatched);
 
     btn.addEventListener("click", () => {
-      const watchedNow = toggleWatchedAuction(id, getBidPageCardName());
+      const watchedNow = toggleWatchedAuction(
+        id,
+        getBidPageCardName(),
+        getBidPageEndEpoch(),
+      );
       if (watchedNow !== null) setWatchButtonState(btn, watchedNow);
     });
 
@@ -9238,7 +9447,7 @@ const MY_USERNAME = "xxx";
   function renderWatchPopover(popover) {
     popover.textContent = "";
 
-    const watched = readWatchedAuctions().sort((a, b) => b.epoch - a.epoch);
+    const watched = readWatchedAuctions().sort(compareWatchedByEnd);
     if (watched.length === 0) {
       const empty = document.createElement("p");
       empty.className = "wm-watch-empty";
@@ -9247,7 +9456,27 @@ const MY_USERNAME = "xxx";
       return;
     }
 
-    watched.forEach(({ entry, id, epoch, name }) => {
+    const expired = watched.filter(
+      (w) => w.endEpoch !== null && w.endEpoch <= Date.now(),
+    );
+    const openExpiredBtn = document.createElement("button");
+    openExpiredBtn.type = "button";
+    openExpiredBtn.className = "wm-watch-open-expired";
+    openExpiredBtn.textContent = `Ouvrir les enchères terminées (${expired.length})`;
+    openExpiredBtn.disabled = expired.length === 0;
+    openExpiredBtn.addEventListener("click", () => {
+      logger(CPL.INFO, `Opening ${expired.length} expired watched auction(s)`);
+      expired.forEach(({ id, name }) => {
+        const url = `${window.location.origin}/marketplace/${id}`;
+        logger(CPL.LOG, `Expired watched auction opened: "${name}" (${id})`);
+        if (typeof GM_openInTab === "function")
+          GM_openInTab(url, { active: false, insert: true });
+        else window.open(url, "_blank");
+      });
+    });
+    popover.appendChild(openExpiredBtn);
+
+    watched.forEach(({ entry, id, name, endEpoch }) => {
       const row = document.createElement("div");
       row.className = "wm-watch-row";
 
@@ -9262,8 +9491,12 @@ const MY_USERNAME = "xxx";
 
       const age = document.createElement("span");
       age.className = "wm-watch-age";
-      age.textContent = formatWatchAge(epoch);
-      age.title = new Date(epoch).toLocaleString();
+      age.textContent =
+        endEpoch !== null ? formatWatchEnd(endEpoch) : "fin inconnue";
+      age.title =
+        endEpoch !== null
+          ? `Fin : ${new Date(endEpoch).toLocaleString()}`
+          : "Fin inconnue : elle sera enregistrée à la prochaine visite de l'enchère";
 
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
@@ -9307,6 +9540,12 @@ const MY_USERNAME = "xxx";
     );
 
     const dismiss = (event) => {
+      // Closed another way (the button toggles it): stop listening
+      if (!popover.isConnected) {
+        document.removeEventListener("click", dismiss, true);
+        document.removeEventListener("keydown", dismiss);
+        return;
+      }
       const outside =
         event.type === "keydown"
           ? event.key === "Escape"
@@ -9346,7 +9585,11 @@ const MY_USERNAME = "xxx";
     btn.title = "Enchères surveillées";
     btn.setAttribute("aria-haspopup", "dialog");
     btn.addEventListener("click", () => {
-      if (document.querySelector(".wm-watch-popover")) return;
+      if (document.querySelector(".wm-watch-popover")) {
+        closeWatchPopover();
+        logger(CPL.LOG, "Watched auctions popover closed (button clicked)");
+        return;
+      }
       openWatchPopover(btn);
     });
     h1.appendChild(btn);
@@ -9404,7 +9647,11 @@ const MY_USERNAME = "xxx";
           event.preventDefault();
           event.stopPropagation();
           const name = card.querySelector("h3")?.textContent.trim() ?? "";
-          const watchedNow = toggleWatchedAuction(id, name);
+          const watchedNow = toggleWatchedAuction(
+            id,
+            name,
+            getCardEndEpoch(card),
+          );
           if (watchedNow === null) return;
           setCardPinState(pin, watchedNow);
           updateWatchListButtonCount();
@@ -9418,6 +9665,106 @@ const MY_USERNAME = "xxx";
     if (added > 0) traceOnce(`[WAT] pin added on ${added} marketplace card(s)`);
   }
 
+  const WATCH_OVER_CHECK_DELAY_MS = 1000;
+  let watchOverCheckTimerId = null;
+
+  function unwatchAuctionIfOver() {
+    const match = window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX);
+    if (!match) return;
+
+    const id = match[1];
+    if (!readWatchedAuctions().some((w) => w.id === id)) return;
+
+    // Still loading: the countdown isn't there yet either
+    if (document.querySelector("div.animate-spin")) return;
+    if (!document.querySelector("h1.flex-1")) return;
+    if (!document.querySelector("span.text-2xl")) return;
+
+    if (document.querySelector("span.tabular-nums.font-medium")) return;
+
+    logger(CPL.INFO, `Watched auction is over, unwatching it (${id})`);
+    if (toggleWatchedAuction(id, getBidPageCardName()) === false)
+      ensureWatchButton();
+  }
+
+  function scheduleUnwatchAuctionIfOver() {
+    clearTimeout(watchOverCheckTimerId);
+    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
+    watchOverCheckTimerId = setTimeout(
+      unwatchAuctionIfOver,
+      WATCH_OVER_CHECK_DELAY_MS,
+    );
+  }
+
+  // Adds the end epoch to a watched auction displayed while running (legacy entry), or corrects it when it drifted
+  function refreshWatchedEndEpoch() {
+    const match = window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX);
+    if (!match) return;
+
+    const watched = readWatchedAuctions().find((w) => w.id === match[1]);
+    if (!watched) return;
+
+    const endEpoch = getBidPageEndEpoch();
+    if (endEpoch === null) return;
+    if (
+      watched.endEpoch !== null &&
+      Math.abs(endEpoch - watched.endEpoch) <= WATCHED_END_DRIFT_MS
+    )
+      return;
+
+    const entries = readSavedEntries();
+    const index = entries.indexOf(watched.entry);
+    if (index < 0) return;
+    entries[index] = buildWatchedEntry(watched.id, endEpoch, watched.name);
+    if (writeSavedEntries(entries))
+      logger(
+        CPL.INFO,
+        `Watched auction end ${watched.endEpoch === null ? "recorded" : "corrected"}: "${watched.name}" (${watched.id}), ends ${new Date(endEpoch).toISOString()}`,
+      );
+  }
+
+  const wmAutoWatchedIds = new Set();
+
+  function isMyUsernameInBidHistory() {
+    return Boolean(
+      document.querySelector(
+        `ul.card-frame li a[href="/profile/${MY_USERNAME}"]`,
+      ),
+    );
+  }
+
+  function watchAuctionIfBidding() {
+    const match = window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX);
+    if (!match) return;
+
+    const id = match[1];
+    if (wmAutoWatchedIds.has(id)) return;
+
+    // Still loading, or over: nothing to watch
+    if (document.querySelector("div.animate-spin")) return;
+    if (!document.querySelector("h1.flex-1")) return;
+    if (!document.querySelector("span.text-2xl")) return;
+    if (!document.querySelector("span.tabular-nums.font-medium")) return;
+
+    const isLeading = isMyUsernameLeadingBid();
+    if (!isLeading && !isMyUsernameInBidHistory()) return;
+
+    wmAutoWatchedIds.add(id);
+    if (readWatchedAuctions().some((w) => w.id === id)) {
+      logger(CPL.LOG, `Auction already watched, nothing to do (${id})`);
+      return;
+    }
+    logger(
+      CPL.INFO,
+      `You bid on this auction (${isLeading ? "leading" : "in the history"}), watching it (${id})`,
+    );
+    if (
+      toggleWatchedAuction(id, getBidPageCardName(), getBidPageEndEpoch()) ===
+      true
+    )
+      ensureWatchButton();
+  }
+
   let watchedCleanedForVisit = false;
 
   function cleanupWatchedAuctions() {
@@ -9429,7 +9776,9 @@ const MY_USERNAME = "xxx";
     watchedCleanedForVisit = true;
 
     const entries = readSavedEntries();
-    const limit = Date.now() - WATCHED_MAX_AGE_MS;
+    const maxAge = readConfig()[WATCHED_MAX_AGE_CONFIG_ID];
+    const limit = Date.now() - WATCHED_MAX_AGE_OPTIONS_MS[maxAge];
+    logger(CPL.LOG, `Watched auctions cleanup: max age is ${maxAge}`);
     const kept = entries.filter((entry) => {
       if (!entry.startsWith(WATCHED_PREFIX)) return true;
       const watched = parseWatchedEntry(entry);
@@ -9437,7 +9786,7 @@ const MY_USERNAME = "xxx";
         logger(CPL.WARN, `Unreadable watched entry removed: ${entry}`);
         return false;
       }
-      return watched.epoch >= limit;
+      return watched.endEpoch === null || watched.endEpoch >= limit;
     });
 
     if (kept.length === entries.length) {
@@ -9513,9 +9862,9 @@ const MY_USERNAME = "xxx";
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
-        min-width: 20rem;
-        max-width: 90vw;
-        max-height: 60vh;
+        min-width: min(30rem, 25vw);
+        max-width: 50vw;
+        max-height: 80vh;
         overflow-y: auto;
         padding: 0.5rem;
         border-radius: 0.75rem;
@@ -9548,6 +9897,7 @@ const MY_USERNAME = "xxx";
         text-decoration: underline;
       }
       .wm-watch-age {
+        margin-left: 0.5rem;
         flex-shrink: 0;
         font-size: 0.75rem;
         opacity: 0.55;
@@ -9565,6 +9915,26 @@ const MY_USERNAME = "xxx";
         opacity: 1;
         color: #ef2222;
       }
+      .wm-watch-open-expired {
+        align-self: center;
+        margin-block: 0.25rem;
+        padding: 0.25rem 0.75rem;
+        border: 2px solid var(--color-accent);
+        border-radius: 100vw;
+        background: transparent;
+        color: var(--color-accent);
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+      .wm-watch-open-expired:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+      }
+      .wm-watch-open-expired:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
       .wm-watch-empty {
         margin: 0;
         padding: 0.5rem;
@@ -9578,7 +9948,11 @@ const MY_USERNAME = "xxx";
       ensureWatchListButton();
       ensureCardPins();
       cleanupWatchedAuctions();
+      scheduleUnwatchAuctionIfOver();
+      watchAuctionIfBidding();
+      refreshWatchedEndEpoch();
     };
+    sanitizeLegacyWatchedEntries();
     update();
 
     const observer = new MutationObserver(update);

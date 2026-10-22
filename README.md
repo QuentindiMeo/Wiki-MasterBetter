@@ -7,8 +7,8 @@
 <div align="center">
   <a href="#-description">Description</a> &#xa0; | &#xa0;
   <a href="#-installation">Installation</a> &#xa0; | &#xa0;
-  <a href="#-fonctionnalités">Fonctionnalités</a> &#xa0; | &#xa0;
-  <a href="#-utilisation">Utilisation</a>
+  <a href="#-utilisation">Utilisation</a> &#xa0; | &#xa0;
+  <a href="#-fonctionnalités">Fonctionnalités</a>
 </div>&#xa0;
 
 <div align="center">
@@ -35,7 +35,14 @@ Un script local Tampermonkey qui ajoute une couche d'ajustements de confort, de 
 1. Installez [Tampermonkey](https://www.tampermonkey.net/) (ou un gestionnaire de scripts local compatible) dans votre navigateur
 2. Ouvrez le tableau de bord de Tampermonkey et créez un nouveau script
 3. Collez le contenu de [`wiki-masterbetter.me.js`](./wiki-masterbetter.me.js) et enregistrez
-4. Rendez-vous sur [wiki-masters.com](https://www.wiki-masters.com) — le script s'active automatiquement
+4. Rendez-vous sur [wiki-masters.com](https://www.wiki-masters.com) — le script s'active automatiquement (rafraîchissez la page si elle était déjà ouverte)
+
+## 📖 Utilisation
+
+1. Naviguez sur [wiki-masters.com](https://www.wiki-masters.com) comme d'habitude — chaque ajustement s'applique automatiquement
+2. La permission de notifications peut être demandée pour les fonctionnalités de notification push (paquets qui s'accumulent, enchère bientôt expirée)
+3. Certaines données (préférence de navbar repliée, regroupement des enchères, suivi des prix de vente) persistent d'une visite à l'autre via le stockage de Tampermonkey et `localStorage`
+4. Remplacez la valeur de `MY_USERNAME` dans le script par votre pseudo WikiMasters pour activer toutes les fonctionnalités liées aux ventes
 
 ## 🎯 Fonctionnalités
 
@@ -44,7 +51,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🔔 Barre de navigation & Notifications
 
 - **Barre de navigation repliable** : Se replie en icônes par défaut, se déplie en douceur au survol — ou épinglez-la grâce au bouton en haut de la barre
-- **Panneau de configuration** : Un bouton à roue crantée, à côté de celui d'épinglage, ouvre une modale à deux onglets : « Configuration » (affiché en premier) pour régler des valeurs métier avec des sélecteurs en pilule (aujourd'hui, la durée d'enchère par défaut), et « Fonctionnalités » pour activer/désactiver individuellement chaque fonctionnalité du script ; les choix sont sauvegardés instantanément dans votre cache de navigateur
+- **Panneau de configuration** : Un bouton à roue crantée ouvre une modale à deux onglets : « Configuration » pour la durée d'enchère par défaut et le délai de suppression automatique des enchères surveillées, et « Fonctionnalités » pour activer/désactiver individuellement chaque fonctionnalité du script ; les choix sont sauvegardés instantanément dans votre cache de navigateur
 - **Tutoriels intégrés** : Un bouton « ❓ » juste à côté ouvre une modale avec de courtes explications pour les fonctionnalités les moins évidentes du script
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
@@ -95,7 +102,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Un indice de fiabilité accompagne le tag
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
-- **Enchères surveillées** : Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle en haut à droite de chaque carte de `/marketplace`) la garde de côté ; un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, avec depuis quand vous les surveillez, pour y retourner d'un clic. Celles surveillées depuis plus de 7 jours sont retirées à chaque visite de votre profil
+- **Enchères surveillées** : Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle en haut à droite de chaque carte de `/marketplace`) la garde de côté ; un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, triées par date de fin (celles en cours d'abord, la plus proche en tête), avec le temps restant, pour y retourner d'un clic ; une pastille « Ouvrir les enchères terminées (n) » les ouvre toutes d'un coup dans de nouveaux onglets. Une enchère terminée depuis plus longtemps que le délai choisi dans le panneau de configuration (par défaut 7 jours) est défaussée
 - **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
 
 ### 📦 Catalogue
@@ -115,13 +122,6 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Tout réclamer** : Un bouton additionne toutes les récompenses non réclamées et les réclame en une fois
 - **Barres de progression repositionnées** : Sur `/achievements`, les barres de progression des succès sont placées en bas à droite de leur carte, sur la moitié de sa largeur
-
-## 📖 Utilisation
-
-1. Naviguez sur [wiki-masters.com](https://www.wiki-masters.com) comme d'habitude — chaque ajustement s'applique automatiquement
-2. La permission de notifications peut être demandée pour les fonctionnalités de notification push (paquets qui s'accumulent, enchère bientôt expirée)
-3. Certaines données (préférence de navbar repliée, regroupement des enchères, suivi des prix de vente) persistent d'une visite à l'autre via le stockage de Tampermonkey et `localStorage`
-4. Remplacez la valeur de `MY_USERNAME` dans le script par votre pseudo WikiMasters pour activer toutes les fonctionnalités liées aux ventes
 
 ---
 
