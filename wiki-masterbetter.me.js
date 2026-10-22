@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.29.14
+// @version      0.29.16
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -3679,6 +3679,7 @@ const MY_USERNAME = "xxx";
   // BSP's entries are JSON-encoded arrays while Feature ETS's are plain strings; both are CSV-quoted as needed.
   // Feature FOL's followed-users list and Feature UDS's player descriptions are carried too.
   const TAGGED_CACHE_PREFIXES = [BSP_KEY_PREFIX, "eval-"];
+  const JSON_TO_CSV_COST_RATIO = 1.8; //? JSON costs ~1.8 times what CSV does for this cache's data
 
   // Feature FOL's followed-users list (FOLLOWED_USERS_KEY, declared further down, hence the function) travels with
   // that cache too; on import it's merged into the local list rather than replacing it. Feature UDS's "desc-{username}"
@@ -4002,8 +4003,9 @@ const MY_USERNAME = "xxx";
     )
       return;
 
+    // Rendered even with nothing observed yet: the actions row (export, import — the way to fill a fresh browser —
+    // and cache clearing) must stay reachable, and Feature FOL anchors its list on the dump
     const entries = collectStoredBidPrices();
-    if (entries.length === 0) return;
 
     const dump = document.createElement("div");
     dump.className = "wm-bsp-dump";
@@ -4103,24 +4105,54 @@ const MY_USERNAME = "xxx";
       rows.push({ cardName, entryEl, clearBtn });
     });
 
+    if (rows.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-bsp-dump-empty";
+      empty.textContent = "Aucun prix de vente observé pour le moment.";
+      dump.appendChild(empty);
+    }
+    logger(CPL.LOG, `Profile cache block rendered (${rows.length} card(s))`);
+
     const actionsRow = document.createElement("div");
     actionsRow.className = "wm-bsp-dump-actions";
 
-    // The whole cache, i.e. everything the export carries (prices, estimates, followed players, descriptions), as
-    // stored: localStorage keeps UTF-16, so 2 bytes per character of every key and raw value
-    const totalCacheSizeBytes = Object.entries(
-      collectTaggedCacheEntries(),
-    ).reduce((sum, [key, raw]) => sum + (key.length + raw.length) * 2, 0);
+    // The whole cache, i.e. everything the export carries (prices, estimates, followed players, descriptions). Stored
+    // in localStorage it is JSON in UTF-16 (2 bytes per character of every key and raw value); the figure shown is
+    // what it weighs as the CSV it is exported to and imported from, which a study found 1.8 times lighter
+    const totalCacheSizeBytes =
+      Object.entries(collectTaggedCacheEntries()).reduce(
+        (sum, [key, raw]) => sum + (key.length + raw.length) * 2,
+        0,
+      ) / JSON_TO_CSV_COST_RATIO;
     const totalCacheSizeKb = (totalCacheSizeBytes / 1024).toFixed(1);
 
     const clearCacheBtn = document.createElement("button");
     clearCacheBtn.type = "button";
     clearCacheBtn.className = "wm-bsp-dump-clear-cache";
-    clearCacheBtn.textContent = `Vider le cache (${totalCacheSizeKb} Ko)`;
+    clearCacheBtn.textContent = `Vider le cache (~${totalCacheSizeKb} Ko)`;
     actionsRow.appendChild(clearCacheBtn);
 
     clearCacheBtn.addEventListener("click", () => {
-      logger(CPL.INFO, `Cache cleared (${rows.length} card(s))`);
+      // Feature ETS's estimates ("eval-{card name}") go too; the keys are snapshotted as removing shifts the indices
+      const evalKeys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(EVAL_KEY_PREFIX)) evalKeys.push(key);
+      }
+
+      if (
+        !confirm(
+          `Vider le cache : supprimer les prix de vente observés de ${rows.length} carte(s) et ${evalKeys.length} estimation(s) ? Cette action est définitive.`,
+        )
+      ) {
+        logger(CPL.LOG, "Cache clearing cancelled");
+        return;
+      }
+      logger(
+        CPL.INFO,
+        `Cache cleared (${rows.length} card(s) of prices, ${evalKeys.length} estimate(s))`,
+      );
+      evalKeys.forEach((key) => localStorage.removeItem(key));
       rows.forEach(({ cardName, entryEl, clearBtn }) => {
         localStorage.removeItem(getBspObservedStorageKey(cardName));
         clearBtn.remove();
@@ -4165,6 +4197,12 @@ const MY_USERNAME = "xxx";
         padding: 0.75rem 1rem;
         border-radius: 0.75rem;
         border: 1px solid var(--color-border);
+      }
+      .wm-bsp-dump-empty {
+        grid-column: 1 / -1;
+        margin: 0;
+        font-size: 0.85rem;
+        opacity: 0.6;
       }
       .wm-bsp-dump-folded > :not(.wm-bsp-dump-title) {
         display: none;
