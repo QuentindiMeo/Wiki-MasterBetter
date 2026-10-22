@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.29.10
+// @version      0.29.13
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -255,7 +255,7 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 1b: On auction pages (/marketplace/{UUID}), hide every button.shrink-0 (wishlist button, market button)
+  // Rule 1b: On auction pages (/marketplace/{UUID}), hide every icon-only button.shrink-0 (wishlist button, market button)
   // ============================================================
   // Re-evaluated on every DOM mutation: the site is an SPA, so the page (and its buttons) may only be there once the
   // initial render is done, and the path changes without a reload.
@@ -263,6 +263,8 @@ const MY_USERNAME = "xxx";
     if (!/^\/marketplace\/[^/]+/.test(window.location.pathname)) return;
 
     document.querySelectorAll("button.shrink-0").forEach((btn) => {
+      // Only the icon-only round buttons: a button with a label (e.g. the seller's "Appliquer") must stay
+      if (btn.textContent.trim() !== "") return;
       if (btn.style.display !== "none") btn.style.display = "none";
     });
   }
@@ -1025,7 +1027,81 @@ const MY_USERNAME = "xxx";
 
   // ============================================================
   // Rule 9: on /marketplace, click the "Mes enchères" tab as soon as it appears in the DOM
+  // Rule 9 (cont'd): the "Parcourir" tab's sort selector (currently "Récemment listées") is switched to "Fin imminente"
+  // as soon as the user starts typing in the search input (once per appearance of the selector, so a later manual
+  // choice sticks).
   // ============================================================
+  // The selector only exists while the Parcourir tab is displayed, so every time the user reaches the tab a fresh
+  // element appears and is switched once (dataset.wmSortApplied); a later manual choice is left alone. Handles both a
+  // native <select> (value set through the native setter, then a bubbling "change", which React listens to) and a
+  // custom dropdown (button[role="combobox"], click it, then click the matching option).
+  const BROWSE_SORT_TARGET_LABEL = "Fin imminente";
+  const BROWSE_SORT_CURRENT_LABEL = "Récemment listées";
+
+  function findBrowseSortSelect() {
+    return Array.from(document.querySelectorAll("select")).find((select) =>
+      Array.from(select.options).some(
+        (option) => option.textContent.trim() === BROWSE_SORT_TARGET_LABEL,
+      ),
+    );
+  }
+
+  function findBrowseSortCombobox() {
+    return Array.from(
+      document.querySelectorAll(
+        'button[role="combobox"], button[aria-haspopup]',
+      ),
+    ).find((btn) => btn.textContent.trim() === BROWSE_SORT_CURRENT_LABEL);
+  }
+
+  function applyBrowseSortEndingSoon() {
+    if (!window.location.pathname.startsWith("/marketplace")) return;
+
+    const select = findBrowseSortSelect();
+    if (select) {
+      if (select.dataset.wmSortApplied === "true") return;
+      select.dataset.wmSortApplied = "true";
+      const option = Array.from(select.options).find(
+        (o) => o.textContent.trim() === BROWSE_SORT_TARGET_LABEL,
+      );
+      if (select.value === option.value) return;
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      ).set.call(select, option.value);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      logger(CPL.INFO, `Browse sort switched to "${BROWSE_SORT_TARGET_LABEL}"`);
+      return;
+    }
+
+    const combobox = findBrowseSortCombobox();
+    if (!combobox || combobox.dataset.wmSortApplied === "true") return;
+    combobox.dataset.wmSortApplied = "true";
+    combobox.click();
+    // The options render after the click
+    setTimeout(() => {
+      const option = Array.from(
+        document.querySelectorAll(
+          '[role="option"], [role="menuitem"], li, button',
+        ),
+      ).find(
+        (el) =>
+          el.children.length === 0 &&
+          el.textContent.trim() === BROWSE_SORT_TARGET_LABEL,
+      );
+      if (!option) {
+        logger(
+          CPL.WARN,
+          `Browse sort: option "${BROWSE_SORT_TARGET_LABEL}" not found`,
+        );
+        document.body.click();
+        return;
+      }
+      option.click();
+      logger(CPL.INFO, `Browse sort switched to "${BROWSE_SORT_TARGET_LABEL}"`);
+    }, 100);
+  }
+
   function clickAuctionsTabOnArrival() {
     if (!window.location.pathname.startsWith("/marketplace")) return;
 
@@ -1038,6 +1114,10 @@ const MY_USERNAME = "xxx";
 
   function watchAuctionsTabArrival() {
     clickAuctionsTabOnArrival();
+
+    document.addEventListener("input", (event) => {
+      if (event.target instanceof HTMLInputElement) applyBrowseSortEndingSoon();
+    });
 
     const observer = new MutationObserver(() => clickAuctionsTabOnArrival());
     observer.observe(document.body, { childList: true, subtree: true });
@@ -3247,6 +3327,8 @@ const MY_USERNAME = "xxx";
   // (tolérable), red (excessif). ▼ means the price sits below the reference average (légendaire to agréable), ▲ at or
   // above it (tolérable, excessif). Hovering the arrow tells the grade and the reference; with 2 stored prices or
   // fewer the reference is flagged as unreliable (dimmed arrow), as the bid page's "indice peu fiable" tag does.
+  // The listed amount is the current bid, so what is graded (and compared to the reference for the arrow's direction)
+  // is that amount + 10% (MPA_NEXT_BID_RATIO), the price a new bid would actually cost.
   // Cards without a cache entry get no arrow; arrows are removed when leaving the tab. Updated in place when a card's
   // price changes, since the site re-renders the list.
   // The search results vary with every search and take a while to resolve: changes are watched inside
@@ -3255,6 +3337,7 @@ const MY_USERNAME = "xxx";
   // the tab's active state is tracked separately.
   // ============================================================
   const MPA_ARROW_CLASS = "wm-mpa-arrow";
+  const MPA_NEXT_BID_RATIO = 1.1;
 
   // The tabs the arrows apply to: "Parcourir" and "Mes enchères"
   const MPA_TAB_LABELS = ["Parcourir", "Mes enchères"];
@@ -3296,12 +3379,14 @@ const MY_USERNAME = "xxx";
       } catch {
         stored = [];
       }
-      const price = parseInt(
+      // The listed amount is the current bid: bidding on the card costs 10% more, and that is what is compared
+      const currentPrice = parseInt(
         priceEl.textContent
           .match(/\d[\d\s\u00a0\u202f]*/)?.[0]
           .replace(/\s/g, ""),
         10,
       );
+      const price = Math.ceil(currentPrice * MPA_NEXT_BID_RATIO);
       const reference = isValidBspPriceArray(stored)
         ? computeWeightedAveragePrice(stored.map((e) => parseInt(e, 10)))
         : null;
@@ -4496,7 +4581,11 @@ const MY_USERNAME = "xxx";
     { id: "feature-npn", label: "Épingle pour la barre latérale" },
     { id: "rule-7", label: "Tout marquer lu au clic sur la 1ère notification" },
     { id: "feature-tbc", label: "Bouton d'échange rapide sur la collection" },
-    { id: "rule-9", label: "Ouvrir automatiquement l'onglet « Mes enchères »" },
+    {
+      id: "rule-9",
+      label:
+        "Ouvrir « Mes enchères » à l'arrivée et trier « Parcourir » par fin imminente à la saisie",
+    },
     { id: "rule-10", label: "Mise à jour du compteur au clic sur un objet" },
     { id: "rule-11", label: "Opacité réduite de l'incitation Pro épuisée" },
     { id: "rule-12", label: "Boutons d'action plus visibles sur les profils" },
@@ -9171,15 +9260,16 @@ const MY_USERNAME = "xxx";
   // then reads "Surveillée"; clicking it again removes the auction from the array). On the marketplace's list page,
   // a "Surveillées" button is appended to h1.text-2xl.gap-2: it opens a popover listing the watched auctions,
   // newest first, each a link to its page with how long ago it was watched and a "✕" to stop watching it. Every
-  // time /profile is reached, the watched entries whose epoch is older than the "Suppression auto." delay of the Config tab (Feature CFG, default 7 days), counted from the auction's end (or that can't be read) are
+  // time /profile is reached, the watched entries whose epoch is older than the "Suppression auto." delay of the
+  // Configuration tab (Feature CFG, default 7 days), counted from the auction's end (or that can't be read) are
   // removed from the array; any other entry of "wm-saved" is left alone.
   //
   // Feature WAT (cont'd): on the marketplace's list page, every card (div[id^="marketplace-auction-"], whose id ends
   // with the auction's UUID) also gets a small pin button docked at its top right corner (button.wm-card-pin)
-  // that watches / unwatches that auction the same way, without opening the card (its click is stopped before it
+  // that watches / un-watches that auction the same way, without opening the card (its click is stopped before it
   // reaches the card). The pin is filled while the auction is watched.
   //
-  // Feature WAT (cont'd): visiting a watched auction that is over unwatches it automatically. "Over" is: the page has
+  // Feature WAT (cont'd): visiting a watched auction that is over un-watches it automatically. "Over" is: the page has
   // finished loading (no div.animate-spin, h1.flex-1 and span.text-2xl present, and the DOM has been quiet for a
   // second, so a page still hydrating isn't mistaken for an ended auction) and the "time left" span
   // (span.tabular-nums.font-medium, same as Feature PNB's) is absent.
@@ -9682,7 +9772,7 @@ const MY_USERNAME = "xxx";
 
     if (document.querySelector("span.tabular-nums.font-medium")) return;
 
-    logger(CPL.INFO, `Watched auction is over, unwatching it (${id})`);
+    logger(CPL.INFO, `Watched auction is over, un-watching it (${id})`);
     if (toggleWatchedAuction(id, getBidPageCardName()) === false)
       ensureWatchButton();
   }

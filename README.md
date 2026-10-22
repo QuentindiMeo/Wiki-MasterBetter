@@ -91,7 +91,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 ### 💰 Marché & Enchères
 
-- **Onglet « Mes enchères » par défaut** : L'arrivée ouvre automatiquement cet onglet
+- **Onglet « Mes enchères » par défaut** : L'arrivée ouvre automatiquement cet onglet ; sur « Parcourir », le tri bascule sur « Fin imminente » dès que vous commencez à saisir une recherche
 - **Regroupement des enchères** : Bascule pour séparer « Mes enchères » en groupes « Surenchéri » / « Vous menez »
 - **Alertes d'expiration** : Une notification push prévient qu'il reste 30 secondes sur une enchère ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut, par onglet)
 - **Lueur rouge en fin d'enchère** : Le décompte « Se termine dans... » se met à luire en rouge quand il reste moins de 10 secondes
@@ -103,7 +103,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Un indice de fiabilité accompagne le tag
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
 - **Enchères surveillées** : Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle en haut à droite de chaque carte de `/marketplace`) la garde de côté ; un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, triées par date de fin (celles en cours d'abord, la plus proche en tête), avec le temps restant, pour y retourner d'un clic ; une pastille « Ouvrir les enchères terminées (n) » les ouvre toutes d'un coup dans de nouveaux onglets. Une enchère terminée depuis plus longtemps que le délai choisi dans le panneau de configuration (par défaut 7 jours) est défaussée
-- **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
+- **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère, en comparant le prix affiché majoré de 10 % (le coût d'une nouvelle enchère) : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
 
 ### 📦 Catalogue
 
