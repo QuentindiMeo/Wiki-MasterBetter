@@ -55,3 +55,4 @@ When updating the README, check ALL rules/features (both from the documentation 
 - **Rechargement automatique** : Une fois la pile de paquets pleine, la page se recharge d'elle-même toutes les 10 minutes tant qu'elle le reste
 - **Notifications de liste de souhaits clarifiées** : Le nom de la carte mise en vente est encadré de guillemets, et « mise en vente » est teinté en rose pour mieux se repérer
 - **Pages d'enchère épurées** : Les boutons annexes (liste de souhaits, analyse du marché) sont masqués sur les pages d'enchère, dès que la page a fini de s'afficher, y compris après une navigation sans rechargement
+- **Rechargement automatique en cas d'échec** : Si la page affiche un message rouge « a échoué », elle se recharge d'elle-même peu après ; de même, sur n'importe quelle page, si un titre « This page couldn't load » apparaît (avec au plus 3 rechargements par minute, pour ne pas boucler sur une page durablement cassée)

@@ -76,7 +76,6 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Top 40 des estimations** : Un bouton « Top 40 » à droite du titre ouvre en fondu une modale listant les 40 plus grosses estimations mémorisées en trois colonnes, la première mise en avant par une lueur dorée pulsante ; un ✕ supprime une estimation du cache
 - **Étiquetage « TBD » (désactivée par défaut)** : Les évaluations en masse étiquettent « TBD » les cartes sans valeur déclarée sur le marché — à condition qu'elles n'aient encore aucune étiquette
 - **Halo sur les cartes sans estimation** : Un interrupteur « Sans estimation » après le bouton « Top 40 » entoure d'un halo rouge clair les cartes de la page sans estimation (un « ? » compte comme une estimation) ; son état est mémorisé
-- **Rechargement automatique en cas d'échec** : Si la page affiche un message rouge « a échoué », elle se recharge d'elle-même peu après
 - **Liste d'étiquettes lisible** : Plus de place pour afficher les étiquettes, et la liste se trie par ordre décroissant dès que les compteurs sont chargés ; à l'ouverture du filtre, le clavier navigue directement dans la liste (flèches, Début/Fin, saisie des premières lettres d'un nom)
 - **Durée d'enchère par défaut** : À l'ouverture de la modale de vente d'une carte, le bouton de durée choisi dans le panneau de configuration est sélectionné automatiquement
 - **Copier le nom d'une carte** : Un bouton 📋 à côté du nom, dans la modale de carte comme dans la modale d'enchère

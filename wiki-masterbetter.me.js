@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.29.13
+// @version      0.29.14
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -1395,6 +1395,12 @@ const MY_USERNAME = "xxx";
   // Rule 29 (cont'd): on /collection, the same one-shot reload fires once a p.text-red-400/90 whose text contains
   // "a échoué" (the site's own failure message) is showing, after COLLECTION_FAILURE_RELOAD_DELAY_MS. It disappearing
   // before then cancels it; if it's still there after the reload, the timeout simply re-arms.
+  //
+  // Rule 29 (cont'd): on any page, the same one-shot reload fires once an h1 reading "This page couldn't load" (the
+  // framework's error page, whichever apostrophe it uses) shows up, after PAGE_LOAD_FAILURE_RELOAD_DELAY_MS. Unlike
+  // the others, this one could loop forever on a page that stays broken, so reloads are counted in sessionStorage:
+  // after PAGE_LOAD_FAILURE_MAX_RELOADS of them within PAGE_LOAD_FAILURE_WINDOW_MS it stops (and says so) until
+  // the window has passed.
   // ============================================================
   const PULLS_RELOAD_INTERVAL_MS = 600000; // 10 minutes
   const AUCTION_NOT_FOUND_RELOAD_DELAY_MS = 750;
@@ -1403,6 +1409,12 @@ const MY_USERNAME = "xxx";
   const COLLECTION_FAILURE_PHRASE = "a échoué";
   let auctionNotFoundReloadTimerId = null;
   let collectionFailureReloadTimerId = null;
+  const PAGE_LOAD_FAILURE_PHRASE = "this page couldn't load";
+  const PAGE_LOAD_FAILURE_RELOAD_DELAY_MS = 2000;
+  const PAGE_LOAD_FAILURE_MAX_RELOADS = 3;
+  const PAGE_LOAD_FAILURE_WINDOW_MS = 60000;
+  const PAGE_LOAD_FAILURE_RELOADS_KEY = "wm-page-load-failure-reloads";
+  let pageLoadFailureReloadTimerId = null;
 
   function isPullsPileFull() {
     return (
@@ -1425,6 +1437,38 @@ const MY_USERNAME = "xxx";
         p.textContent.includes(COLLECTION_FAILURE_PHRASE),
       )
     );
+  }
+
+  function isPageLoadFailureShowing() {
+    return Array.from(document.querySelectorAll("h1")).some((h1) =>
+      h1.textContent
+        .replace(/[\u2018\u2019]/g, "'")
+        .toLowerCase()
+        .includes(PAGE_LOAD_FAILURE_PHRASE),
+    );
+  }
+
+  // Reload timestamps of the last window, kept for the browser session; returns them with the new one when allowed
+  function registerPageLoadFailureReload() {
+    let recent = [];
+    try {
+      recent = JSON.parse(
+        sessionStorage.getItem(PAGE_LOAD_FAILURE_RELOADS_KEY) ?? "[]",
+      ).filter((at) => Date.now() - at < PAGE_LOAD_FAILURE_WINDOW_MS);
+    } catch {
+      recent = [];
+    }
+    if (recent.length >= PAGE_LOAD_FAILURE_MAX_RELOADS) return false;
+
+    try {
+      sessionStorage.setItem(
+        PAGE_LOAD_FAILURE_RELOADS_KEY,
+        JSON.stringify([...recent, Date.now()]),
+      );
+    } catch {
+      // Storage blocked: reload anyway, the page just can't be capped
+    }
+    return true;
   }
 
   function updatePullsReloadTimer() {
@@ -1490,15 +1534,44 @@ const MY_USERNAME = "xxx";
     }, COLLECTION_FAILURE_RELOAD_DELAY_MS);
   }
 
+  function updatePageLoadFailureReloadTimer() {
+    if (!isPageLoadFailureShowing()) {
+      if (pageLoadFailureReloadTimerId !== null) {
+        clearTimeout(pageLoadFailureReloadTimerId);
+        pageLoadFailureReloadTimerId = null;
+      }
+      return;
+    }
+
+    if (pageLoadFailureReloadTimerId !== null) return;
+
+    pageLoadFailureReloadTimerId = setTimeout(() => {
+      pageLoadFailureReloadTimerId = null;
+      if (!isPageLoadFailureShowing()) return;
+
+      if (!registerPageLoadFailureReload()) {
+        logger(
+          CPL.ERROR,
+          `Page still fails to load after ${PAGE_LOAD_FAILURE_MAX_RELOADS} reloads, giving up for now`,
+        );
+        return;
+      }
+      logger(CPL.WARN, "Auto-reload: page couldn't load");
+      window.location.reload();
+    }, PAGE_LOAD_FAILURE_RELOAD_DELAY_MS);
+  }
+
   function watchPullsReloadTimer() {
     updatePullsReloadTimer();
     updateAuctionNotFoundReloadTimer();
     updateCollectionFailureReloadTimer();
+    updatePageLoadFailureReloadTimer();
 
     const observer = new MutationObserver(() => {
       updatePullsReloadTimer();
       updateAuctionNotFoundReloadTimer();
       updateCollectionFailureReloadTimer();
+      updatePageLoadFailureReloadTimer();
     });
     observer.observe(document.body, {
       childList: true,
