@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.29.19
+// @version      0.30.3
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -15,8 +15,6 @@
 // ==/UserScript==
 //! Regarde Naïm, c'est comme ça qu'on vibe-claude.
 //* Merci @Petipoirou67 pour ses feedbacks et son support (pour son courage et sa persévérance, wébé !)
-
-const MY_USERNAME = "xxx";
 
 (function () {
   "use strict";
@@ -1066,7 +1064,8 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 9: on /marketplace, click the "Mes enchères" tab as soon as it appears in the DOM
+  // Rule 9: on /marketplace, click the configured tab ("Mes enchères" by default; Config tab, "Onglet du marché ouvert
+  // par défaut": "Parcourir", "Mes enchères", "Historique", "Gagnées" or "Aucun" for none) as soon as it appears in the DOM
   // Rule 9 (cont'd): the "Parcourir" tab's sort selector (currently "Récemment listées") is switched to "Fin imminente"
   // as soon as the user starts typing in the search input (once per appearance of the selector, so a later manual
   // choice sticks).
@@ -1142,13 +1141,25 @@ const MY_USERNAME = "xxx";
     }, 100);
   }
 
+  // The tabs the setting can pick (the labels the site is known to use), the configured one being the only one ever
+  // clicked. Every tab button seen is marked (dataset.wmAutoClicked: "true" when clicked, "seen" otherwise), so that
+  // changing the setting later never clicks anything on an already open page: it applies on the next arrival.
   function clickAuctionsTabOnArrival() {
     if (!window.location.pathname.startsWith("/marketplace")) return;
 
-    const btn = findAuctionsTabButton();
-    if (!btn || btn.dataset.wmAutoClicked === "true") return;
+    const fresh = DEFAULT_MARKETPLACE_TAB_LABELS.map((label) =>
+      findMarketplaceTabButton(label),
+    ).filter((btn) => btn && !btn.dataset.wmAutoClicked);
+    if (fresh.length === 0) return;
+    fresh.forEach((btn) => (btn.dataset.wmAutoClicked = "seen"));
+
+    const label = getConfigValue(DEFAULT_MARKETPLACE_TAB_CONFIG_ID);
+    if (!label) return;
+    const btn = findMarketplaceTabButton(label);
+    if (!btn || !fresh.includes(btn)) return;
 
     btn.dataset.wmAutoClicked = "true";
+    logger(CPL.INFO, `Marketplace tab "${label}" opened by default`);
     btn.click();
   }
 
@@ -1284,9 +1295,11 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Feature PNP: on /pulls, once div.text-lg > span.text-[var(--color-accent)]'s count reaches ~69% of the max
-  // pile size (10), send a push notification on every further increase; once it hits the max, re-send every 10
-  // minutes for as long as it stays full instead of only once. Drops back below that ~69% floor resets tracking.
+  // Feature PNP: on /pulls, once div.text-lg > span.text-[var(--color-accent)]'s count reaches the threshold
+  // chosen in Feature CFG (50, 70, 90 by default, or 100 % of the max pile size, 10; the stored proportion is lowered by 1
+  // point to absorb floating point uncertainty), send a push notification on every further increase; once it hits the
+  // max, re-send every 10 minutes for as long as it stays full instead of only once. Dropping below the threshold
+  // resets tracking (so changing the setting never replays old notifications).
   //
   // Feature PNP (cont'd): a 🔔/🔕 toggle appended into div.gap-1.flex-col mutes this notification — off
   // (muted) by default. Unlike Feature PNB's own toggle, the choice is stored in localStorage rather than
@@ -1350,11 +1363,25 @@ const MY_USERNAME = "xxx";
       }
     `);
 
-    const PILE_PROPORTION_NOTIFICATION_LIMIT = 0.9 - 0.01; // % of the max pile size, minus floating point uncertainty
     const TIME_TO_RELOAD__MIN = 10;
     const RESEND_INTERVAL_MS = 10 * 60 * 1000;
     let lastNotifiedValue = null;
     let lastNotifiedAt = 0;
+
+    // The "Seuil d'alerte de la pile de paquets" setting of Feature CFG (90 % by default), read at each check so a
+    // change applies right away; logged only when it differs from the previous check
+    let lastLoggedPileThreshold = null;
+    function getPileNotificationThreshold() {
+      const proportion = getConfigValue(PILE_NOTIFICATION_THRESHOLD_CONFIG_ID);
+      if (proportion !== lastLoggedPileThreshold) {
+        lastLoggedPileThreshold = proportion;
+        logger(
+          CPL.INFO,
+          `[PNP] Notification threshold: ${proportion} of ${MAX_PILE_SIZE} packs (from ${Math.ceil(MAX_PILE_SIZE * proportion)})`,
+        );
+      }
+      return proportion;
+    }
 
     function sendPullsNotification(newPackageCount) {
       lastNotifiedValue = newPackageCount;
@@ -1385,7 +1412,7 @@ const MY_USERNAME = "xxx";
       const currentPacksToOpen = getCurrentPacksToOpen();
       if (
         currentPacksToOpen === null ||
-        currentPacksToOpen < MAX_PILE_SIZE * PILE_PROPORTION_NOTIFICATION_LIMIT
+        currentPacksToOpen < MAX_PILE_SIZE * getPileNotificationThreshold()
       ) {
         lastNotifiedValue = null;
         lastNotifiedAt = 0;
@@ -1728,10 +1755,15 @@ const MY_USERNAME = "xxx";
   // Remembers each flex-wrap's original child order for un-grouping.
   const auctionWrapOriginalOrder = new WeakMap();
 
-  function findAuctionsTabButton() {
+  // The marketplace tab button whose text starts with the label (Rule 9 and this feature both rely on it)
+  function findMarketplaceTabButton(label) {
     return Array.from(document.querySelectorAll("button.px-4")).find((btn) =>
-      btn.textContent.trim().startsWith("Mes enchères"),
+      btn.textContent.trim().startsWith(label),
     );
+  }
+
+  function findAuctionsTabButton() {
+    return findMarketplaceTabButton("Mes enchères");
   }
 
   // Hides leftover ungrouped nodes React inserted before the group headings
@@ -2063,10 +2095,11 @@ const MY_USERNAME = "xxx";
   // Rule 32: on a bid page (/marketplace/{UUID}, same BID_PAGE_REGEX as Feature PNB), give span.tabular-nums.font-
   // medium ("Se termine dans {time left}", the same span Feature PNB watches) a red glow — the same pulsing
   // box-shadow/text-shadow treatment Feature BSP's wm-legendary badge gets, just in red instead of gold — once the
-  // time remaining drops under 10 seconds. The countdown's own text is parsed rather than assumed to always carry
-  // a "30s"-style suffix like Feature PNB checks for, since anywhere from 1 to 9 seconds left is also possible.
+  // time remaining drops to the "Seuil de la lueur rouge de fin d'enchère" setting of Feature CFG or below (5, 10,
+  // 15 by default, or 30 seconds). The countdown's own text is parsed rather than assumed to always carry
+  // a "30s"-style suffix like Feature PNB checks for, since any number of seconds left is also possible. The setting
+  // is read at each tick (every second), and the glow is toggled both ways, so a change applies without a reload.
   // ============================================================
-  const BID_TIMER_URGENT_THRESHOLD_SECONDS = 15;
   const BID_TIMER_REMAINING_REGEX = /dans\s+(?:(\d+)h\s*)?(?:(\d+)m\s*)?(\d+)s/;
 
   function getBidTimerRemainingSeconds(text) {
@@ -2079,6 +2112,13 @@ const MY_USERNAME = "xxx";
     return hours * 3600 + minutes * 60 + seconds;
   }
 
+  // Seconds left from which the countdown glows, from the setting of Feature CFG (15 by default)
+  function getBidTimerUrgentThreshold() {
+    const threshold = getConfigValue(BID_TIMER_URGENT_THRESHOLD_CONFIG_ID);
+    traceOnce(`[BTU] Red glow threshold: ${threshold} s left`);
+    return threshold;
+  }
+
   function updateBidTimerUrgency() {
     if (!BID_PAGE_REGEX.test(window.location.pathname)) return;
 
@@ -2087,7 +2127,7 @@ const MY_USERNAME = "xxx";
 
     const remaining = getBidTimerRemainingSeconds(span.textContent.trim());
     const isUrgent =
-      remaining !== null && remaining <= BID_TIMER_URGENT_THRESHOLD_SECONDS;
+      remaining !== null && remaining <= getBidTimerUrgentThreshold();
 
     span.classList.toggle("wm-bid-timer-urgent", isUrgent);
   }
@@ -2530,12 +2570,12 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Rule 33: on a bid page (/marketplace/{UUID}), force button.bg-[var(--color-accent)] (the "place a bid" button)
   // to a light red background when the current highest bidder — ul.card-frame's first entry, the bidder's name
-  // being the <span> inside its p.text-xs — is MY_USERNAME, as a reminder you're already leading and don't need
+  // being the <span> inside its p.text-xs — is your pseudo (Feature CFG's "Votre pseudo WikiMasters"), as a reminder you're already leading and don't need
   // to bid again.
   // ============================================================
   function isMyUsernameLeadingBid() {
     const nameSpan = document.querySelector("div.card-frame p.text-xs span");
-    return nameSpan?.textContent.trim() === MY_USERNAME;
+    return isMyUsername(nameSpan?.textContent.trim());
   }
 
   function updateOwnBidButtonColor() {
@@ -2582,13 +2622,41 @@ const MY_USERNAME = "xxx";
   // "observed-{card name}" (h1.flex-1). A legacy entry still stored under the untagged card name is migrated to that
   // prefixed key on read. Skips while div.animate-spin is present (the page is still loading). Each stored entry is
   // tagged as "{price}-{tag}", tag being the bid UUID's second segment, so the same bid can never be recorded twice.
-  // Each card keeps at most N entries: once full, a new price replaces the array's current highest value, but only
-  // when it's strictly lower than that value.
+  // Each card keeps at most N entries (the "Prix de vente gardés par carte" setting of Feature CFG, 7 by default,
+  // read when the code acts): once full, a new price replaces the array's current highest value, but only when it's
+  // strictly lower than that value. Lowering the setting never deletes anything by itself: an array longer than the
+  // new cap is only trimmed (its highest prices dropped) the next time that card is recorded or imported, and
+  // until then the reference average still works on all of its stored prices.
   // ============================================================
-  const MAX_STORED_PRICES = 7;
-  // Only this many of the stored prices (the lowest ones) feed the reference average; the extra stored ones are a
-  // buffer that keeps a card's recent history without letting its higher prices weigh on the reference.
-  const REFERENCE_PRICES_COUNT = 5;
+  function getMaxStoredPrices() {
+    return getConfigValue(MAX_STORED_PRICES_CONFIG_ID);
+  }
+
+  // Only this many of the stored prices (the lowest ones) feed the reference average (the "Prix retenus pour la
+  // moyenne de référence" setting of Feature CFG, 5 by default); the extra stored ones are a buffer that keeps a card's
+  // recent history without letting its higher prices weigh on the reference. It can never exceed the stored cap
+  // (getMaxStoredPrices()): the clamp is applied here, when read, and warned about once per distinct clamp.
+  let lastReferenceCountClampKey = null;
+  function getReferencePricesCount() {
+    const configured = getConfigValue(REFERENCE_PRICES_COUNT_CONFIG_ID);
+    const maxStored = getMaxStoredPrices();
+    const effective = Math.min(configured, maxStored);
+
+    if (effective !== configured) {
+      const clampKey = `${configured}/${maxStored}`;
+      if (clampKey !== lastReferenceCountClampKey) {
+        lastReferenceCountClampKey = clampKey;
+        logger(
+          CPL.WARN,
+          `[BSP] Reference prices count ${configured} exceeds the stored cap ${maxStored}: using ${effective}`,
+        );
+      }
+    } else {
+      lastReferenceCountClampKey = null;
+    }
+
+    return effective;
+  }
   const PRICE_ENTRY_REGEX = /^\d+-[0-9a-f]+$/i;
   const BSP_KEY_PREFIX = "observed-";
 
@@ -2629,7 +2697,7 @@ const MY_USERNAME = "xxx";
   }
 
   // Feature BSP (cont'd): the reference price averaged from stored entries is weighted rather than plain, and only
-  // covers the REFERENCE_PRICES_COUNT lowest of them (a card stores up to MAX_STORED_PRICES) —
+  // covers the getReferencePricesCount() lowest of them (5 by default; a card stores up to getMaxStoredPrices() of them, 7 by default) —
   // out of N prices, the lowest weighs N, the second-lowest N-1, ... the highest weighs 1 — so a single high
   // outlier among mostly-low sales pulls the reference up less than an unweighted average would.
   function computeWeightedAveragePrice(numericPrices) {
@@ -2637,7 +2705,7 @@ const MY_USERNAME = "xxx";
 
     const sorted = [...numericPrices]
       .sort((a, b) => a - b)
-      .slice(0, REFERENCE_PRICES_COUNT);
+      .slice(0, getReferencePricesCount());
     const n = sorted.length;
 
     let weightedSum = 0;
@@ -2684,7 +2752,7 @@ const MY_USERNAME = "xxx";
     // Feature BSP (cont'd) handles the seller's own completed sales instead (see updateSnipableBadge) — don't let them
     // pollute the market-observed average. Applies to the viewer's own auctions whatever their outcome, an unsold
     // ("Non vendue") one included.
-    if (getBidPageSellerUsername() === MY_USERNAME) return;
+    if (isMyUsername(getBidPageSellerUsername())) return;
 
     // Read h1.flex-1's own text node directly (rather than its full textContent) since Feature CNC prepends a
     // 📋 button inside that same element — including it here would corrupt the "observed-{cardName}" cache key.
@@ -2719,9 +2787,21 @@ const MY_USERNAME = "xxx";
 
     const entry = `${price}-${tag}`;
 
-    if (prices.length < MAX_STORED_PRICES) {
+    const maxStoredPrices = getMaxStoredPrices();
+    if (prices.length < maxStoredPrices) {
       prices.push(entry);
     } else {
+      // The cap may have been lowered since this card was last written: drop the highest prices down to it first
+      while (prices.length > maxStoredPrices) {
+        const surplusEntry = prices.reduce((max, current) =>
+          parseInt(current, 10) > parseInt(max, 10) ? current : max,
+        );
+        prices.splice(prices.indexOf(surplusEntry), 1);
+        logger(
+          CPL.LOG,
+          `Stored prices over the cap (${maxStoredPrices}) for "${cardName}": dropped ${surplusEntry}`,
+        );
+      }
       const highestEntry = prices.reduce((max, current) =>
         parseInt(current, 10) > parseInt(max, 10) ? current : max,
       );
@@ -2761,8 +2841,8 @@ const MY_USERNAME = "xxx";
   // Feature BBS: remembers the user's biggest sales and biggest purchases, each in its own localStorage entry
   // (BEST_TRADE_KINDS: "wm-observed-best-sells" / "wm-observed-best-buys"): an array of single-key objects
   // ({ "{card name}": "{amount}-{tag}" }, tag being the bid UUID's second segment, same tagged format as Feature
-  // BSP's entries), kept sorted from the biggest amount to the smallest and capped at TOP_LIMIT entries (same size as Rule 35's
-  // list). Once full, a new trade only gets in when it's strictly bigger than the current smallest entry, which it
+  // BSP's entries), kept sorted from the biggest amount to the smallest and capped at getTopLimit() entries (the "Taille des classements « Top »" setting of Feature CFG, default 40, shared with Rule 35's
+  // list; a lowered limit trims the stored list the next time it is written). Once full, a new trade only gets in when it's strictly bigger than the current smallest entry, which it
   // replaces. A trade whose tag is already stored is skipped, so revisiting an auction
   // never records it twice; with no tag available, nothing is recorded. Skips while div.animate-spin is present
   // (the page is still loading). Unlike Feature BSP's "observed-" cache, which deliberately ignores the user's own
@@ -2773,12 +2853,12 @@ const MY_USERNAME = "xxx";
   // "{amount}-{tag}". Entries already stored are brought up to date with refreshBestTradeCutoffs (on startup, and
   // whenever the profile modal opens), since their eval may have appeared or moved since they were recorded.
   // Two sources feed each entry:
-  //  - a bid page, once span.font-medium reads "Vendue" and the seller (getBidPageSellerUsername) is MY_USERNAME
+  //  - a bid page, once span.font-medium reads "Vendue" and the seller (getBidPageSellerUsername) is your pseudo (Feature CFG's "Votre pseudo WikiMasters")
   //    (sells), or the winning bidder is (isMyUsernameLeadingBid; buys), the final price being span.text-2xl;
   //  - /marketplace, while the kind's tab ("Historique" for sells, "Gagnées" for buys — the tab button whose text
   //    starts with it, carrying border-b-2) is the active one: every div[id^="marketplace-auction-"] card whose
   //    label span (span.uppercase) reads "Vendue pour" (not "Non vendue") / "Achetée pour", and — for sells only —
-  //    whose "Vendu par {name}" line names MY_USERNAME. Card name from its h3, amount from the span right after
+  //    whose "Vendu par {name}" line names your pseudo (Feature CFG's "Votre pseudo WikiMasters"). Card name from its h3, amount from the span right after
   //    the label, tag from the UUID in the card's id.
   // ============================================================
   const BEST_TRADE_KINDS = {
@@ -2786,14 +2866,12 @@ const MY_USERNAME = "xxx";
       key: "wm-observed-best-sells",
       tabLabel: "Historique",
       cardLabel: "Vendue pour",
-      isOnBidPage: () => getBidPageSellerUsername() === MY_USERNAME,
+      isOnBidPage: () => isMyUsername(getBidPageSellerUsername()),
       isOnCard: (card) => {
         const sellerText = Array.from(card.querySelectorAll("p")).find((p) =>
           p.textContent.trim().startsWith("Vendu par "),
         )?.textContent;
-        return (
-          sellerText?.trim().match(/^Vendu par (\S+)/)?.[1] === MY_USERNAME
-        );
+        return isMyUsername(sellerText?.trim().match(/^Vendu par (\S+)/)?.[1]);
       },
       // Deal score of a sale: its premium over the eval (price / eval - 1, so 1.75 for "+175%"), see computeDealScore
       // (NaN without an eval)
@@ -2803,8 +2881,7 @@ const MY_USERNAME = "xxx";
       },
       cutoffHint:
         "Écart du prix de vente par rapport à la valeur estimée sur le marché : ",
-      // Lazy: TOP_LIMIT is only declared further down
-      modalTitle: () => `💰 Vos ${TOP_LIMIT} plus grosses ventes`,
+      modalTitle: () => `💰 Vos ${getTopLimit()} plus grosses ventes`,
       emptyText: "Aucune vente en cache pour le moment.",
       buttonIcon: "💰",
       buttonLabel: "Mes plus grosses ventes",
@@ -2823,7 +2900,7 @@ const MY_USERNAME = "xxx";
       },
       cutoffHint:
         "Écart du prix d'achat par rapport à la valeur estimée sur le marché : ",
-      modalTitle: () => `🛒 Vos ${TOP_LIMIT} plus gros achats`,
+      modalTitle: () => `🛒 Vos ${getTopLimit()} plus gros achats`,
       emptyText: "Aucun achat en cache pour le moment.",
       buttonIcon: "🛒",
       buttonLabel: "Mes plus gros achats",
@@ -2912,8 +2989,19 @@ const MY_USERNAME = "xxx";
     });
 
     if (trades.every((e) => e && typeof e === "object")) {
-      const sorted = sortBestTradesByAmount(trades);
-      if (sorted.some((entry, i) => entry !== trades[i])) changed = true;
+      const limit = getTopLimit();
+      const sorted = sortBestTradesByAmount(trades).slice(0, limit);
+      if (
+        sorted.length !== trades.length ||
+        sorted.some((entry, i) => entry !== trades[i])
+      ) {
+        if (sorted.length !== trades.length)
+          logger(
+            CPL.INFO,
+            `Best ${kind} trimmed to the configured size: ${trades.length} -> ${sorted.length}`,
+          );
+        changed = true;
+      }
       trades = sorted;
     }
 
@@ -2932,7 +3020,8 @@ const MY_USERNAME = "xxx";
     )
       return;
 
-    if (trades.length >= TOP_LIMIT) {
+    const limit = getTopLimit();
+    if (trades.length >= limit) {
       if (amount <= amountOf(trades[trades.length - 1])) return;
       trades.pop();
     }
@@ -2941,9 +3030,20 @@ const MY_USERNAME = "xxx";
     });
 
     trades.sort((a, b) => amountOf(b) - amountOf(a));
+    // A limit lowered since the last write leaves the stored list longer than it: trim it now
+    if (trades.length > limit) {
+      logger(
+        CPL.INFO,
+        `Best ${kind} trimmed to the configured size: ${trades.length} -> ${limit}`,
+      );
+      trades.length = limit;
+    }
 
     localStorage.setItem(BEST_TRADE_KINDS[kind].key, JSON.stringify(trades));
-    logger(CPL.LOG, `Best ${kind} recorded: "${cardName}" ${amount}`);
+    logger(
+      CPL.LOG,
+      `Best ${kind} recorded: "${cardName}" ${amount} (size limit ${limit})`,
+    );
   }
 
   function recordBestTradesFromBidPage() {
@@ -3043,7 +3143,7 @@ const MY_USERNAME = "xxx";
   // weighs 1, so a single high outlier pulls the reference up less than a plain average would), "agréable" when
   // it's between 80% and 100% of that average, "tolérable" when it's between 100% and 120%, or "excessive" when it's
   // above 120%; unflag it as soon as none of those is true. Below 50% of that average, with at least 5 stored sold
-  // prices backing it — i.e. that card's cache holds a full REFERENCE_PRICES_COUNT, so the average is
+  // prices backing it — so the average is
   // actually meaningful — it's flagged "prix extraordinaire" instead of "EXCELLENT"; below 20%, with that same
   // 5-entry restriction, and the price is at least LEGENDARY_MIN_DIFFERENCE below that average, it's flagged
   // "prix légendaire" instead (a smaller gap falls back to the lower tiers). When this bid's own price is
@@ -3053,7 +3153,7 @@ const MY_USERNAME = "xxx";
   // Skips while div.animate-spin is present (the page is still loading).
   //
   // Feature BSP (cont'd) — seller's own sale: when the auction just sold ("Vendue") and the seller (p.text-sm.mt-1's
-  // username) is MY_USERNAME, the tag instead grades how good a SALE it was — the mirror image of the buyer-facing
+  // username) is your pseudo (Feature CFG's "Votre pseudo WikiMasters"), the tag instead grades how good a SALE it was — the mirror image of the buyer-facing
   // grading: a price above 120% of the reference value is an "excellente" sale, above 100% "agréable", above 80%
   // "tolérable", below that "décevante". The reference here is the ETS eval price (localStorage "eval-{name}"),
   // not the "observed-" BSP average: recordSoldBidPrice never logs the seller's own sales there (see its own
@@ -3241,8 +3341,7 @@ const MY_USERNAME = "xxx";
       return;
     }
 
-    const isMySoldAuction =
-      isSold && getBidPageSellerUsername() === MY_USERNAME;
+    const isMySoldAuction = isSold && isMyUsername(getBidPageSellerUsername());
     const isMyWonAuction = isSold && isMyUsernameLeadingBid();
 
     // Your own sale is graded against the ETS eval price, not the "observed-" BSP cache: recordSoldBidPrice
@@ -3441,7 +3540,8 @@ const MY_USERNAME = "xxx";
   // above it (tolérable, excessif). Hovering the arrow tells the grade and the reference; with 2 stored prices or
   // fewer the reference is flagged as unreliable (dimmed arrow), as the bid page's "indice peu fiable" tag does.
   // The listed amount is the current bid, so what is graded (and compared to the reference for the arrow's direction)
-  // is that amount + 10% (MPA_NEXT_BID_RATIO), the price a new bid would actually cost.
+  // is that amount + 10% (MPA_NEXT_BID_RATIO), the price a new bid would actually cost, but only for a card in the
+  // "Surenchéri" state (you were outbid); any other card is graded at its listed price.
   // Cards without a cache entry get no arrow; arrows are removed when leaving the tab. Updated in place when a card's
   // price changes, since the site re-renders the list.
   // The search results vary with every search and take a while to resolve: changes are watched inside
@@ -3492,14 +3592,20 @@ const MY_USERNAME = "xxx";
       } catch {
         stored = [];
       }
-      // The listed amount is the current bid: bidding on the card costs 10% more, and that is what is compared
+      // The listed amount is the current bid. On a card you were outbid on ("Surenchéri" label, the same one Feature
+      // TMB groups by), bidding again costs 10% more, and that is what is compared; any other card is compared as listed
       const currentPrice = parseInt(
         priceEl.textContent
           .match(/\d[\d\s\u00a0\u202f]*/)?.[0]
           .replace(/\s/g, ""),
         10,
       );
-      const price = Math.ceil(currentPrice * MPA_NEXT_BID_RATIO);
+      const isOutbid = (
+        card.querySelector("span.rounded-lg")?.textContent ?? ""
+      ).includes("Surenchéri");
+      const price = isOutbid
+        ? Math.ceil(currentPrice * MPA_NEXT_BID_RATIO)
+        : currentPrice;
       const reference = isValidBspPriceArray(stored)
         ? computeWeightedAveragePrice(stored.map((e) => parseInt(e, 10)))
         : null;
@@ -3843,7 +3949,7 @@ const MY_USERNAME = "xxx";
   //    fresher. A value that is neither "?" nor a number is invalid and skipped.
   //  - "observed-{name}" (Feature BSP): the union of both arrays, deduplicated — tagged entries by their tag (the
   //    same bid is the same trade, whichever side recorded it; local copy kept), legacy plain numbers by
-  //    multiplicity (max of both sides' counts, so they aren't doubled by a second import). Over MAX_STORED_PRICES,
+  //    multiplicity (max of both sides' counts, so they aren't doubled by a second import). Over the configured cap (getMaxStoredPrices()),
   //    the lowest prices are kept — the outcome the cap rule of recordSoldBidPrice converges to (a full list only
   //    ever swaps its highest price for a lower one) — so the only entries ever evicted are the surplus highest,
   //    exactly as a regular recording would have. An invalid array is skipped.
@@ -3900,15 +4006,20 @@ const MY_USERNAME = "xxx";
       }
     });
 
+    const maxStoredPrices = getMaxStoredPrices();
     const kept = merged
       .map((entry, index) => ({ entry, index }))
       .sort(
         (a, b) =>
           bspEntryPrice(a.entry) - bspEntryPrice(b.entry) || a.index - b.index,
       )
-      .slice(0, MAX_STORED_PRICES)
+      .slice(0, maxStoredPrices)
       .sort((a, b) => a.index - b.index)
       .map(({ entry }) => entry);
+
+    // Nothing new came in: leave the local array alone, even if a lowered cap would now trim it (a config change
+    // never deletes data by itself)
+    if (merged.length === local.length) return null;
 
     const result = JSON.stringify(kept);
     return result === localRaw ? null : result;
@@ -4056,7 +4167,7 @@ const MY_USERNAME = "xxx";
 
     const titlePrecision = document.createElement("span");
     titlePrecision.className = "wm-bsp-dump-title-precision";
-    titlePrecision.textContent = "(max 7, moyenne sur les 5 moins chères)";
+    titlePrecision.textContent = `(max ${getMaxStoredPrices()}, moyenne sur les ${getReferencePricesCount()} moins chères)`;
     title.appendChild(titlePrecision);
 
     // Folded by default; the switch (aria-pressed = unfolded) shows/hides everything but the title
@@ -4193,6 +4304,7 @@ const MY_USERNAME = "xxx";
         `Cache cleared (${rows.length} card(s) of prices, ${evalKeys.length} estimate(s))`,
       );
       evalKeys.forEach((key) => localStorage.removeItem(key));
+      localStorage.removeItem(TOP_EVALS_CACHE_KEY);
       rows.forEach(({ cardName, entryEl, clearBtn }) => {
         localStorage.removeItem(getBspObservedStorageKey(cardName));
         clearBtn.remove();
@@ -4499,16 +4611,21 @@ const MY_USERNAME = "xxx";
   // ============================================================
   // Feature ETS (cont'd): on /collection, whenever the cards grid (div.gap-3.justify-center) changes, append each
   // card's cached eval price (Feature ETS, keyed "eval-{name}") to its rarity tag (div.top-2.left-2), as
-  // "{rarity} ({eval})". The eval value is reformatted first: below 15, it's replaced outright with "💩"; above
-  // 1000, it's abbreviated to "{X,X} K" (French decimal comma); otherwise it's shown as stored, including the "?"
+  // "{rarity} ({eval})". The eval value is reformatted first: below the configured threshold (the "Seuil « sans valeur » des estimations" setting of Feature CFG, 10 by
+  // default), it's replaced outright with "💩"; above 1000, it's abbreviated to "{X,X} K" (French decimal comma); otherwise it's shown as stored, including the "?"
   // placeholder for a card with no recorded sales.
   // ============================================================
-  const WORTHLESS_THRESHOLD = 10;
-  function formatEvalValue(rawValue) {
+  // The threshold is read when each pass runs; a tag remembers the one it was rendered with (data-wm-worthless), so a
+  // changed setting makes the next pass (the next DOM mutation, debounced 300 ms) rewrite the already-shown tags
+  function getWorthlessThreshold() {
+    return getConfigValue(WORTHLESS_THRESHOLD_CONFIG_ID);
+  }
+
+  function formatEvalValue(rawValue, threshold = getWorthlessThreshold()) {
     const num = parseFloat(rawValue.replace(/\s/g, "").replace(",", "."));
     if (Number.isNaN(num)) return rawValue;
 
-    if (num < WORTHLESS_THRESHOLD) {
+    if (num < threshold) {
       return "💩";
     }
 
@@ -4525,6 +4642,7 @@ const MY_USERNAME = "xxx";
     const grid = document.querySelector("div.gap-3.justify-center");
     if (!grid) return;
 
+    const threshold = getWorthlessThreshold();
     let appended = 0;
     Array.from(grid.children).forEach((card) => {
       const nameEl = card.querySelector("h3");
@@ -4539,7 +4657,7 @@ const MY_USERNAME = "xxx";
         rarityEl.dataset.wmBaseRarity ?? rarityEl.textContent.trim();
       rarityEl.dataset.wmBaseRarity = baseRarity;
 
-      const appendixText = ` (${formatEvalValue(evalValue)})`;
+      const appendixText = ` (${formatEvalValue(evalValue, threshold)})`;
       let appendix = rarityEl.querySelector(":scope > .wm-eval-appendix");
 
       if (!appendix) {
@@ -4549,13 +4667,20 @@ const MY_USERNAME = "xxx";
         rarityEl.appendChild(appendix);
       }
 
-      if (appendix.textContent === appendixText) return;
+      if (
+        appendix.textContent === appendixText &&
+        appendix.dataset.wmWorthless === String(threshold)
+      )
+        return;
 
       appendix.textContent = appendixText;
+      appendix.dataset.wmWorthless = String(threshold);
       appended++;
     });
     if (appended > 0)
-      traceOnce(`[ETS] estimate shown on ${appended} card tag(s)`);
+      traceOnce(
+        `[ETS] estimate shown on ${appended} card tag(s) (worthless below ${threshold})`,
+      );
   }
 
   function watchRarityEvalTags() {
@@ -4735,7 +4860,7 @@ const MY_USERNAME = "xxx";
     {
       id: "rule-9",
       label:
-        "Ouvrir « Mes enchères » à l'arrivée et trier « Parcourir » par fin imminente à la saisie",
+        "Ouvrir l'onglet choisi du marché à l'arrivée et trier « Parcourir » par fin imminente à la saisie",
     },
     { id: "rule-10", label: "Mise à jour du compteur au clic sur un objet" },
     { id: "rule-11", label: "Opacité réduite de l'incitation Pro épuisée" },
@@ -4871,7 +4996,7 @@ const MY_USERNAME = "xxx";
     },
     {
       id: "rule-35",
-      label: "Bouton des 40 plus grosses estimations de votre collection",
+      label: "Bouton des plus grosses estimations de votre collection",
     },
     {
       id: "feature-bbs",
@@ -4948,12 +5073,29 @@ const MY_USERNAME = "xxx";
   // "wm-config" (a JSON object, id -> chosen option) and saved as soon as one is picked — no reload needed, since
   // whatever reads them does so when it acts. A stored value that is no longer one of the entry's options falls back
   // to its default. The entries are laid out in a 2-column grid (1 column on narrow screens). The first entry is Feature DAD's default auction duration; the second is the age after which
-  // Feature WAT's watched auctions are removed automatically.
+  // Feature WAT's watched auctions are removed automatically; the third is the size of the "Top" lists (Rule 35, Feature BBS); the fourth is the estimate under which a card shows "💩" (Feature ETS); the fifth is how many sale prices Feature BSP keeps per card; the sixth is how many of the cheapest of them average into the reference price (never more than the fifth); the seventh is the pack pile size from which Feature PNP notifies (50, 70, 90 by default, 100 %); the eighth is the time left (5, 10, 15 by default, 30 s) from which Rule 32's countdown glows red; the ninth is the number of attempts per card (1, 3 by default, 5) before Feature EBC skips a card that gets no estimate; the tenth is how long Feature EBC waits for a card's estimate, on the first attempt / on the retries (4 s / 10 s, 8 s / 20 s by default, 15 s / 40 s); the eleventh is the marketplace tab Rule 9 opens on arrival (Parcourir, Mes enchères by default, Historique, Gagnées, Aucun).
   // ============================================================
   const CONFIG_KEY = "wm-config";
 
   const AUCTION_DURATION_CONFIG_ID = "auction-duration";
   const WATCHED_MAX_AGE_CONFIG_ID = "watched-max-age";
+  const TOP_LIMIT_CONFIG_ID = "top-limit";
+  const WORTHLESS_THRESHOLD_CONFIG_ID = "worthless-threshold";
+  const MAX_STORED_PRICES_CONFIG_ID = "max-stored-prices";
+  const REFERENCE_PRICES_COUNT_CONFIG_ID = "reference-prices-count";
+  const PILE_NOTIFICATION_THRESHOLD_CONFIG_ID = "pile-notification-threshold";
+  const BID_TIMER_URGENT_THRESHOLD_CONFIG_ID = "bid-timer-urgent-threshold";
+  const EVAL_MAX_ATTEMPTS_CONFIG_ID = "eval-max-attempts";
+  const EVAL_TIMEOUTS_CONFIG_ID = "eval-timeouts";
+  const DEFAULT_MARKETPLACE_TAB_CONFIG_ID = "default-marketplace-tab";
+  // The marketplace tabs the script knows the site uses (Rule 9, Feature MPA, Feature BBS)
+  const DEFAULT_MARKETPLACE_TAB_LABELS = [
+    "Parcourir",
+    "Mes ventes",
+    "Mes enchères",
+    "Gagnées",
+    "Historique",
+  ];
 
   const DAY_MS = 24 * 60 * 60 * 1000;
   const WATCHED_MAX_AGE_OPTIONS_MS = {
@@ -4964,22 +5106,160 @@ const MY_USERNAME = "xxx";
     "1 an": 365 * DAY_MS,
   };
 
+  // Feature CFG (cont'd): the entries are bundled in titled groups, in CONFIG_GROUPS' order (an entry's `group` is one of
+  // its ids). An entry is { id, group, label, options (the labels the pills show, which is also what gets stored),
+  // defaultValue (one of the labels), values? (label -> the value the script actually uses, when that isn't the
+  // label itself), hint? (a small line under the label) }. An entry with `type: "text"` is a free text field instead
+  // (no options; `placeholder?`; trimmed, at most CONFIG_TEXT_MAX_LENGTH characters, saved shortly after typing;
+  // `readOnly: true` shows it without letting it be typed in, for a value only the script fills in). Code reads a setting with getConfigValue(id), at the time
+  // it acts, never by copying it into a constant at load: that is what makes a change apply without a reload.
+  const CONFIG_GROUPS = [
+    { id: "account", title: "Compte" },
+    { id: "auctions", title: "Enchères & marché" },
+    { id: "prices", title: "Prix de vente observés" },
+    { id: "estimates", title: "Estimations & classements" },
+    { id: "bulk-eval", title: "Estimation en masse" },
+    { id: "alerts", title: "Notifications & alertes" },
+  ];
+
+  const MY_USERNAME_CONFIG_ID = "my-username";
+  const CONFIG_TEXT_MAX_LENGTH = 64;
+
   const CONFIG_REGISTRY = [
     {
+      id: MY_USERNAME_CONFIG_ID,
+      group: "account",
+      type: "text",
+      label: "Votre pseudo WikiMasters",
+      readOnly: true,
+      placeholder: "Rempli en ouvrant votre profil",
+      defaultValue: "",
+      hint: "Sert à reconnaître vos ventes et vos enchères. Détecté automatiquement dès que vous ouvrez votre profil (/profile).",
+    },
+    {
       id: AUCTION_DURATION_CONFIG_ID,
+      group: "auctions",
       label: "Durée par défaut d'enchère",
       options: ["10 min", "30 min", "1 h", "3 h", "6 h", "12 h"],
       defaultValue: "1 h",
     },
     {
       id: WATCHED_MAX_AGE_CONFIG_ID,
+      group: "auctions",
       label: "Suppression automatique des enchères surveillées",
       options: Object.keys(WATCHED_MAX_AGE_OPTIONS_MS),
       defaultValue: "7 jours",
     },
+    {
+      id: DEFAULT_MARKETPLACE_TAB_CONFIG_ID,
+      group: "auctions",
+      label: "Onglet du marché ouvert par défaut",
+      options: [...DEFAULT_MARKETPLACE_TAB_LABELS, "Aucun"],
+      defaultValue: "Mes enchères",
+      // "Aucun": no tab is clicked, the site's own default stays
+      values: {
+        Parcourir: "Parcourir",
+        "Mes enchères": "Mes enchères",
+        Historique: "Historique",
+        Gagnées: "Gagnées",
+        Aucun: null,
+      },
+      hint: "Onglet sélectionné automatiquement à l'arrivée sur /marketplace",
+    },
+    {
+      id: TOP_LIMIT_CONFIG_ID,
+      group: "estimates",
+      label: "Taille des classements « Top »",
+      options: ["10", "20", "40", "60", "100"],
+      defaultValue: "40",
+      values: { 10: 10, 20: 20, 40: 40, 60: 60, 100: 100 },
+    },
+    {
+      id: WORTHLESS_THRESHOLD_CONFIG_ID,
+      group: "estimates",
+      label: "Seuil « sans valeur » des estimations",
+      options: ["1", "5", "10", "25", "50", "100"],
+      defaultValue: "10",
+      values: { 1: 1, 5: 5, 10: 10, 25: 25, 50: 50, 100: 100 },
+      hint: "En dessous de cette estimation, la carte s'affiche avec 💩",
+    },
+    {
+      id: MAX_STORED_PRICES_CONFIG_ID,
+      group: "prices",
+      label: "Prix de vente gardés par carte",
+      options: ["5", "7", "10", "15"],
+      defaultValue: "7",
+      values: { 5: 5, 7: 7, 10: 10, 15: 15 },
+      hint: "Nombre maximal de prix de vente enregistrés pour une même carte",
+    },
+    {
+      id: REFERENCE_PRICES_COUNT_CONFIG_ID,
+      group: "prices",
+      label: "Prix retenus pour la moyenne de référence",
+      options: ["3", "5", "7"],
+      defaultValue: "5",
+      values: { 3: 3, 5: 5, 7: 7 },
+      hint: "Nombre de prix les moins chers utilisés pour calculer la moyenne de référence",
+    },
+    {
+      id: PILE_NOTIFICATION_THRESHOLD_CONFIG_ID,
+      group: "alerts",
+      label: "Seuil d'alerte de la pile de paquets",
+      options: ["50 %", "70 %", "90 %", "100 %"],
+      defaultValue: "90 %",
+      // The proportion of the max pile size from which notifications start, minus 1 point of floating point uncertainty
+      values: {
+        "50 %": 0.5 - 0.01,
+        "70 %": 0.7 - 0.01,
+        "90 %": 0.9 - 0.01,
+        "100 %": 1 - 0.01,
+      },
+      hint: "Part de la pile à partir de laquelle la notification de paquets est envoyée",
+    },
+    {
+      id: BID_TIMER_URGENT_THRESHOLD_CONFIG_ID,
+      group: "alerts",
+      label: "Seuil de la lueur rouge de fin d'enchère",
+      options: ["5 s", "10 s", "15 s", "30 s"],
+      defaultValue: "15 s",
+      values: { "5 s": 5, "10 s": 10, "15 s": 15, "30 s": 30 },
+      hint: "En dessous de ce temps restant, le décompte « Se termine dans... » luit en rouge",
+    },
+    {
+      id: EVAL_MAX_ATTEMPTS_CONFIG_ID,
+      group: "bulk-eval",
+      label: "Essais par carte (estimation en masse)",
+      options: ["1", "3", "5"],
+      defaultValue: "3",
+      values: { 1: 1, 3: 3, 5: 5 },
+      hint: "Nombre d'essais avant de passer une carte qui n'obtient pas d'estimation",
+    },
+    {
+      id: EVAL_TIMEOUTS_CONFIG_ID,
+      group: "bulk-eval",
+      label: "Délais d'attente de l'estimation",
+      options: [
+        "Rapide (4 s / 10 s)",
+        "Standard (8 s / 20 s)",
+        "Patient (15 s / 40 s)",
+      ],
+      defaultValue: "Standard (8 s / 20 s)",
+      values: {
+        "Rapide (4 s / 10 s)": { first: 4000, retry: 10000 },
+        "Standard (8 s / 20 s)": { first: 8000, retry: 20000 },
+        "Patient (15 s / 40 s)": { first: 15000, retry: 40000 },
+      },
+      hint: "Temps d'attente de l'estimation d'une carte : premier essai / essais suivants",
+    },
   ];
 
+  // Parsed once and kept (settings are read from hot paths: every card of a page, every DOM pass); writeConfigValue
+  // refreshes it
+  let configCache = null;
+
   function readConfig() {
+    if (configCache) return configCache;
+
     let stored = {};
     try {
       stored = JSON.parse(localStorage.getItem(CONFIG_KEY) ?? "{}");
@@ -4988,14 +5268,42 @@ const MY_USERNAME = "xxx";
     }
 
     const config = {};
-    CONFIG_REGISTRY.forEach(({ id, options, defaultValue }) => {
-      config[id] = options.includes(stored?.[id]) ? stored[id] : defaultValue;
+    CONFIG_REGISTRY.forEach(({ id, type, options, defaultValue }) => {
+      const value = stored?.[id];
+      if (type === "text") {
+        config[id] =
+          typeof value === "string"
+            ? value.trim().slice(0, CONFIG_TEXT_MAX_LENGTH)
+            : defaultValue;
+      } else {
+        config[id] = options.includes(value) ? value : defaultValue;
+      }
     });
+    configCache = config;
     return config;
+  }
+
+  // The value the script uses for a setting: the entry's `values` mapping of the chosen label, or the label itself
+  function getConfigValue(id) {
+    const entry = CONFIG_REGISTRY.find((candidate) => candidate.id === id);
+    const label = readConfig()[id];
+    return entry?.values && label in entry.values ? entry.values[label] : label;
+  }
+
+  // The player's own pseudo (the "Votre pseudo WikiMasters" setting), "" while unknown. Nothing matches an unknown
+  // pseudo: compare through isMyUsername(), never with === on the getter, or an empty name would match an empty text.
+  function getMyUsername() {
+    return getConfigValue(MY_USERNAME_CONFIG_ID);
+  }
+
+  function isMyUsername(name) {
+    const me = getMyUsername();
+    return me !== "" && name === me;
   }
 
   function writeConfigValue(id, value) {
     const config = { ...readConfig(), [id]: value };
+    configCache = config;
     try {
       localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
       logger(CPL.INFO, `Config saved: ${id} = ${value}`);
@@ -5009,45 +5317,122 @@ const MY_USERNAME = "xxx";
     panel.className = "wm-settings-config";
 
     const config = readConfig();
-    CONFIG_REGISTRY.forEach(({ id, label, options }) => {
-      const row = document.createElement("div");
-      row.className = "wm-config-row";
+    CONFIG_GROUPS.forEach((group) => {
+      const entries = CONFIG_REGISTRY.filter(
+        (entry) => entry.group === group.id,
+      );
+      if (entries.length === 0) return;
 
-      const rowLabel = document.createElement("p");
-      rowLabel.className = "wm-config-label";
-      rowLabel.textContent = label;
+      const groupTitle = document.createElement("h3");
+      groupTitle.className = "wm-config-group-title";
+      groupTitle.textContent = group.title;
+      panel.appendChild(groupTitle);
 
-      const pill = document.createElement("div");
-      pill.className = "wm-config-pill";
-      pill.setAttribute("role", "radiogroup");
-      pill.setAttribute("aria-label", label);
-
-      const buttons = options.map((option) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "wm-config-pill-btn";
-        btn.setAttribute("role", "radio");
-        btn.textContent = option;
-        btn.addEventListener("click", () => {
-          writeConfigValue(id, option);
-          sync(option);
-        });
-        return btn;
-      });
-      const sync = (value) =>
-        buttons.forEach((btn) => {
-          const selected = btn.textContent === value;
-          btn.setAttribute("aria-checked", String(selected));
-          btn.classList.toggle("wm-config-pill-btn-selected", selected);
-        });
-      sync(config[id]);
-
-      pill.append(...buttons);
-      row.append(rowLabel, pill);
-      panel.appendChild(row);
+      entries.forEach((entry) =>
+        panel.appendChild(buildConfigRow(entry, config)),
+      );
     });
 
     return panel;
+  }
+
+  function buildConfigRow(
+    { id, type, label, options, hint, placeholder, readOnly },
+    config,
+  ) {
+    const row = document.createElement("div");
+    row.className = "wm-config-row";
+
+    const rowLabel = document.createElement("p");
+    rowLabel.className = "wm-config-label";
+    rowLabel.textContent = label;
+    if (hint) rowLabel.title = hint;
+
+    if (type === "text") {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "wm-config-text";
+      input.maxLength = CONFIG_TEXT_MAX_LENGTH;
+      input.value = config[id];
+      input.placeholder = placeholder ?? "";
+      input.setAttribute("aria-label", label);
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      if (readOnly) {
+        input.readOnly = true;
+        input.classList.add("wm-config-text-readonly");
+
+        // A cross empties the value (it can't be typed over), to be detected again by the script
+        const clearBtn = document.createElement("button");
+        clearBtn.type = "button";
+        clearBtn.className = "wm-config-text-clear";
+        clearBtn.textContent = "✕";
+        clearBtn.setAttribute("aria-label", `Réinitialiser : ${label}`);
+        clearBtn.title =
+          "Réinitialiser (la valeur sera de nouveau détectée par le script)";
+        const syncClearBtn = () => {
+          clearBtn.disabled = input.value === "";
+        };
+        clearBtn.addEventListener("click", () => {
+          writeConfigValue(id, "");
+          input.value = "";
+          syncClearBtn();
+          logger(CPL.INFO, `Config reset: ${id}`);
+        });
+        syncClearBtn();
+
+        const field = document.createElement("div");
+        field.className = "wm-config-text-field";
+        field.append(input, clearBtn);
+        row.append(rowLabel, field);
+        return row;
+      }
+
+      // Saved as it is typed (once typing pauses), and at once when leaving the field
+      let debounceId = null;
+      const save = () => {
+        clearTimeout(debounceId);
+        const value = input.value.trim();
+        if (value !== readConfig()[id]) writeConfigValue(id, value);
+      };
+      input.addEventListener("input", () => {
+        clearTimeout(debounceId);
+        debounceId = setTimeout(save, 500);
+      });
+      input.addEventListener("change", save);
+
+      row.append(rowLabel, input);
+      return row;
+    }
+
+    const pill = document.createElement("div");
+    pill.className = "wm-config-pill";
+    pill.setAttribute("role", "radiogroup");
+    pill.setAttribute("aria-label", label);
+
+    const buttons = options.map((option) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "wm-config-pill-btn";
+      btn.setAttribute("role", "radio");
+      btn.textContent = option;
+      btn.addEventListener("click", () => {
+        writeConfigValue(id, option);
+        sync(option);
+      });
+      return btn;
+    });
+    const sync = (value) =>
+      buttons.forEach((btn) => {
+        const selected = btn.textContent === value;
+        btn.setAttribute("aria-checked", String(selected));
+        btn.classList.toggle("wm-config-pill-btn-selected", selected);
+      });
+    sync(config[id]);
+
+    pill.append(...buttons);
+    row.append(rowLabel, pill);
+    return row;
   }
 
   // Runs `apply` (which swaps the modal's content) and eases the modal from its previous width/height to the new
@@ -5337,13 +5722,14 @@ const MY_USERNAME = "xxx";
         background: rgba(0, 0, 0, 0.5);
       }
       .wm-settings-modal {
+        border: 1px solid var(--color-border);
+        border-radius: 0.75rem;
+        padding: 1rem;
+        background-color: var(--color-surface-light);
         display: flex;
         flex-direction: column;
-        border-radius: 0.75rem;
-        border: 1px solid var(--color-border);
-        background-color: var(--color-surface-light);
+        gap: 0.5rem;
         color: var(--color-foreground);
-        padding: 1rem;
       }
       .wm-settings-panel:not([hidden]) {
         animation: wm-settings-panel-in 0.25s ease;
@@ -5359,7 +5745,6 @@ const MY_USERNAME = "xxx";
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 0.5rem;
       }
       .wm-settings-title {
         font-size: 1.1rem;
@@ -5479,6 +5864,23 @@ const MY_USERNAME = "xxx";
         gap: 1rem 1.5rem;
         min-width: 46rem;
         max-width: 90vw;
+        max-height: 60vh;
+        overflow-y: auto;
+        padding-right: 0.25rem;
+      }
+      .wm-config-group-title {
+        grid-column: 1 / -1;
+        margin: 0.5rem 0 -0.25rem;
+        padding-bottom: 0.25rem;
+        border-bottom: 1px solid rgba(128, 128, 128, 0.4);
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        opacity: 0.7;
+      }
+      .wm-config-group-title:first-child {
+        margin-top: 0;
       }
       @media (max-width: 800px) {
         .wm-settings-config {
@@ -5495,6 +5897,46 @@ const MY_USERNAME = "xxx";
         margin: 0;
         font-size: 0.85rem;
         font-weight: 600;
+      }
+      .wm-config-text {
+        width: 100%;
+        max-width: 18rem;
+        padding: 0.35rem 1rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--color-foreground);
+        font-size: 0.85rem;
+      }
+      .wm-config-text-readonly {
+        opacity: 0.7;
+        cursor: default;
+      }
+      .wm-config-text-field {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .wm-config-text-field .wm-config-text {
+        flex: 1;
+        min-width: 0;
+      }
+      .wm-config-text-clear {
+        border: none;
+        background: transparent;
+        color: var(--color-foreground);
+        line-height: 1;
+        opacity: 0.5;
+        cursor: pointer;
+        transition: opacity 0.2s ease, color 0.2s ease;
+      }
+      .wm-config-text-clear:hover:not(:disabled) {
+        opacity: 1;
+        color: #ef2222;
+      }
+      .wm-config-text-clear:disabled {
+        opacity: 0.2;
+        cursor: default;
       }
       .wm-config-pill {
         display: flex;
@@ -5516,6 +5958,13 @@ const MY_USERNAME = "xxx";
       }
       .wm-config-pill-btn + .wm-config-pill-btn {
         border-left: 1px solid var(--color-accent);
+      }
+      /* The pill's rounded ends cut into the first and last buttons: they get extra room on their outer side */
+      .wm-config-pill-btn:first-child {
+        padding-left: 1rem;
+      }
+      .wm-config-pill-btn:last-child {
+        padding-right: 1rem;
       }
       .wm-config-pill-btn:hover {
         opacity: 1;
@@ -5601,7 +6050,7 @@ const MY_USERNAME = "xxx";
     },
     {
       title: "Voir les estimations les plus élevées",
-      text: "Dans votre collection, le bouton « Top 40 », à droite du titre, affiche les 40 plus grosses estimations mémorisées. Le ✕ d'une ligne supprime cette estimation du cache.",
+      text: "Dans votre collection, le bouton « Top 40 », à droite du titre, affiche les 40 plus grosses estimations mémorisées (la taille du classement se règle dans l'onglet « Config » de ⚙️). Le ✕ d'une ligne supprime cette estimation du cache.",
     },
     {
       title: "Suivre un joueur",
@@ -5620,8 +6069,8 @@ const MY_USERNAME = "xxx";
       text: "Option désactivée par défaut (⚙️) : pendant une estimation en masse, chaque carte dont l'estimation reste « ? » reçoit l'étiquette « TBD », pour la retrouver facilement ensuite.",
     },
     {
-      title: "Choisir la durée d'enchère par défaut",
-      text: "Dans ⚙️, l'onglet « Config » permet de choisir la durée proposée par défaut quand vous mettez une carte en vente (de 10 min à 12 h, 1 h au départ). Le choix est enregistré dès que vous cliquez, et le bouton de durée correspondant est sélectionné à l'ouverture de la vente.",
+      title: "Régler les valeurs du script",
+      text: "Dans ⚙️, l'onglet « Config » regroupe des réglages à choisir d'un clic, enregistrés tout de suite et sans recharger : la durée d'enchère proposée par défaut, l'onglet du marché ouvert à l'arrivée, la taille des classements « Top », le nombre de prix de vente gardés et utilisés pour la moyenne, les seuils d'alerte (pile de paquets, fin d'enchère), le nombre d'essais et les délais d'attente de l'estimation en masse, etc. Les valeurs de départ sont celles que le script utilisait avant.",
     },
     {
       title: "Surveiller une enchère",
@@ -6195,7 +6644,7 @@ const MY_USERNAME = "xxx";
       ?.classList.contains("ring-2");
   }
 
-  // The card modal's wishlist button: "Retirer…" (wishlisted, button.border) or "Ajouter à la liste de souhaits"
+  // The card modal's wishlist button: "Retirer..." (wishlisted, button.border) or "Ajouter à la liste de souhaits"
   function waitForWishlistModalButton(timeout = 4000, interval = 100) {
     return new Promise((resolve) => {
       const start = Date.now();
@@ -6598,7 +7047,7 @@ const MY_USERNAME = "xxx";
   // evaluation, and left out of the counts and durations shown: such a card has no "Mettre aux enchères" button, so
   // its estimate can't be reached. More generally, a card that can't be put up for sale (no sell button in its modal, no
   // card image to click, e.g. already on auction or in a trade) is skipped as soon as the quick action says so, and a
-  // card still without an estimate after EVAL_MAX_ATTEMPTS attempts is skipped too, with a warning each time and the
+  // card still without an estimate after the configured number of attempts (Feature CFG, default 3) is skipped too, with a warning each time and the
   // skipped names listed when the run ends.
   //
   // Feature EBC (cont'd): both evaluation buttons, and the "Estimation en masse" one below, only run reliably
@@ -6646,7 +7095,8 @@ const MY_USERNAME = "xxx";
   // Resolves true once a fresh value lands under "eval-{cardName}" (the
   // caller must have cleared that key beforehand so a stale value already
   // present can't be mistaken for a freshly recorded one), or false if
-  // stopped/timed out first
+  // stopped/timed out first. The default timeout is only a fallback: evaluateCollectionCards, its sole caller,
+  // always passes the configured delay (Feature CFG's "eval-timeouts").
   function waitForCardEvaluation(
     cardName,
     state,
@@ -6806,13 +7256,25 @@ const MY_USERNAME = "xxx";
     });
   }
 
-  const EVAL_MAX_ATTEMPTS = 3;
+  function getEvalMaxAttempts() {
+    return getConfigValue(EVAL_MAX_ATTEMPTS_CONFIG_ID);
+  }
+
+  function getEvalTimeouts() {
+    return getConfigValue(EVAL_TIMEOUTS_CONFIG_ID);
+  }
 
   async function evaluateCollectionCards(button, cards, sharedState) {
     const state = sharedState ?? { stopped: false };
     const stopBtn = sharedState ? null : insertStopEvaluationButton(state);
 
-    logger(CPL.INFO, `Evaluating ${cards.length} card(s)`);
+    // Read once per run (a change applies from the next run, no reload needed)
+    const maxAttempts = getEvalMaxAttempts();
+    const timeouts = getEvalTimeouts();
+    logger(
+      CPL.INFO,
+      `Evaluating ${cards.length} card(s), ${maxAttempts} attempt(s) per card, estimate wait ${timeouts.first} ms / ${timeouts.retry} ms (first attempt / retries)`,
+    );
     const skipped = [];
     for (let i = 0; i < cards.length; i++) {
       if (state.stopped) break;
@@ -6834,16 +7296,16 @@ const MY_USERNAME = "xxx";
       button.textContent = `Évaluation... (${i + 1}/${cards.length})`;
       quickActionBtn.click();
 
-      // A timed-out attempt closes the modal and re-opens it, up to EVAL_MAX_ATTEMPTS attempts. A card whose quick
+      // A timed-out attempt (estimate not there after timeouts.first ms, then timeouts.retry ms, both configurable) closes the modal and re-opens it, up to maxAttempts attempts (configurable). A card whose quick
       // action reports it can't be sold (no sell button, no image), that left the page, or that still has no
       // estimate after the last attempt is skipped, so one bad card can't hold the whole run up.
       let recorded = false;
       let skipReason = null;
-      for (let attempt = 1; attempt <= EVAL_MAX_ATTEMPTS; attempt++) {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (attempt > 1) {
           logger(
             CPL.WARN,
-            `No estimate yet for "${cardName}" (attempt ${attempt - 1}/${EVAL_MAX_ATTEMPTS}), reopening its modal`,
+            `No estimate yet for "${cardName}" (attempt ${attempt - 1}/${maxAttempts}), reopening its modal`,
           );
           document.dispatchEvent(
             new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
@@ -6867,7 +7329,7 @@ const MY_USERNAME = "xxx";
         recorded = await waitForCardEvaluation(
           cardName,
           state,
-          attempt === 1 ? 8000 : 20000,
+          attempt === 1 ? timeouts.first : timeouts.retry,
         );
         if (recorded || state.stopped) break;
       }
@@ -6875,7 +7337,7 @@ const MY_USERNAME = "xxx";
         skipped.push(cardName);
         logger(
           CPL.WARN,
-          `Card skipped: "${cardName}" (${skipReason ?? `no estimate after ${EVAL_MAX_ATTEMPTS} attempts`})`,
+          `Card skipped: "${cardName}" (${skipReason ?? `no estimate after ${maxAttempts} attempts`})`,
         );
       }
       if (!recorded && previousValue !== null) {
@@ -8020,19 +8482,33 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 35: on /collection, a "Top {TOP_LIMIT}" text button appended to the h1 inside div.gap-3.animate-fade-in-up
-  // (right after the heading's text) opens a modal listing the TOP_LIMIT (40) largest eval prices cached under
+  // Rule 35: on /collection, a "Top {limit}" text button appended to the h1 inside div.gap-3.animate-fade-in-up
+  // (right after the heading's text) opens a modal listing the largest eval prices (getTopLimit(): the "Taille des classements « Top »" setting of Feature CFG, default 40) cached under
   // "eval-{name}" (Feature ETS), as a 3-column grid sorted by descending value. Entries whose cached value is the
   // "?" placeholder (or otherwise non-numeric) are left out. Each entry has a "✕" button that removes that eval
   // from localStorage and grays the entry out, the same way the "✕" on /profile's sold-prices grid (Feature BSP)
   // does. The highest eval is pulled out of the grid and showcased above it with a golden pulsating glow
   // (wm-top-eval-glow). Reuses the settings modal's overlay/header/close styling (.wm-settings-*), fading in on open
   // (wm-top-evals-fade-in); closes on Escape, overlay click or its own close button.
+  //
+  // Rule 35 (cont'd): with a big cache, reading every "eval-" entry takes a while, so the last result is buffered in
+  // localStorage under "wm-top-evals-cache" (the best ones, as { cardName, value }, possibly a different count than the current limit: it is sliced to it when drawn). Opening the modal draws that
+  // buffer at once, while the list is recomputed in chunks (yielding to the page between them) and a small
+  // "Actualisation..." shows in the header; once finished, the buffer is replaced with the new result and the modal is
+  // redrawn if it differs (an entry cleared meanwhile stays out). Without a buffer the modal opens on "Calcul en
+  // cours...". The buffer is derived data: it isn't part of the export, and "Vider le cache" removes it.
   // ============================================================
-  const TOP_LIMIT = 40;
+  // The configured size of the Top lists (Rule 35's estimates, Feature BBS's best trades), read when each acts
+  function getTopLimit() {
+    return getConfigValue(TOP_LIMIT_CONFIG_ID);
+  }
+
   const EVAL_KEY_PREFIX = "eval-";
+  const TOP_EVALS_CACHE_KEY = "wm-top-evals-cache";
+  const TOP_EVALS_CHUNK_SIZE = 1500;
 
   function collectTopEvals() {
+    const limit = getTopLimit();
     const names = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -8047,7 +8523,59 @@ const MY_USERNAME = "xxx";
       }))
       .filter((entry) => entry.value !== null)
       .sort((a, b) => b.value - a.value)
-      .slice(0, TOP_LIMIT);
+      .slice(0, limit);
+  }
+
+  function readTopEvalsCache() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(TOP_EVALS_CACHE_KEY));
+      if (!Array.isArray(parsed)) return null;
+      return parsed.filter(
+        (entry) =>
+          entry &&
+          typeof entry.cardName === "string" &&
+          typeof entry.value === "number",
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function writeTopEvalsCache(list) {
+    try {
+      localStorage.setItem(TOP_EVALS_CACHE_KEY, JSON.stringify(list));
+    } catch (error) {
+      logger(CPL.WARN, "Top evals buffer not saved", error);
+    }
+  }
+
+  // Same result as collectTopEvals, but without holding the page up: the entries are read in chunks, with a pause
+  // between them, keeping only the best ones (up to the configured limit) so far
+  async function computeTopEvalsAsync() {
+    let best = [];
+    const limit = getTopLimit();
+    const total = localStorage.length;
+    logger(CPL.LOG, `Top evals: computing the ${limit} best`);
+
+    for (let from = 0; from < total; from += TOP_EVALS_CHUNK_SIZE) {
+      const names = [];
+      const to = Math.min(from + TOP_EVALS_CHUNK_SIZE, total);
+      for (let i = from; i < to; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(EVAL_KEY_PREFIX))
+          names.push(key.slice(EVAL_KEY_PREFIX.length));
+      }
+
+      names.forEach((cardName) => {
+        const value = getCardEvalValueByName(cardName);
+        if (value !== null) best.push({ cardName, value });
+      });
+      best = best.sort((a, b) => b.value - a.value).slice(0, limit);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    return best;
   }
 
   // Shared by Rule 35 and Feature BBS's /profile button: builds the Top-list modal from already-sorted entries
@@ -8059,9 +8587,12 @@ const MY_USERNAME = "xxx";
   function buildTopListModal({
     title: titleText,
     emptyText,
-    entries,
+    loadingText,
+    entries: initialEntries,
     sortToggle,
   }) {
+    let entries = initialEntries;
+    let loading = false;
     const overlay = document.createElement("div");
     overlay.className = "wm-settings-overlay wm-top-evals-overlay";
 
@@ -8085,6 +8616,12 @@ const MY_USERNAME = "xxx";
     closeBtn.textContent = "✕";
 
     header.append(title);
+
+    const loadingEl = document.createElement("span");
+    loadingEl.className = "wm-top-evals-loading";
+    loadingEl.textContent = "Actualisation...";
+    loadingEl.hidden = true;
+    header.append(loadingEl);
 
     let sortBtn = null;
     if (sortToggle) {
@@ -8160,7 +8697,7 @@ const MY_USERNAME = "xxx";
       if (entries.length === 0) {
         const empty = document.createElement("p");
         empty.className = "wm-settings-hint";
-        empty.textContent = emptyText;
+        empty.textContent = loading && loadingText ? loadingText : emptyText;
         grid.appendChild(empty);
         return;
       }
@@ -8200,6 +8737,19 @@ const MY_USERNAME = "xxx";
     overlay.appendChild(modal);
     render();
 
+    // Lets the caller swap the entries once a slower computation has finished, and show that it is under way
+    overlay.wmTopList = {
+      setEntries: (next) => {
+        entries = next;
+        render();
+      },
+      setLoading: (value) => {
+        loading = value;
+        loadingEl.hidden = !value;
+        if (entries.length === 0) render();
+      },
+    };
+
     const onKeydown = (event) => {
       if (event.key === "Escape") close();
     };
@@ -8217,37 +8767,98 @@ const MY_USERNAME = "xxx";
     return overlay;
   }
 
-  function buildTopEvalsModal() {
-    return buildTopListModal({
-      title: `🏆 Les ${TOP_LIMIT} plus grosses estimations de votre collection`,
+  function buildTopEvalEntries(list) {
+    return list.map(({ cardName, value }) => ({
+      cardName,
+      valueText: formatEvalValue(String(value)),
+      onClear: () => {
+        logger(CPL.INFO, `Estimate cleared: "${cardName}"`);
+        localStorage.removeItem(`${EVAL_KEY_PREFIX}${cardName}`);
+        const buffered = readTopEvalsCache();
+        if (buffered)
+          writeTopEvalsCache(buffered.filter((e) => e.cardName !== cardName));
+      },
+    }));
+  }
+
+  function topEvalsKey(list) {
+    return list.map(({ cardName, value }) => `${cardName}=${value}`).join("|");
+  }
+
+  // Opens at once on the buffered list (if any), then swaps in the freshly computed one
+  function openTopEvalsModal() {
+    const limit = getTopLimit();
+    // The buffer may have been written under another limit
+    const buffered = readTopEvalsCache()?.slice(0, limit) ?? null;
+    let shown = buffered ?? [];
+    logger(
+      CPL.LOG,
+      buffered
+        ? `Top evals: drawing the buffer (${buffered.length})`
+        : "Top evals: no buffer, computing",
+    );
+
+    const overlay = buildTopListModal({
+      title: `🏆 Les ${limit} plus grosses estimations de votre collection`,
       emptyText: "Aucune estimation en cache pour le moment.",
-      entries: collectTopEvals().map(({ cardName, value }) => ({
-        cardName,
-        valueText: formatEvalValue(String(value)),
-        onClear: () => {
-          logger(CPL.INFO, `Estimate cleared: "${cardName}"`);
-          localStorage.removeItem(`${EVAL_KEY_PREFIX}${cardName}`);
-        },
-      })),
+      loadingText: "Calcul en cours...",
+      entries: buildTopEvalEntries(shown),
     });
+    document.body.appendChild(overlay);
+    overlay.wmTopList.setLoading(true);
+
+    const start = performance.now();
+    computeTopEvalsAsync().then((fresh) => {
+      // An estimate cleared while this was running must not come back
+      const current = fresh.filter(
+        ({ cardName }) => getCardEvalValueByName(cardName) !== null,
+      );
+      writeTopEvalsCache(current);
+      logger(
+        CPL.INFO,
+        `Top evals recomputed in ${Math.round(performance.now() - start)} ms (${current.length})`,
+      );
+
+      if (!overlay.isConnected) return;
+      overlay.wmTopList.setLoading(false);
+      if (topEvalsKey(current) === topEvalsKey(shown)) return;
+      shown = current;
+      overlay.wmTopList.setEntries(buildTopEvalEntries(current));
+    });
+  }
+
+  function setTopEvalsButtonLabel(btn) {
+    const limit = getTopLimit();
+    if (btn.dataset.wmLimit === String(limit)) return;
+
+    btn.dataset.wmLimit = String(limit);
+    btn.textContent = `Top ${limit}`;
+    btn.title = `Afficher les ${limit} plus grosses estimations de votre collection`;
+    logger(CPL.LOG, `Top evals button labelled for ${limit}`);
   }
 
   function insertTopEvalsButton() {
     if (!window.location.pathname.startsWith("/collection")) return;
 
     const heading = document.querySelector("div.gap-3.animate-fade-in-up h1");
-    if (!heading || heading.querySelector(":scope > .wm-top-evals-btn")) return;
+    if (!heading) return;
+
+    // Already there: only keep its label in line with the configured size
+    const existing = heading.querySelector(":scope > .wm-top-evals-btn");
+    if (existing) {
+      setTopEvalsButtonLabel(existing);
+      return;
+    }
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "wm-top-evals-btn";
-    btn.textContent = `Top ${TOP_LIMIT}`;
-    btn.title = `Afficher les ${TOP_LIMIT} plus grosses estimations de votre collection`;
+    setTopEvalsButtonLabel(btn);
     btn.setAttribute("aria-haspopup", "dialog");
 
     btn.addEventListener("click", () => {
       if (document.querySelector(".wm-settings-overlay")) return;
-      document.body.appendChild(buildTopEvalsModal());
+      openTopEvalsModal();
     });
 
     heading.appendChild(btn);
@@ -8428,6 +9039,11 @@ const MY_USERNAME = "xxx";
         opacity: 1;
         background: rgba(255, 215, 0, 0.1);
       }
+      .wm-top-evals-loading {
+        margin-left: 0.75rem;
+        font-size: 0.75rem;
+        opacity: 0.6;
+      }
       .wm-top-evals-overlay {
         animation: wm-top-evals-fade-in 0.5s ease-out;
       }
@@ -8502,7 +9118,6 @@ const MY_USERNAME = "xxx";
         min-width: 40%;
         max-width: 50%;
         margin-inline: auto;
-        margin-bottom: 0.75rem;
         padding: 0.75rem;
         border: 1px solid rgba(255, 215, 0, 0.6);
         background-color: rgba(255, 215, 0, 0.2);
@@ -9021,7 +9636,7 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
-  // Rule 38: on /collection, a toggle button is appended right after Rule 35's "Top 40" button (.wm-top-evals-btn,
+  // Rule 38: on /collection, a toggle button is appended right after Rule 35's "Top {limit}" button (.wm-top-evals-btn,
   // or at the end of the heading when that rule is off). While on, every card of the page that has no eval gets a
   // light red halo. "No eval" means no "eval-{name}" localStorage entry (Feature ETS): a stored "?" is an eval and
   // does not count. Cards are re-flagged (debounced) on every DOM mutation, since evals get recorded as cards are
@@ -9528,8 +10143,8 @@ const MY_USERNAME = "xxx";
   //
   // Feature WAT (cont'd): bidding on an auction watches it automatically. On a bid page, once it has finished loading
   // (same readiness checks as the auto-unwatch above) and is still running (the "time left" span is there), the
-  // auction is watched as soon as MY_USERNAME is the current leader (Rule 33's isMyUsernameLeadingBid) or appears in
-  // the bids history (a.hover:underline linking to /profile/{MY_USERNAME} inside ul.card-frame's li). It is a
+  // auction is watched as soon as your pseudo (Feature CFG's "Votre pseudo WikiMasters") is the current leader (Rule 33's isMyUsernameLeadingBid) or appears in
+  // the bids history (a.hover:underline linking to /profile/{your pseudo} inside ul.card-frame's li). It is a
   // one-way action: an auction already watched is left alone, and each auction is only evaluated once per page
   // load (wmAutoWatchedIds), so stopping to watch it by hand sticks until the next reload.
   // ============================================================
@@ -10051,9 +10666,12 @@ const MY_USERNAME = "xxx";
   const wmAutoWatchedIds = new Set();
 
   function isMyUsernameInBidHistory() {
+    const me = getMyUsername();
+    if (me === "") return false;
+
     return Boolean(
       document.querySelector(
-        `ul.card-frame li a[href="/profile/${MY_USERNAME}"]`,
+        `ul.card-frame li a[href="/profile/${encodeURIComponent(me)}"]`,
       ),
     );
   }
@@ -10285,6 +10903,46 @@ const MY_USERNAME = "xxx";
   }
 
   // ============================================================
+  // Feature CFG (cont'd): the pseudo is detected so that nobody has to type it. On your own profile (/profile), the
+  // name heading (div.flex-1.min-w-0 > h1.truncate, own text nodes only: other features add elements inside it) is
+  // read, and when the "Votre pseudo WikiMasters" setting is still empty it is filled with it. A pseudo that is already
+  // set is never overwritten (a different one found on the page is only reported as a warning), so a wrong guess of
+  // this reading can't replace one already detected. The setting's field is read-only: the detection is the only way
+  // it gets its value. Always on, like the settings button: it is what the sales/purchases
+  // features rely on.
+  // ============================================================
+  function detectMyUsername() {
+    if (!/^\/profile\/?$/.test(window.location.pathname)) return;
+
+    const nameEl = document.querySelector("div.flex-1.min-w-0 > h1.truncate");
+    if (!nameEl) return;
+
+    const detected = Array.from(nameEl.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join("")
+      .trim();
+    if (!detected || detected.length > CONFIG_TEXT_MAX_LENGTH) return;
+
+    const configured = getMyUsername();
+    if (configured === "") {
+      writeConfigValue(MY_USERNAME_CONFIG_ID, detected);
+      logger(CPL.INFO, `Pseudo detected on your profile: ${detected}`);
+    } else if (configured !== detected) {
+      traceOnce(
+        `[CFG] the profile reads "${detected}" but the pseudo setting is "${configured}": left as set`,
+      );
+    }
+  }
+
+  function watchMyUsernameDetection() {
+    detectMyUsername();
+
+    const observer = new MutationObserver(() => detectMyUsername());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -10373,6 +11031,7 @@ const MY_USERNAME = "xxx";
     run("feature-wat", watchWatchedAuctions);
 
     watchFeatureConfigButton();
+    watchMyUsernameDetection();
     watchTutorialButton();
     logger(CPL.LOG, "Initialization complete");
   }
