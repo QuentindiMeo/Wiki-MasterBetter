@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.29.16
+// @version      0.29.19
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -843,6 +843,49 @@ const MY_USERNAME = "xxx";
   // a div.relative.isolate). This button clicks the img.scale-\\[1\\.8\\] overlay inside the parent
   // div.relative.isolate, then (requestAnimationFrame later) clicks button.flex-1.font-semibold
   // ============================================================
+  // Feature TBC (cont'd): the quick action reports how it went in the button's data-wm-quick-action-result:
+  // "pending" while it runs, then "clicked" (the sell button was found and clicked), "no-image" (the card's art
+  // overlay isn't there, so its modal can't be opened) or "no-sell-button" (the modal opened but offers no
+  // "Mettre aux enchères" button: a favorite card, one already on auction or in a trade...). The sell button is
+  // looked for in the card modal (div.card-frame.p-6) rather than in the whole document, so an unrelated
+  // button.flex-1.font-semibold can't be clicked instead, and for up to QUICK_ACTION_SELL_BUTTON_WAIT_MS, as the
+  // modal may not be rendered on the very next frame. Feature EBC reads that result to skip such cards.
+  const QUICK_ACTION_SELL_BUTTON_WAIT_MS = 600;
+
+  function findQuickActionSellButton() {
+    const modal = document.querySelector("div.card-frame.p-6");
+    return (modal ?? document).querySelector("button.flex-1.font-semibold");
+  }
+
+  function runQuickAction(isolateDiv, btn) {
+    const image = isolateDiv.querySelector("img.scale-\\[1\\.8\\]");
+    if (!image) {
+      btn.dataset.wmQuickActionResult = "no-image";
+      logger(CPL.WARN, "Quick action: the card's image overlay is missing");
+      return;
+    }
+
+    btn.dataset.wmQuickActionResult = "pending";
+    image.click();
+
+    const start = performance.now();
+    const lookForSellButton = () => {
+      const sellButton = findQuickActionSellButton();
+      if (sellButton) {
+        sellButton.click();
+        btn.dataset.wmQuickActionResult = "clicked";
+        return;
+      }
+      if (performance.now() - start >= QUICK_ACTION_SELL_BUTTON_WAIT_MS) {
+        btn.dataset.wmQuickActionResult = "no-sell-button";
+        logger(CPL.WARN, "Quick action: no sell button in the card modal");
+        return;
+      }
+      requestAnimationFrame(lookForSellButton);
+    };
+    requestAnimationFrame(lookForSellButton);
+  }
+
   function insertCollectionQuickActionButtons() {
     if (!window.location.pathname.startsWith("/collection")) return;
 
@@ -862,10 +905,7 @@ const MY_USERNAME = "xxx";
 
       btn.addEventListener("click", (event) => {
         event.stopPropagation();
-        isolateDiv.querySelector("img.scale-\\[1\\.8\\]")?.click();
-        requestAnimationFrame(() => {
-          document.querySelector("button.flex-1.font-semibold")?.click();
-        });
+        runQuickAction(isolateDiv, btn);
       });
 
       justifyBetween.insertBefore(btn, justifyBetween.children[1] ?? null);
@@ -5692,11 +5732,13 @@ const MY_USERNAME = "xxx";
   function watchTutorialButton() {
     GM_addStyle(`
       .wm-tutorial-list {
+        max-width: max(50rem,50vw);
+        max-height: 80vh;
+        padding-right: 0.25rem;
         display: flex;
         flex-direction: column;
         gap: 0.6rem;
         overflow-y: auto;
-        padding-right: 0.25rem;
       }
       .wm-tutorial-item {
         padding: 0.5rem 0.75rem;
@@ -6552,6 +6594,13 @@ const MY_USERNAME = "xxx";
   // e.g. a new rarity tier's filter button getting appended past our own controls — it's moved back in front of
   // it, keeping the site's own filter buttons grouped together ahead of ours.
   //
+  // Feature EBC (cont'd): cards marked as favorite (they contain a button.text-amber-200) are skipped by every bulk
+  // evaluation, and left out of the counts and durations shown: such a card has no "Mettre aux enchères" button, so
+  // its estimate can't be reached. More generally, a card that can't be put up for sale (no sell button in its modal, no
+  // card image to click, e.g. already on auction or in a trade) is skipped as soon as the quick action says so, and a
+  // card still without an estimate after EVAL_MAX_ATTEMPTS attempts is skipped too, with a warning each time and the
+  // skipped names listed when the run ends.
+  //
   // Feature EBC (cont'd): both evaluation buttons, and the "Estimation en masse" one below, only run reliably
   // while their tab is the active one and the window isn't minimized — their polling (waitForCardEvaluation's
   // setTimeout loop, and waitUntil's below) gets throttled by the browser once background/minimized, which
@@ -6566,8 +6615,21 @@ const MY_USERNAME = "xxx";
     return Array.from(grid.children);
   }
 
-  function getUnevaluatedCollectionCards() {
+  // A favorite card (flagged by a button.text-amber-200) has no "Mettre aux enchères" button, so it can't be put up
+  // for sale and its estimate can't be reached: bulk evaluations skip it
+  function isFavoriteCollectionCard(card) {
+    return card.querySelector("button.text-amber-200") !== null;
+  }
+
+  function getEvaluableCollectionCards() {
     const cards = getAllCollectionCards();
+    if (cards === null) return null;
+
+    return cards.filter((card) => !isFavoriteCollectionCard(card));
+  }
+
+  function getUnevaluatedCollectionCards() {
+    const cards = getEvaluableCollectionCards();
     if (cards === null) return null;
 
     return cards.filter((card) => {
@@ -6719,11 +6781,39 @@ const MY_USERNAME = "xxx";
   // own — used by the "Estimation en masse" button below to share a single stop button across a whole multi-page
   // run rather than spawning a new one for every page. The two original callers below don't pass one, so their
   // own behavior is unchanged.
+  // Feature EBC (cont'd): waits for the quick action (Feature TBC) to report how it went. "timeout" means it never
+  // did, which isn't treated as a failure: the estimate is simply waited for as usual.
+  function waitForQuickActionOutcome(quickActionBtn, state, timeout = 1500) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        const result = quickActionBtn.dataset.wmQuickActionResult;
+        if (result && result !== "pending") {
+          resolve(result);
+          return;
+        }
+        if (state.stopped) {
+          resolve("stopped");
+          return;
+        }
+        if (Date.now() - start >= timeout) {
+          resolve("timeout");
+          return;
+        }
+        setTimeout(check, 50);
+      };
+      check();
+    });
+  }
+
+  const EVAL_MAX_ATTEMPTS = 3;
+
   async function evaluateCollectionCards(button, cards, sharedState) {
     const state = sharedState ?? { stopped: false };
     const stopBtn = sharedState ? null : insertStopEvaluationButton(state);
 
     logger(CPL.INFO, `Evaluating ${cards.length} card(s)`);
+    const skipped = [];
     for (let i = 0; i < cards.length; i++) {
       if (state.stopped) break;
 
@@ -6731,6 +6821,11 @@ const MY_USERNAME = "xxx";
       const cardName = card.querySelector("h3")?.textContent.trim();
       const quickActionBtn = card.querySelector(".wm-quick-action");
       if (!cardName || !quickActionBtn) continue;
+      if (isFavoriteCollectionCard(card)) {
+        // A card can become a favorite while the run is under way
+        logger(CPL.LOG, `Favorite card skipped: "${cardName}"`);
+        continue;
+      }
 
       const key = `eval-${cardName}`;
       const previousValue = localStorage.getItem(key);
@@ -6739,21 +6834,49 @@ const MY_USERNAME = "xxx";
       button.textContent = `Évaluation... (${i + 1}/${cards.length})`;
       quickActionBtn.click();
 
-      // Never moves on before the market estimation lands: a timed-out attempt closes the modal and re-opens it
-      // rather than skipping the card, until a value is recorded or the run is stopped.
-      let recorded = await waitForCardEvaluation(cardName, state);
-      while (!recorded && !state.stopped) {
+      // A timed-out attempt closes the modal and re-opens it, up to EVAL_MAX_ATTEMPTS attempts. A card whose quick
+      // action reports it can't be sold (no sell button, no image), that left the page, or that still has no
+      // estimate after the last attempt is skipped, so one bad card can't hold the whole run up.
+      let recorded = false;
+      let skipReason = null;
+      for (let attempt = 1; attempt <= EVAL_MAX_ATTEMPTS; attempt++) {
+        if (attempt > 1) {
+          logger(
+            CPL.WARN,
+            `No estimate yet for "${cardName}" (attempt ${attempt - 1}/${EVAL_MAX_ATTEMPTS}), reopening its modal`,
+          );
+          document.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+          );
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          if (state.stopped) break;
+          if (!card.isConnected) {
+            skipReason = "the card left the page";
+            break;
+          }
+          (card.querySelector(".wm-quick-action") ?? quickActionBtn).click();
+        }
+
+        const outcome = await waitForQuickActionOutcome(quickActionBtn, state);
+        if (outcome === "no-image" || outcome === "no-sell-button") {
+          skipReason = `quick action: ${outcome}`;
+          break;
+        }
+        if (state.stopped) break;
+
+        recorded = await waitForCardEvaluation(
+          cardName,
+          state,
+          attempt === 1 ? 8000 : 20000,
+        );
+        if (recorded || state.stopped) break;
+      }
+      if (!recorded && !state.stopped) {
+        skipped.push(cardName);
         logger(
           CPL.WARN,
-          `No estimate yet for "${cardName}", reopening its modal`,
+          `Card skipped: "${cardName}" (${skipReason ?? `no estimate after ${EVAL_MAX_ATTEMPTS} attempts`})`,
         );
-        document.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-        );
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (state.stopped) break;
-        quickActionBtn.click();
-        recorded = await waitForCardEvaluation(cardName, state, 20000);
       }
       if (!recorded && previousValue !== null) {
         localStorage.setItem(key, previousValue);
@@ -6776,7 +6899,8 @@ const MY_USERNAME = "xxx";
 
     logger(
       CPL.INFO,
-      `Card evaluation ${state.stopped ? "stopped" : "complete"}`,
+      `Card evaluation ${state.stopped ? "stopped" : "complete"}${skipped.length ? `, ${skipped.length} skipped` : ""}`,
+      skipped,
     );
     stopBtn?.remove();
   }
@@ -6792,7 +6916,7 @@ const MY_USERNAME = "xxx";
 
   async function reevaluateAllCollectionCards(button, otherButton) {
     const originalLabel = button.textContent;
-    const cards = getAllCollectionCards() ?? [];
+    const cards = getEvaluableCollectionCards() ?? [];
 
     await evaluateCollectionCards(button, cards);
 
