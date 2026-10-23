@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.3
+// @version      0.30.11
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -1067,8 +1067,11 @@
   // Rule 9: on /marketplace, click the configured tab ("Mes enchères" by default; Config tab, "Onglet du marché ouvert
   // par défaut": "Parcourir", "Mes enchères", "Historique", "Gagnées" or "Aucun" for none) as soon as it appears in the DOM
   // Rule 9 (cont'd): the "Parcourir" tab's sort selector (currently "Récemment listées") is switched to "Fin imminente"
-  // as soon as the user starts typing in the search input (once per appearance of the selector, so a later manual
-  // choice sticks).
+  // once the user has started typing in the search input (once per appearance of the selector, so a later manual
+  // choice sticks). The switch makes the page re-render, which can disrupt what is being typed or pasted into the
+  // field if it happens in the middle of it, so it is not done on the keystroke itself: it waits for BROWSE_SORT_DELAY_MS
+  // of silence in the field (every new input event restarts the wait). Only the search field (input[type="search"])
+  // triggers it.
   // ============================================================
   // The selector only exists while the Parcourir tab is displayed, so every time the user reaches the tab a fresh
   // element appears and is switched once (dataset.wmSortApplied); a later manual choice is left alone. Handles both a
@@ -1076,6 +1079,7 @@
   // custom dropdown (button[role="combobox"], click it, then click the matching option).
   const BROWSE_SORT_TARGET_LABEL = "Fin imminente";
   const BROWSE_SORT_CURRENT_LABEL = "Récemment listées";
+  const BROWSE_SORT_DELAY_MS = 400;
 
   function findBrowseSortSelect() {
     return Array.from(document.querySelectorAll("select")).find((select) =>
@@ -1166,8 +1170,14 @@
   function watchAuctionsTabArrival() {
     clickAuctionsTabOnArrival();
 
+    // Debounced: switching the sort re-renders the page, which must not land in the middle of a paste or a keystroke
+    let sortTimerId = null;
     document.addEventListener("input", (event) => {
-      if (event.target instanceof HTMLInputElement) applyBrowseSortEndingSoon();
+      if (!(event.target instanceof HTMLInputElement)) return;
+      if (event.target.type !== "search") return;
+
+      clearTimeout(sortTimerId);
+      sortTimerId = setTimeout(applyBrowseSortEndingSoon, BROWSE_SORT_DELAY_MS);
     });
 
     const observer = new MutationObserver(() => clickAuctionsTabOnArrival());
@@ -2841,8 +2851,10 @@
   // Feature BBS: remembers the user's biggest sales and biggest purchases, each in its own localStorage entry
   // (BEST_TRADE_KINDS: "wm-observed-best-sells" / "wm-observed-best-buys"): an array of single-key objects
   // ({ "{card name}": "{amount}-{tag}" }, tag being the bid UUID's second segment, same tagged format as Feature
-  // BSP's entries), kept sorted from the biggest amount to the smallest and capped at getTopLimit() entries (the "Taille des classements « Top »" setting of Feature CFG, default 40, shared with Rule 35's
-  // list; a lowered limit trims the stored list the next time it is written). Once full, a new trade only gets in when it's strictly bigger than the current smallest entry, which it
+  // BSP's entries), kept sorted from the biggest amount to the smallest and capped at TOP_LIMIT_MAX (100) entries, whatever the
+  // "Taille des classements « Top »" setting of Feature CFG (default 40, shared with Rule 35's list) says: that setting
+  // only decides how many of the biggest are shown, so lowering it deletes nothing and raising it back shows the
+  // trades that were kept. Once full, a new trade only gets in when it's strictly bigger than the current smallest entry, which it
   // replaces. A trade whose tag is already stored is skipped, so revisiting an auction
   // never records it twice; with no tag available, nothing is recorded. Skips while div.animate-spin is present
   // (the page is still loading). Unlike Feature BSP's "observed-" cache, which deliberately ignores the user's own
@@ -2989,8 +3001,7 @@
     });
 
     if (trades.every((e) => e && typeof e === "object")) {
-      const limit = getTopLimit();
-      const sorted = sortBestTradesByAmount(trades).slice(0, limit);
+      const sorted = sortBestTradesByAmount(trades).slice(0, TOP_LIMIT_MAX);
       if (
         sorted.length !== trades.length ||
         sorted.some((entry, i) => entry !== trades[i])
@@ -2998,7 +3009,7 @@
         if (sorted.length !== trades.length)
           logger(
             CPL.INFO,
-            `Best ${kind} trimmed to the configured size: ${trades.length} -> ${sorted.length}`,
+            `Best ${kind} trimmed to the buffer size: ${trades.length} -> ${sorted.length}`,
           );
         changed = true;
       }
@@ -3020,8 +3031,8 @@
     )
       return;
 
-    const limit = getTopLimit();
-    if (trades.length >= limit) {
+    // Stored at the largest size the setting offers, whatever the configured one (that only limits what is shown)
+    if (trades.length >= TOP_LIMIT_MAX) {
       if (amount <= amountOf(trades[trades.length - 1])) return;
       trades.pop();
     }
@@ -3030,19 +3041,12 @@
     });
 
     trades.sort((a, b) => amountOf(b) - amountOf(a));
-    // A limit lowered since the last write leaves the stored list longer than it: trim it now
-    if (trades.length > limit) {
-      logger(
-        CPL.INFO,
-        `Best ${kind} trimmed to the configured size: ${trades.length} -> ${limit}`,
-      );
-      trades.length = limit;
-    }
+    if (trades.length > TOP_LIMIT_MAX) trades.length = TOP_LIMIT_MAX;
 
     localStorage.setItem(BEST_TRADE_KINDS[kind].key, JSON.stringify(trades));
     logger(
       CPL.LOG,
-      `Best ${kind} recorded: "${cardName}" ${amount} (size limit ${limit})`,
+      `Best ${kind} recorded: "${cardName}" ${amount} (buffer of ${TOP_LIMIT_MAX}, ${getTopLimit()} shown)`,
     );
   }
 
@@ -3573,6 +3577,9 @@
       document
         .querySelectorAll(`.${MPA_ARROW_CLASS}`)
         .forEach((el) => el.remove());
+      document
+        .querySelectorAll("[data-wm-mpa-up]")
+        .forEach((card) => delete card.dataset.wmMpaUp);
       return;
     }
 
@@ -3612,12 +3619,16 @@
 
       if (reference === null || Number.isNaN(price)) {
         existing?.remove();
+        delete card.dataset.wmMpaUp;
         return;
       }
 
       const unreliable = stored.length <= 2;
       const status = computeBuyStatus(price, reference, stored.length);
       const arrow = price < reference * TOLERABLE_THRESHOLD_RATIO ? "▼" : "▲";
+      // Rule 40 dims the cards flagged here (the ones whose arrow points up)
+      if (arrow === "▲") card.dataset.wmMpaUp = "true";
+      else delete card.dataset.wmMpaUp;
       const title = `${BUY_STATUS_LABELS[status]} (obj. ${Math.round(reference)})${unreliable ? " — indice peu fiable" : ""}`;
       const className = `${MPA_ARROW_CLASS} wm-mpa-${status}${unreliable ? " wm-mpa-unreliable" : ""}`;
 
@@ -5033,7 +5044,7 @@
     {
       id: "feature-tbd",
       label:
-        "Étiqueter « TBD » les cartes sans estimation (estimation en masse)",
+        "Étiqueter les cartes pendant l'estimation en masse (« TBD » sans estimation, plages de valeur)",
       defaultDisabled: true,
     },
     {
@@ -5043,6 +5054,20 @@
     {
       id: "feature-wat",
       label: "Surveiller des enchères et les retrouver depuis /marketplace",
+    },
+    {
+      id: "rule-40",
+      label:
+        "Interrupteur pour estomper les cartes à flèche ▲ (marché, Parcourir)",
+    },
+    {
+      id: "rule-41",
+      label: "Mémoriser les noms de vos étiquettes (liste des étiquettes)",
+    },
+    {
+      id: "rule-42",
+      label:
+        "Retour arrière sur un champ d'étiquette vide : sélectionner les étiquettes de la carte",
     },
   ];
 
@@ -5080,6 +5105,9 @@
   const AUCTION_DURATION_CONFIG_ID = "auction-duration";
   const WATCHED_MAX_AGE_CONFIG_ID = "watched-max-age";
   const TOP_LIMIT_CONFIG_ID = "top-limit";
+  // The largest size the "Top" setting offers. The Top lists are always stored/buffered at that size, whatever the
+  // configured one: the setting only decides how many of them are shown, so raising it again never loses entries
+  const TOP_LIMIT_MAX = 100;
   const WORTHLESS_THRESHOLD_CONFIG_ID = "worthless-threshold";
   const MAX_STORED_PRICES_CONFIG_ID = "max-stored-prices";
   const REFERENCE_PRICES_COUNT_CONFIG_ID = "reference-prices-count";
@@ -5111,7 +5139,14 @@
   // defaultValue (one of the labels), values? (label -> the value the script actually uses, when that isn't the
   // label itself), hint? (a small line under the label) }. An entry with `type: "text"` is a free text field instead
   // (no options; `placeholder?`; trimmed, at most CONFIG_TEXT_MAX_LENGTH characters, saved shortly after typing;
-  // `readOnly: true` shows it without letting it be typed in, for a value only the script fills in). Code reads a setting with getConfigValue(id), at the time
+  // `readOnly: true` shows it without letting it be typed in, for a value only the script fills in). An entry with
+  // `type: "ranges"` is an editable list of { min, max, tag, enabled } value ranges (a null bound is no bound; each has
+  // a switch, an off range being kept but not applied; at most CONFIG_RANGES_MAX; saved shortly after an edit;
+  // getConfigValue returns the array). An entry with
+  // `type: "select"` is a drop-down of free values: `choices()` gives the current candidates (read when the panel is
+  // built), the stored value is kept even when it isn't one of them, and `defaultValue` is always offered. An entry with
+  // `type: "range"` is a slider (`min`, `max`, `step`; stored as the number's string, clamped and snapped to the
+  // step when read; getConfigValue returns the number). Code reads a setting with getConfigValue(id), at the time
   // it acts, never by copying it into a constant at load: that is what makes a change apply without a reload.
   const CONFIG_GROUPS = [
     { id: "account", title: "Compte" },
@@ -5123,6 +5158,10 @@
   ];
 
   const MY_USERNAME_CONFIG_ID = "my-username";
+  const TBD_TAG_CONFIG_ID = "tbd-tag";
+  const TBD_TAG_DEFAULT = "TBD";
+  const VALUE_RANGES_CONFIG_ID = "tbd-value-ranges";
+  const CONFIG_RANGES_MAX = 30;
   const CONFIG_TEXT_MAX_LENGTH = 64;
 
   const CONFIG_REGISTRY = [
@@ -5140,6 +5179,7 @@
       id: AUCTION_DURATION_CONFIG_ID,
       group: "auctions",
       label: "Durée par défaut d'enchère",
+      hint: "Durée sélectionnée automatiquement quand vous ouvrez la fenêtre de mise en vente d'une carte.",
       options: ["10 min", "30 min", "1 h", "3 h", "6 h", "12 h"],
       defaultValue: "1 h",
     },
@@ -5147,6 +5187,7 @@
       id: WATCHED_MAX_AGE_CONFIG_ID,
       group: "auctions",
       label: "Suppression automatique des enchères surveillées",
+      hint: "Délai après la fin d'une enchère surveillée au bout duquel elle est retirée de la liste, quand vous ouvrez votre profil.",
       options: Object.keys(WATCHED_MAX_AGE_OPTIONS_MS),
       defaultValue: "7 jours",
     },
@@ -5170,18 +5211,27 @@
       id: TOP_LIMIT_CONFIG_ID,
       group: "estimates",
       label: "Taille des classements « Top »",
-      options: ["10", "20", "40", "60", "100"],
+      hint: "Nombre d'entrées affichées dans les classements « Top » (estimations, plus grosses ventes et achats). Les 100 meilleures sont toujours gardées en mémoire, quel que soit ce réglage.",
+      options: ["10", "20", "40", "60", String(TOP_LIMIT_MAX)],
       defaultValue: "40",
-      values: { 10: 10, 20: 20, 40: 40, 60: 60, 100: 100 },
+      values: {
+        10: 10,
+        20: 20,
+        40: 40,
+        60: 60,
+        [TOP_LIMIT_MAX]: TOP_LIMIT_MAX,
+      },
     },
     {
       id: WORTHLESS_THRESHOLD_CONFIG_ID,
       group: "estimates",
       label: "Seuil « sans valeur » des estimations",
-      options: ["1", "5", "10", "25", "50", "100"],
+      type: "range",
+      min: 1,
+      max: 100,
+      step: 1,
       defaultValue: "10",
-      values: { 1: 1, 5: 5, 10: 10, 25: 25, 50: 50, 100: 100 },
-      hint: "En dessous de cette estimation, la carte s'affiche avec 💩",
+      hint: "En dessous de cette estimation, la carte affiche '💩'",
     },
     {
       id: MAX_STORED_PRICES_CONFIG_ID,
@@ -5226,6 +5276,15 @@
       hint: "En dessous de ce temps restant, le décompte « Se termine dans... » luit en rouge",
     },
     {
+      id: TBD_TAG_CONFIG_ID,
+      group: "bulk-eval",
+      type: "select",
+      label: "Étiquette « TBD »",
+      defaultValue: TBD_TAG_DEFAULT,
+      choices: () => readKnownTagNames(),
+      hint: "Étiquette posée sur les cartes sans estimation (fonctionnalité TBD). La liste vient de vos étiquettes, mémorisées quand vous ouvrez la liste des étiquettes de votre collection.",
+    },
+    {
       id: EVAL_MAX_ATTEMPTS_CONFIG_ID,
       group: "bulk-eval",
       label: "Essais par carte (estimation en masse)",
@@ -5233,6 +5292,14 @@
       defaultValue: "3",
       values: { 1: 1, 3: 3, 5: 5 },
       hint: "Nombre d'essais avant de passer une carte qui n'obtient pas d'estimation",
+    },
+    {
+      id: VALUE_RANGES_CONFIG_ID,
+      group: "bulk-eval",
+      type: "ranges",
+      label: "Étiquettes automatiques selon l'estimation",
+      defaultValue: [],
+      hint: "Pendant l'estimation en masse (fonctionnalité TBD), une carte reçoit l'étiquette de chaque plage qui contient son estimation (min ≤ valeur ≤ max ; une borne vide n'en est pas une). Les plages peuvent se chevaucher et partager une étiquette.",
     },
     {
       id: EVAL_TIMEOUTS_CONFIG_ID,
@@ -5275,6 +5342,19 @@
           typeof value === "string"
             ? value.trim().slice(0, CONFIG_TEXT_MAX_LENGTH)
             : defaultValue;
+      } else if (type === "ranges") {
+        config[id] = normalizeValueRanges(value);
+      } else if (type === "select") {
+        config[id] =
+          typeof value === "string" && value.trim() !== ""
+            ? value.trim().slice(0, CONFIG_TEXT_MAX_LENGTH)
+            : defaultValue;
+      } else if (type === "range") {
+        const entry = CONFIG_REGISTRY.find((candidate) => candidate.id === id);
+        const number = parseFloat(value);
+        config[id] = Number.isFinite(number)
+          ? String(snapConfigRange(entry, number))
+          : defaultValue;
       } else {
         config[id] = options.includes(value) ? value : defaultValue;
       }
@@ -5283,10 +5363,39 @@
     return config;
   }
 
+  // A stored list of value ranges made safe to use: bounds are finite numbers or null, tags are trimmed text
+  function normalizeValueRanges(value) {
+    if (!Array.isArray(value)) return [];
+
+    const bound = (number) =>
+      typeof number === "number" && Number.isFinite(number) ? number : null;
+    return value
+      .filter((range) => range && typeof range === "object")
+      .slice(0, CONFIG_RANGES_MAX)
+      .map((range) => ({
+        min: bound(range.min),
+        max: bound(range.max),
+        tag:
+          typeof range.tag === "string"
+            ? range.tag.trim().slice(0, CONFIG_TEXT_MAX_LENGTH)
+            : "",
+        // Switched on unless saved as off (ranges saved before the switch existed have none)
+        enabled: range.enabled !== false,
+      }));
+  }
+
+  // A slider's value brought into its entry's min/max and onto its step
+  function snapConfigRange({ min, max, step }, number) {
+    const snapped = min + Math.round((number - min) / step) * step;
+    return Math.min(max, Math.max(min, snapped));
+  }
+
   // The value the script uses for a setting: the entry's `values` mapping of the chosen label, or the label itself
+  // (a number for a slider)
   function getConfigValue(id) {
     const entry = CONFIG_REGISTRY.find((candidate) => candidate.id === id);
     const label = readConfig()[id];
+    if (entry?.type === "range") return Number(label);
     return entry?.values && label in entry.values ? entry.values[label] : label;
   }
 
@@ -5306,9 +5415,10 @@
     configCache = config;
     try {
       localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-      logger(CPL.INFO, `Config saved: ${id} = ${value}`);
+      const shown = typeof value === "string" ? value : JSON.stringify(value);
+      logger(CPL.INFO, `Config saved: ${id} = ${shown}`);
     } catch (error) {
-      logger(CPL.ERROR, `Config not saved: ${id} = ${value}`, error);
+      logger(CPL.ERROR, `Config not saved: ${id}`, error);
     }
   }
 
@@ -5336,8 +5446,163 @@
     return panel;
   }
 
+  // A styled options list (what a native <select> / <datalist> can't be: their options are drawn by the browser) shown
+  // under `anchor`: a fixed-position panel, put inside the settings overlay so it stacks above the modal and a click on
+  // it doesn't count as a click on the overlay. `values` are the strings offered, `selected` the current one (marked,
+  // and focused first when `focusSelected`), `onPick(value)` runs on a choice. It closes on a pick, Escape (without
+  // closing the settings modal), a click elsewhere or a scroll outside it. Options keep the anchor's focus on
+  // mousedown, so it can be a text field being typed in. Returns { close, firstOption }.
+  function openConfigOptions({
+    anchor,
+    values,
+    selected,
+    onPick,
+    focusSelected = true,
+  }) {
+    const host = anchor.closest(".wm-settings-overlay") ?? document.body;
+    const list = document.createElement("div");
+    list.className = "wm-dd-list";
+    list.setAttribute("role", "listbox");
+
+    const optionEls = values.map((value) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "wm-dd-option";
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", String(value === selected));
+      option.classList.toggle("wm-dd-option-selected", value === selected);
+
+      const text = document.createElement("span");
+      text.className = "wm-dd-option-text";
+      text.textContent = value;
+      const check = document.createElement("span");
+      check.className = "wm-dd-option-check";
+      check.textContent = value === selected ? "✓" : "";
+      option.append(text, check);
+
+      option.addEventListener("mousedown", (event) => event.preventDefault());
+      option.addEventListener("click", () => {
+        close();
+        onPick(value);
+      });
+      list.appendChild(option);
+      return option;
+    });
+
+    const onOutside = (event) => {
+      if (!list.contains(event.target) && !anchor.contains(event.target))
+        close();
+    };
+    const onScroll = (event) => {
+      if (!list.contains(event.target)) close();
+    };
+    function close() {
+      if (!list.isConnected) return;
+      list.remove();
+      document.removeEventListener("mousedown", onOutside, true);
+      window.removeEventListener("scroll", onScroll, true);
+      anchor.setAttribute("aria-expanded", "false");
+    }
+
+    list.addEventListener("keydown", (event) => {
+      const index = optionEls.indexOf(document.activeElement);
+      const move = (next) => {
+        event.preventDefault();
+        optionEls[(next + optionEls.length) % optionEls.length]?.focus();
+      };
+      if (event.key === "ArrowDown") move(index + 1);
+      else if (event.key === "ArrowUp") move(index === -1 ? -1 : index - 1);
+      else if (event.key === "Home") move(0);
+      else if (event.key === "End") move(optionEls.length - 1);
+      else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+        anchor.focus();
+      }
+    });
+
+    host.appendChild(list);
+    anchor.setAttribute("aria-expanded", "true");
+    document.addEventListener("mousedown", onOutside, true);
+    window.addEventListener("scroll", onScroll, true);
+
+    const rect = anchor.getBoundingClientRect();
+    list.style.minWidth = `${rect.width}px`;
+    const below = window.innerHeight - rect.bottom - 8;
+    const top =
+      list.offsetHeight > below && rect.top > below
+        ? Math.max(8, rect.top - list.offsetHeight - 4)
+        : rect.bottom + 4;
+    list.style.top = `${top}px`;
+    list.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - list.offsetWidth - 8))}px`;
+
+    const target = focusSelected
+      ? (optionEls.find((option, i) => values[i] === selected) ?? optionEls[0])
+      : null;
+    target?.focus();
+    target?.scrollIntoView?.({ block: "nearest" });
+
+    return { close, firstOption: optionEls[0] ?? null };
+  }
+
+  // A circled "i" next to a setting's name, whose hint shows in a tooltip while it is hovered or focused (and toggles on
+  // a click, for touch screens). The tip is a fixed-position panel put inside the settings overlay, so the panel's
+  // scrolling can't clip it; Escape hides it without closing the settings modal.
+  function buildConfigInfo(hint) {
+    const icon = document.createElement("button");
+    icon.type = "button";
+    icon.className = "wm-config-info";
+    icon.textContent = "i";
+    icon.setAttribute("aria-label", hint);
+
+    let tip = null;
+    const hide = () => {
+      tip?.remove();
+      tip = null;
+    };
+    const show = () => {
+      if (tip) return;
+      tip = document.createElement("div");
+      tip.className = "wm-config-tip";
+      tip.setAttribute("role", "tooltip");
+      tip.textContent = hint;
+      (icon.closest(".wm-settings-overlay") ?? document.body).appendChild(tip);
+
+      const rect = icon.getBoundingClientRect();
+      const above = rect.top > tip.offsetHeight + 12;
+      tip.style.top = `${above ? rect.top - tip.offsetHeight - 6 : rect.bottom + 6}px`;
+      tip.style.left = `${Math.max(8, Math.min(rect.left - 8, window.innerWidth - tip.offsetWidth - 8))}px`;
+    };
+
+    icon.addEventListener("mouseenter", show);
+    icon.addEventListener("mouseleave", hide);
+    icon.addEventListener("focus", show);
+    icon.addEventListener("blur", hide);
+    icon.addEventListener("click", () => (tip ? hide() : show()));
+    icon.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !tip) return;
+      event.stopPropagation();
+      hide();
+    });
+    return icon;
+  }
+
   function buildConfigRow(
-    { id, type, label, options, hint, placeholder, readOnly },
+    {
+      id,
+      type,
+      label,
+      options,
+      hint,
+      placeholder,
+      readOnly,
+      min,
+      max,
+      step,
+      choices,
+      defaultValue,
+    },
     config,
   ) {
     const row = document.createElement("div");
@@ -5346,7 +5611,265 @@
     const rowLabel = document.createElement("p");
     rowLabel.className = "wm-config-label";
     rowLabel.textContent = label;
-    if (hint) rowLabel.title = hint;
+    if (hint) rowLabel.append(buildConfigInfo(hint));
+
+    if (type === "ranges") {
+      const ranges = normalizeValueRanges(config[id]);
+      const list = document.createElement("div");
+      list.className = "wm-config-ranges";
+
+      // Tag suggestions: the names Rule 41 remembered (any other name can be typed: it will be created)
+      const knownTags = readKnownTagNames().sort((a, b) => a.localeCompare(b));
+
+      let saveTimerId = null;
+      const save = () => {
+        clearTimeout(saveTimerId);
+        writeConfigValue(id, normalizeValueRanges(ranges));
+      };
+      const saveSoon = () => {
+        clearTimeout(saveTimerId);
+        saveTimerId = setTimeout(save, 400);
+      };
+
+      const render = () => {
+        list.replaceChildren();
+        ranges.forEach((range, index) => {
+          const line = document.createElement("div");
+          line.className = "wm-config-range-row";
+
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "wm-config-range-switch";
+          toggle.setAttribute("role", "switch");
+          toggle.title = "Activer / désactiver cette plage";
+          toggle.setAttribute("aria-label", "Activer cette plage");
+          const syncToggle = () => {
+            toggle.setAttribute("aria-checked", String(range.enabled));
+            toggle.setAttribute("aria-pressed", String(range.enabled));
+            line.classList.toggle("wm-config-range-row-off", !range.enabled);
+          };
+          toggle.addEventListener("click", () => {
+            range.enabled = !range.enabled;
+            syncToggle();
+            save();
+            logger(
+              CPL.LOG,
+              `Value range ${range.enabled ? "enabled" : "disabled"}: ${range.min ?? "-"} to ${range.max ?? "-"} -> "${range.tag}"`,
+            );
+          });
+          syncToggle();
+
+          const numberInput = (key, symbol, hintText) => {
+            const wrap = document.createElement("label");
+            wrap.className = "wm-config-range-bound";
+            wrap.title = hintText;
+            const sign = document.createElement("span");
+            sign.textContent = symbol;
+            const input = document.createElement("input");
+            input.type = "number";
+            input.step = "any";
+            input.placeholder = "ø";
+            input.value = range[key] === null ? "" : String(range[key]);
+            input.setAttribute("aria-label", hintText);
+            input.addEventListener("input", () => {
+              const number = parseFloat(input.value);
+              range[key] = Number.isFinite(number) ? number : null;
+              line.classList.toggle(
+                "wm-config-range-row-invalid",
+                range.min !== null &&
+                  range.max !== null &&
+                  range.min > range.max,
+              );
+              saveSoon();
+            });
+            wrap.append(sign, input);
+            return wrap;
+          };
+
+          const tagInput = document.createElement("input");
+          tagInput.type = "text";
+          tagInput.className = "wm-config-range-tag";
+          tagInput.maxLength = CONFIG_TEXT_MAX_LENGTH;
+          tagInput.placeholder = "Étiquette";
+          tagInput.setAttribute("aria-label", "Étiquette de la plage");
+          tagInput.setAttribute("aria-haspopup", "listbox");
+          tagInput.setAttribute("aria-expanded", "false");
+          tagInput.autocomplete = "off";
+          tagInput.value = range.tag;
+
+          // The suggestions (names containing what is typed) follow the typing, without taking the focus
+          let suggestions = null;
+          const showSuggestions = () => {
+            suggestions?.close();
+            const typed = tagInput.value.trim().toLowerCase();
+            const matching = knownTags.filter(
+              (name) =>
+                name.toLowerCase().includes(typed) &&
+                name.toLowerCase() !== typed,
+            );
+            suggestions =
+              matching.length === 0
+                ? null
+                : openConfigOptions({
+                    anchor: tagInput,
+                    values: matching,
+                    selected: null,
+                    focusSelected: false,
+                    onPick: (name) => {
+                      tagInput.value = name;
+                      range.tag = name;
+                      save();
+                      tagInput.focus();
+                    },
+                  });
+          };
+          tagInput.addEventListener("focus", showSuggestions);
+          tagInput.addEventListener("input", () => {
+            range.tag = tagInput.value.trim();
+            saveSoon();
+            showSuggestions();
+          });
+          tagInput.addEventListener("change", save);
+          tagInput.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowDown" && suggestions?.firstOption) {
+              event.preventDefault();
+              suggestions.firstOption.focus();
+            } else if (event.key === "Escape" && suggestions) {
+              event.stopPropagation();
+              suggestions.close();
+              suggestions = null;
+            }
+          });
+
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "wm-config-text-clear";
+          removeBtn.textContent = "✕";
+          removeBtn.title = "Supprimer cette plage";
+          removeBtn.setAttribute("aria-label", "Supprimer cette plage");
+          removeBtn.addEventListener("click", () => {
+            ranges.splice(index, 1);
+            save();
+            render();
+          });
+
+          line.classList.toggle(
+            "wm-config-range-row-invalid",
+            range.min !== null && range.max !== null && range.min > range.max,
+          );
+          line.append(
+            toggle,
+            numberInput("min", "≥", "Borne basse (incluse) : valeur ≥"),
+            numberInput("max", "≤", "Borne haute (incluse) : valeur ≤"),
+            tagInput,
+            removeBtn,
+          );
+          list.appendChild(line);
+        });
+        addBtn.disabled = ranges.length >= CONFIG_RANGES_MAX;
+      };
+
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "wm-config-ranges-add";
+      addBtn.textContent = "+ Ajouter une plage";
+      addBtn.addEventListener("click", () => {
+        ranges.push({ min: null, max: null, tag: "", enabled: true });
+        save();
+        render();
+        list.lastElementChild?.querySelector("input")?.focus();
+      });
+
+      render();
+      row.append(rowLabel, list, addBtn);
+      return row;
+    }
+
+    if (type === "select") {
+      // The default, the names the script knows, and the current value even if it is neither (kept, never lost)
+      const values = [
+        defaultValue,
+        ...[...choices()].sort((a, b) => a.localeCompare(b)),
+      ];
+      if (!values.includes(config[id])) values.push(config[id]);
+      const offered = [...new Set(values)];
+
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "wm-dd-trigger";
+      trigger.setAttribute("aria-haspopup", "listbox");
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.setAttribute("aria-label", label);
+
+      const triggerText = document.createElement("span");
+      triggerText.className = "wm-dd-trigger-text";
+      triggerText.textContent = config[id];
+      const chevron = document.createElement("span");
+      chevron.className = "wm-dd-chevron";
+      chevron.textContent = "▾";
+      trigger.append(triggerText, chevron);
+
+      let popover = null;
+      const open = () => {
+        popover = openConfigOptions({
+          anchor: trigger,
+          values: offered,
+          selected: readConfig()[id],
+          onPick: (value) => {
+            triggerText.textContent = value;
+            if (value !== readConfig()[id]) writeConfigValue(id, value);
+            trigger.focus();
+          },
+        });
+      };
+      trigger.addEventListener("click", () => {
+        if (trigger.getAttribute("aria-expanded") === "true") popover?.close();
+        else open();
+      });
+      trigger.addEventListener("keydown", (event) => {
+        if (
+          event.key !== "ArrowDown" ||
+          trigger.getAttribute("aria-expanded") === "true"
+        )
+          return;
+        event.preventDefault();
+        open();
+      });
+
+      row.append(rowLabel, trigger);
+      return row;
+    }
+
+    if (type === "range") {
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.className = "wm-config-range";
+      slider.min = String(min);
+      slider.max = String(max);
+      slider.step = String(step);
+      slider.value = config[id];
+      slider.setAttribute("aria-label", label);
+
+      const output = document.createElement("output");
+      output.className = "wm-config-range-value";
+      output.textContent = slider.value;
+
+      // The figure follows the thumb while it moves; the value is saved once it is let go (or a key step is made)
+      slider.addEventListener("input", () => {
+        output.textContent = slider.value;
+      });
+      slider.addEventListener("change", () => {
+        output.textContent = slider.value;
+        if (slider.value !== readConfig()[id])
+          writeConfigValue(id, slider.value);
+      });
+
+      const field = document.createElement("div");
+      field.className = "wm-config-range-field";
+      field.append(slider, output);
+      row.append(rowLabel, field);
+      return row;
+    }
 
     if (type === "text") {
       const input = document.createElement("input");
@@ -5893,6 +6416,48 @@
         flex-direction: column;
         gap: 0.4rem;
       }
+      .wm-config-info {
+        margin-left: 0.325rem;
+        margin-bottom: 0.5rem;
+        border: 1px solid currentColor;
+        border-radius: 99vw;
+        background: transparent;
+        width: 0.75rem;
+        height: 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        color: var(--color-accent);
+        font-size: 0.6rem;
+        font-weight: 700;
+        line-height: 1;
+        vertical-align: middle;
+        cursor: help;
+        opacity: 0.75;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-config-info:hover,
+      .wm-config-info:focus-visible {
+        outline: none;
+        opacity: 1;
+        background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+      }
+      .wm-config-tip {
+        position: fixed;
+        z-index: 10001;
+        max-width: min(20rem, 40vw);
+        padding: 0.5rem 0.7rem;
+        border: 1px solid var(--color-border);
+        border-radius: 0.6rem;
+        background-color: var(--color-surface-light);
+        color: var(--color-foreground);
+        font-size: 0.75rem;
+        font-weight: 400;
+        line-height: 1.35;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+        pointer-events: none;
+      }
       .wm-config-label {
         margin: 0;
         font-size: 0.85rem;
@@ -5907,6 +6472,207 @@
         background: transparent;
         color: var(--color-foreground);
         font-size: 0.85rem;
+      }
+      .wm-config-ranges {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      .wm-config-range-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+      }
+      .wm-config-range-bound {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.85rem;
+      }
+      .wm-config-range-bound input,
+      .wm-config-range-tag {
+        padding: 0.3rem 0.6rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--color-foreground);
+        font-size: 0.85rem;
+      }
+      .wm-config-range-bound input {
+        width: 6rem;
+      }
+      .wm-config-range-tag {
+        min-width: 8rem;
+        max-width: 14rem;
+        padding-inline: 1rem;
+        flex: 1;
+      }
+      .wm-config-range-switch {
+        position: relative;
+        flex-shrink: 0;
+        width: 2.1rem;
+        height: 1.2rem;
+        padding: 0;
+        border: none;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.2);
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      .wm-config-range-switch::after {
+        content: "";
+        position: absolute;
+        top: 0.15rem;
+        left: 0.15rem;
+        width: 0.9rem;
+        height: 0.9rem;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.2s ease;
+      }
+      .wm-config-range-switch[aria-checked="true"] {
+        background: var(--color-accent);
+      }
+      .wm-config-range-switch[aria-checked="true"]::after {
+        transform: translateX(0.9rem);
+      }
+      .wm-config-range-row > :not(.wm-config-range-switch):not(.wm-config-text-clear) {
+        transition: opacity 0.35s ease;
+      }
+      .wm-config-range-row-off > :not(.wm-config-range-switch):not(.wm-config-text-clear) {
+        opacity: 0.4;
+      }
+      .wm-config-range-row-invalid .wm-config-range-bound input {
+        border-color: #ef4444;
+      }
+      .wm-config-ranges-add {
+        align-self: flex-start;
+        padding: 0.25rem 1rem;
+        border: 1px dashed var(--color-accent);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--color-accent);
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .wm-config-ranges-add:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+      }
+      .wm-config-ranges-add:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .wm-dd-trigger {
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        width: 100%;
+        max-width: 18rem;
+        padding: 0.35rem 0.9rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--color-foreground);
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+      .wm-dd-trigger:hover,
+      .wm-dd-trigger[aria-expanded="true"] {
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+      }
+      .wm-dd-trigger-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .wm-dd-chevron {
+        flex-shrink: 0;
+        color: var(--color-accent);
+        font-size: 0.8rem;
+        transition: transform 0.2s ease;
+      }
+      .wm-dd-trigger[aria-expanded="true"] .wm-dd-chevron {
+        transform: rotate(180deg);
+      }
+      .wm-dd-list {
+        position: fixed;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        max-width: min(24rem, 90vw);
+        max-height: 14rem;
+        overflow-y: auto;
+        padding: 0.3rem;
+        border: 1px solid var(--color-border);
+        border-radius: 0.75rem;
+        background-color: var(--color-surface-light);
+        color: var(--color-foreground);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        animation: wm-dd-in 0.12s ease-out;
+      }
+      @keyframes wm-dd-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .wm-dd-option {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.4rem 0.7rem;
+        border: none;
+        border-radius: 0.5rem;
+        background: transparent;
+        color: inherit;
+        font-size: 0.85rem;
+        text-align: left;
+        cursor: pointer;
+      }
+      .wm-dd-option:hover,
+      .wm-dd-option:focus-visible {
+        outline: none;
+        background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+      }
+      .wm-dd-option-selected {
+        color: var(--color-accent);
+        font-weight: 600;
+      }
+      .wm-dd-option-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .wm-dd-option-check {
+        flex-shrink: 0;
+        font-size: 0.8rem;
+      }
+      .wm-config-range-field {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .wm-config-range {
+        flex: 1;
+        max-width: 16rem;
+        accent-color: var(--color-accent);
+        cursor: pointer;
+      }
+      .wm-config-range-value {
+        min-width: 2.5rem;
+        padding: 0.1rem 0.5rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 999px;
+        color: var(--color-accent);
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-align: center;
       }
       .wm-config-text-readonly {
         opacity: 0.7;
@@ -6066,7 +6832,7 @@
     },
     {
       title: "Repérer les cartes impossibles à estimer",
-      text: "Option désactivée par défaut (⚙️) : pendant une estimation en masse, chaque carte dont l'estimation reste « ? » reçoit l'étiquette « TBD », pour la retrouver facilement ensuite.",
+      text: "Option désactivée par défaut (⚙️) : pendant une estimation en masse, chaque carte dont l'estimation reste « ? » reçoit l'étiquette « TBD » (ou une autre de vos étiquettes, au choix dans l'onglet Configuration), pour la retrouver facilement ensuite. Vous pouvez aussi définir des plages de valeur (de ≥ à ≤, avec une étiquette chacune) : une carte estimée reçoit l'étiquette de toutes les plages qui contiennent son estimation.",
     },
     {
       title: "Régler les valeurs du script",
@@ -6075,6 +6841,10 @@
     {
       title: "Surveiller une enchère",
       text: "Sur la page d'une enchère, le bouton « 📌 Surveiller » la garde de côté (re-cliquez pour la retirer ; une enchère terminée est retirée toute seule quand vous la visitez). Sur /marketplace, le bouton « 📌 Surveillées » ouvre la liste de ces enchères, avec depuis quand vous les surveillez ; cliquez sur une carte pour y retourner. Les enchères surveillées depuis plus de 7 jours sont retirées quand vous allez sur votre profil.",
+    },
+    {
+      title: "Estomper les cartes à flèche ▲",
+      text: "Sur /marketplace, onglet « Parcourir », le bouton « ▲ Estomper », à la suite des filtres de rareté, atténue de moitié les cartes dont la flèche pointe vers le haut, c'est-à-dire dont le prix n'est pas une bonne affaire. Cliquez à nouveau pour les ré-afficher ; le choix est mémorisé.",
     },
   ];
 
@@ -7043,6 +7813,10 @@
   // e.g. a new rarity tier's filter button getting appended past our own controls — it's moved back in front of
   // it, keeping the site's own filter buttons grouped together ahead of ours.
   //
+  // Feature EBC (cont'd): the action buttons (the three above and the "Estimation complète" one below) are wrapped in a
+  // dock, a div (wm-eval-dock) pushed to the end of that row with an auto left margin, as Rule 40's switch is on
+  // /marketplace; the native filter buttons are kept ahead of the dock instead of ahead of "Ré-estimer la page".
+  //
   // Feature EBC (cont'd): cards marked as favorite (they contain a button.text-amber-200) are skipped by every bulk
   // evaluation, and left out of the counts and durations shown: such a card has no "Mettre aux enchères" button, so
   // its estimate can't be reached. More generally, a card that can't be put up for sale (no sell button in its modal, no
@@ -7167,29 +7941,38 @@
   // Feature TBD (cont'd of EBC, off by default): once a batch evaluation has ended on "?" for a card, the market
   // modal is closed (div.max-w-lg button.absolute), "TBD" is typed into the card modal's tag input
   // (div.relative input) and submitted with Enter, then the card's active tags (div.space-y-2 div.gap-1.5) are
-  // awaited until one <span> reads "TBD". Cards that already carry any tag are left untouched. Typing goes through the native value setter, like Rule 28's clearing.
-  const TBD_TAG = "TBD";
+  // awaited until one <span> reads that tag. The tag is the "Étiquette « TBD »" setting of Feature CFG ("TBD" by default;
+  // the drop-down offers the tag names Rule 41 remembered), read when each card is tagged. Cards that already carry any
+  // tag are left untouched. Typing goes through the native value setter, like Rule 28's clearing.
+  // Feature TBD (cont'd): the same machinery also tags cards by their new estimate, see tagCardForValueRanges below.
+  function getTbdTag() {
+    return getConfigValue(TBD_TAG_CONFIG_ID);
+  }
 
-  async function tagCardAsToBeDetermined() {
-    const state = { stopped: false };
+  const CARD_TAG_CHIPS_SELECTOR = "div.space-y-2 div.gap-1\\.5 span";
 
+  // Closes the market modal and waits for the card modal's tag input (div.relative input); null when it never shows
+  async function openCardTagInput(state) {
     document.querySelector("div.max-w-lg button.absolute")?.click();
 
     const hasInput = await waitUntil(
       () => document.querySelector("div.relative input") !== null,
       state,
     );
-    if (!hasInput) {
-      logger(CPL.WARN, "TBD tagging: tag input not found");
-      return;
-    }
+    return hasInput ? document.querySelector("div.relative input") : null;
+  }
 
-    // Only untagged cards get "TBD": any active tag already there (TBD included) means leaving the card alone
-    if (document.querySelector("div.space-y-2 div.gap-1\\.5 span")) return;
+  // The card's active tags, as the chips show them
+  function readActiveCardTags() {
+    return Array.from(document.querySelectorAll(CARD_TAG_CHIPS_SELECTOR)).map(
+      (chip) => chip.textContent,
+    );
+  }
 
-    const input = document.querySelector("div.relative input");
+  // Types the tag into the card modal's tag input, submits it with Enter and waits for it to show among the chips
+  async function addTagToCard(input, tag, state) {
     input.focus();
-    NATIVE_INPUT_VALUE_SETTER.call(input, TBD_TAG);
+    NATIVE_INPUT_VALUE_SETTER.call(input, tag);
     input.dispatchEvent(new Event("input", { bubbles: true }));
     for (const type of ["keydown", "keypress", "keyup"]) {
       input.dispatchEvent(
@@ -7203,18 +7986,15 @@
       );
     }
 
-    const tagged = await waitUntil(
-      () =>
-        Array.from(
-          document.querySelectorAll("div.space-y-2 div.gap-1\\.5 span"),
-        ).some((span) => span.textContent.includes(TBD_TAG)),
+    return waitUntil(
+      () => readActiveCardTags().some((text) => text.includes(tag)),
       state,
     );
-    if (tagged) logger(CPL.LOG, "Card tagged TBD");
-    else logger(CPL.WARN, "TBD tagging: tag never showed up");
+  }
 
-    // Escape goes through the input (still focused, and bubbling up to the document) so the card modal closes
-    // right away; evaluateCollectionCards then presses it once more on the document, which is harmless.
+  // Escape goes through the input (still focused, and bubbling up to the document) so the card modal closes right
+  // away; evaluateCollectionCards then presses it once more on the document, which is harmless.
+  async function closeCardModalFrom(input) {
     input.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "Escape",
@@ -7225,6 +8005,114 @@
       }),
     );
     await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  async function tagCardAsToBeDetermined() {
+    const state = { stopped: false };
+    const tbdTag = getTbdTag();
+
+    const input = await openCardTagInput(state);
+    if (!input) {
+      logger(CPL.WARN, "TBD tagging: tag input not found");
+      return;
+    }
+
+    // Only untagged cards get the TBD tag: any active tag already there (that one included) means leaving the card alone
+    if (readActiveCardTags().length > 0) return;
+
+    const tagged = await addTagToCard(input, tbdTag, state);
+    if (tagged) logger(CPL.LOG, `Card tagged "${tbdTag}"`);
+    else logger(CPL.WARN, `TBD tagging: tag "${tbdTag}" never showed up`);
+
+    await closeCardModalFrom(input);
+  }
+
+  // Feature TBD (cont'd): the value ranges of the "Étiquettes automatiques selon l'estimation" setting of Feature CFG. A
+  // card whose bulk evaluation ended on a number gets the tag of every range that contains it (min <= value <= max,
+  // a blank bound being no bound at all). Ranges may overlap and may share a tag: all the matching ones count, each
+  // distinct tag once; a range switched off in the settings is kept but not applied. A card is only touched if it has
+  // no tag yet or carries at least one tag defined in the ranges (any range, switched on or not): the tags it carries
+  // that the ranges define but that no longer match the new value are removed (the chip's button), then the missing
+  // matching ones are added. Cards carrying only other tags are left alone.
+  function getValueRangeTags(value) {
+    const tags = [];
+    getConfigValue(VALUE_RANGES_CONFIG_ID).forEach(
+      ({ min, max, tag, enabled }) => {
+        if (!enabled || !tag || tags.includes(tag)) return;
+        if (min !== null && value < min) return;
+        if (max !== null && value > max) return;
+        tags.push(tag);
+      },
+    );
+    return tags;
+  }
+
+  function getAllValueRangeTags() {
+    return getConfigValue(VALUE_RANGES_CONFIG_ID)
+      .map(({ tag }) => tag)
+      .filter(Boolean);
+  }
+
+  // Clicks the remove button inside the chip reading that tag and waits for the chip to go; false when it never does
+  async function removeTagFromCard(tag, state) {
+    const chip = Array.from(
+      document.querySelectorAll(CARD_TAG_CHIPS_SELECTOR),
+    ).find((el) => el.textContent.includes(tag));
+    const removeBtn = chip?.querySelector("button") ?? chip?.lastElementChild;
+    if (!removeBtn) return false;
+
+    removeBtn.click();
+    return waitUntil(
+      () => !readActiveCardTags().some((text) => text.includes(tag)),
+      state,
+    );
+  }
+
+  async function tagCardForValueRanges(value) {
+    const tags = getValueRangeTags(value);
+    if (tags.length === 0) return;
+
+    const state = { stopped: false };
+    const input = await openCardTagInput(state);
+    if (!input) {
+      logger(CPL.WARN, "Value tagging: tag input not found");
+      return;
+    }
+
+    const autoTags = getAllValueRangeTags();
+    const isAuto = (text) => autoTags.some((tag) => text.includes(tag));
+    const present = readActiveCardTags();
+    if (present.length > 0 && !present.some(isAuto)) {
+      logger(CPL.LOG, `Value tagging: card carries only other tags (${value})`);
+      await closeCardModalFrom(input);
+      return;
+    }
+
+    for (const tag of autoTags) {
+      if (tags.includes(tag) || !present.some((text) => text.includes(tag))) {
+        continue;
+      }
+      const removed = await removeTagFromCard(tag, state);
+      if (removed) logger(CPL.LOG, `Card untagged "${tag}" (${value})`);
+      else logger(CPL.WARN, `Value tagging: tag "${tag}" never went away`);
+    }
+
+    for (const tag of tags) {
+      if (present.some((text) => text.includes(tag))) {
+        logger(CPL.LOG, `Card already tagged "${tag}" (${value})`);
+        continue;
+      }
+
+      const added = await addTagToCard(
+        document.querySelector("div.relative input") ?? input,
+        tag,
+        state,
+      );
+      if (added) logger(CPL.LOG, `Card tagged "${tag}" (${value})`);
+      else logger(CPL.WARN, `Value tagging: tag "${tag}" never showed up`);
+    }
+
+    await closeCardModalFrom(input);
   }
 
   // Feature EBC (cont'd): accepts an optional externally-owned state/stop-button instead of always creating its
@@ -7344,12 +8232,13 @@
         localStorage.setItem(key, previousValue);
       }
 
-      if (
-        recorded &&
-        localStorage.getItem(key) === UNKNOWN_EVAL_VALUE &&
-        readFeatureFlags()["feature-tbd"]
-      ) {
-        await tagCardAsToBeDetermined();
+      if (recorded && readFeatureFlags()["feature-tbd"]) {
+        if (localStorage.getItem(key) === UNKNOWN_EVAL_VALUE) {
+          await tagCardAsToBeDetermined();
+        } else {
+          const value = getCardEvalValueByName(cardName);
+          if (value !== null) await tagCardForValueRanges(value);
+        }
       }
 
       document.dispatchEvent(
@@ -7547,7 +8436,10 @@
     const filterBar = document.querySelector("div.flex-wrap.gap-2");
     if (!filterBar) return;
 
-    let unratedBtn = filterBar.querySelector(":scope > .wm-eval-unrated");
+    // The action buttons live in a dock (div.wm-eval-dock) pushed to the end of the filter row
+    let unratedBtn = filterBar.querySelector(
+      ":scope > .wm-eval-dock > .wm-eval-unrated",
+    );
     if (!unratedBtn) {
       const referenceBtn = filterBar.querySelector("button");
       const baseClass = referenceBtn
@@ -7576,7 +8468,7 @@
 
       const massBtn = document.createElement("button");
       massBtn.type = "button";
-      massBtn.className = "ml-auto wm-eval-mass";
+      massBtn.className = "wm-eval-mass";
       massBtn.title = "Estimation en masse de toutes les pages";
 
       reevaluateBtn.addEventListener("click", () => {
@@ -7611,22 +8503,22 @@
         evaluateAllCollectionPages(massBtn, [reevaluateBtn, unratedBtn]);
       });
 
-      filterBar.appendChild(massBtn);
-      filterBar.appendChild(reevaluateBtn);
-      filterBar.appendChild(unratedBtn);
-      filterBar.appendChild(sortBtn);
+      const dock = document.createElement("div");
+      dock.className = "wm-eval-dock";
+      dock.append(massBtn, reevaluateBtn, unratedBtn, sortBtn);
+      filterBar.appendChild(dock);
     }
 
     updateEvaluateUnratedButtonLabel(unratedBtn);
-    updateMassButtonLabel(filterBar.querySelector(":scope > .wm-eval-mass"));
+    updateMassButtonLabel(
+      filterBar.querySelector(":scope > .wm-eval-dock > .wm-eval-mass"),
+    );
 
     // The site's own rarity filter buttons (button.px-3.py-1.transition-colors) can be (re)inserted after ours —
     // e.g. a new rarity tier showing up appends its filter button at the end of filterBar, past our controls.
-    // Move any such button back to where it belongs: grouped with the other filter buttons, ahead of "Ré-estimer".
-    const reevaluateBtn = filterBar.querySelector(
-      ":scope > .wm-eval-reevaluate-all",
-    );
-    if (reevaluateBtn) {
+    // Move any such button back to where it belongs: grouped with the other filter buttons, ahead of our dock.
+    const dock = filterBar.querySelector(":scope > .wm-eval-dock");
+    if (dock) {
       Array.from(
         filterBar.querySelectorAll(
           ":scope > button.px-3.py-1.transition-colors",
@@ -7634,10 +8526,10 @@
       )
         .filter(
           (btn) =>
-            reevaluateBtn.compareDocumentPosition(btn) &
+            dock.compareDocumentPosition(btn) &
             Node.DOCUMENT_POSITION_FOLLOWING,
         )
-        .forEach((btn) => filterBar.insertBefore(btn, reevaluateBtn));
+        .forEach((btn) => filterBar.insertBefore(btn, dock));
     }
   }
 
@@ -7672,6 +8564,13 @@
         font-size: 0.7rem;
         font-weight: 400;
         opacity: 0.85;
+      }
+      .wm-eval-dock {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-left: auto;
       }
       .wm-eval-mass {
         border: none;
@@ -8483,7 +9382,7 @@
 
   // ============================================================
   // Rule 35: on /collection, a "Top {limit}" text button appended to the h1 inside div.gap-3.animate-fade-in-up
-  // (right after the heading's text) opens a modal listing the largest eval prices (getTopLimit(): the "Taille des classements « Top »" setting of Feature CFG, default 40) cached under
+  // (right after the heading's text) opens a modal listing the largest eval prices (as many as getTopLimit(): the "Taille des classements « Top »" setting of Feature CFG, default 40) cached under
   // "eval-{name}" (Feature ETS), as a 3-column grid sorted by descending value. Entries whose cached value is the
   // "?" placeholder (or otherwise non-numeric) are left out. Each entry has a "✕" button that removes that eval
   // from localStorage and grays the entry out, the same way the "✕" on /profile's sold-prices grid (Feature BSP)
@@ -8492,7 +9391,7 @@
   // (wm-top-evals-fade-in); closes on Escape, overlay click or its own close button.
   //
   // Rule 35 (cont'd): with a big cache, reading every "eval-" entry takes a while, so the last result is buffered in
-  // localStorage under "wm-top-evals-cache" (the best ones, as { cardName, value }, possibly a different count than the current limit: it is sliced to it when drawn). Opening the modal draws that
+  // localStorage under "wm-top-evals-cache" (the TOP_LIMIT_MAX (100) best ones, as { cardName, value }, whatever the configured size: it is sliced to it when drawn, so a larger setting never needs a recompute to be filled). Opening the modal draws that
   // buffer at once, while the list is recomputed in chunks (yielding to the page between them) and a small
   // "Actualisation..." shows in the header; once finished, the buffer is replaced with the new result and the modal is
   // redrawn if it differs (an entry cleared meanwhile stays out). Without a buffer the modal opens on "Calcul en
@@ -8508,7 +9407,6 @@
   const TOP_EVALS_CHUNK_SIZE = 1500;
 
   function collectTopEvals() {
-    const limit = getTopLimit();
     const names = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -8523,7 +9421,7 @@
       }))
       .filter((entry) => entry.value !== null)
       .sort((a, b) => b.value - a.value)
-      .slice(0, limit);
+      .slice(0, TOP_LIMIT_MAX);
   }
 
   function readTopEvalsCache() {
@@ -8550,12 +9448,12 @@
   }
 
   // Same result as collectTopEvals, but without holding the page up: the entries are read in chunks, with a pause
-  // between them, keeping only the best ones (up to the configured limit) so far
+  // between them, keeping only the best ones so far: always TOP_LIMIT_MAX of them (the buffer), the configured size
+  // only trims what is shown
   async function computeTopEvalsAsync() {
     let best = [];
-    const limit = getTopLimit();
     const total = localStorage.length;
-    logger(CPL.LOG, `Top evals: computing the ${limit} best`);
+    logger(CPL.LOG, `Top evals: computing the ${TOP_LIMIT_MAX} best`);
 
     for (let from = 0; from < total; from += TOP_EVALS_CHUNK_SIZE) {
       const names = [];
@@ -8570,7 +9468,7 @@
         const value = getCardEvalValueByName(cardName);
         if (value !== null) best.push({ cardName, value });
       });
-      best = best.sort((a, b) => b.value - a.value).slice(0, limit);
+      best = best.sort((a, b) => b.value - a.value).slice(0, TOP_LIMIT_MAX);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
@@ -8579,7 +9477,8 @@
   }
 
   // Shared by Rule 35 and Feature BBS's /profile button: builds the Top-list modal from already-sorted entries
-  // ({ cardName, valueText, badgeText?, badgeHint?, score?, onClear }), the first one showcased above the grid. A badgeText
+  // ({ cardName, valueText, badgeText?, badgeHint?, score?, onClear }), the first one showcased above the grid. Each
+  // entry reads: its rank in the list as shown (dimmed; a re-order re-numbers), the name, the value, then its "✕". A badgeText
   // gets its own span, docked to the top edge of the entry, whose tooltip is badgeHint followed by the text. With a sortToggle ({ label, compare, storageKey }), a switch in
   // the header re-orders the entries with `compare` instead of the given order (re-showcasing whichever comes
   // first); the choice is remembered in localStorage under storageKey, and an entry cleared before a re-order stays
@@ -8639,7 +9538,7 @@
 
     const clearedEntries = new Set();
 
-    const buildEntry = (entry) => {
+    const buildEntry = (entry, rank) => {
       const { cardName, valueText, badgeText, badgeHint, score, onClear } =
         entry;
       const entryEl = document.createElement("div");
@@ -8652,6 +9551,11 @@
       clearBtn.className = "wm-top-evals-clear";
       clearBtn.setAttribute("aria-label", `Effacer ${cardName}`);
       clearBtn.textContent = "✕";
+
+      // The entry's place in the list as shown (a re-order re-numbers it), dimmed, where the cross used to be
+      const rankCell = document.createElement("span");
+      rankCell.className = "wm-top-evals-rank";
+      rankCell.textContent = String(rank);
 
       const nameCell = document.createElement("span");
       nameCell.className = "wm-top-evals-name";
@@ -8675,7 +9579,7 @@
         entryEl.classList.add("wm-top-evals-entry-cleared");
       }
 
-      entryEl.append(clearBtn, nameCell, valueCell);
+      entryEl.append(rankCell, nameCell, valueCell, clearBtn);
 
       if (badgeText) {
         const formattedBadgeText = badgeText.replace(".", ",");
@@ -8709,10 +9613,12 @@
 
       // The first entry is pulled out of the grid and showcased above it.
       const [topEntry, ...otherEntries] = sorted;
-      topEl = buildEntry(topEntry);
+      topEl = buildEntry(topEntry, 1);
       topEl.classList.add("wm-top-evals-max");
       grid.before(topEl);
-      otherEntries.forEach((entry) => grid.appendChild(buildEntry(entry)));
+      otherEntries.forEach((entry, index) =>
+        grid.appendChild(buildEntry(entry, index + 2)),
+      );
     };
 
     if (sortBtn) {
@@ -8788,7 +9694,7 @@
   // Opens at once on the buffered list (if any), then swaps in the freshly computed one
   function openTopEvalsModal() {
     const limit = getTopLimit();
-    // The buffer may have been written under another limit
+    // The buffer holds TOP_LIMIT_MAX entries: only the configured number of them is drawn
     const buffered = readTopEvalsCache()?.slice(0, limit) ?? null;
     let shown = buffered ?? [];
     logger(
@@ -8816,14 +9722,15 @@
       writeTopEvalsCache(current);
       logger(
         CPL.INFO,
-        `Top evals recomputed in ${Math.round(performance.now() - start)} ms (${current.length})`,
+        `Top evals recomputed in ${Math.round(performance.now() - start)} ms (${current.length} buffered, ${limit} shown)`,
       );
 
       if (!overlay.isConnected) return;
       overlay.wmTopList.setLoading(false);
-      if (topEvalsKey(current) === topEvalsKey(shown)) return;
-      shown = current;
-      overlay.wmTopList.setEntries(buildTopEvalEntries(current));
+      const display = current.slice(0, limit);
+      if (topEvalsKey(display) === topEvalsKey(shown)) return;
+      shown = display;
+      overlay.wmTopList.setEntries(buildTopEvalEntries(display));
     });
   }
 
@@ -9055,6 +9962,7 @@
         width: 80vw;
       }
       .wm-top-evals-grid {
+        max-height: 80vh;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 0.5rem 0.75rem;
@@ -9069,7 +9977,6 @@
         position: relative;
         display: flex;
         align-items: center;
-        gap: 0.5rem;
         padding: 0.5rem 0.75rem;
         border: 1px solid rgba(255, 255, 255, 0.15);
         border-radius: 0.5rem;
@@ -9125,7 +10032,7 @@
         animation: wm-top-eval-glow 3s ease-in-out infinite;
       }
       .wm-top-evals-max .wm-top-evals-clear {
-        margin-right: 0.25rem;
+        margin-left: 0.25rem;
       }
       .wm-top-evals-max .wm-top-evals-name,
       .wm-top-evals-max .wm-top-evals-value {
@@ -9151,6 +10058,13 @@
           text-shadow: 0 0 6px rgba(255, 240, 150, 1), 0 0 14px rgba(255, 215, 0, 0.9);
         }
       }
+      .wm-top-evals-rank {
+        flex-shrink: 0;
+        min-width: 1.6rem;
+        font-size: 0.75rem;
+        font-variant-numeric: tabular-nums;
+        opacity: 0.35;
+      }
       .wm-top-evals-name {
         min-width: 0;
         font-size: 0.825rem;
@@ -9170,6 +10084,7 @@
       .wm-top-evals-clear {
         border: none;
         background: transparent;
+        margin-left: 0.5rem;
         color: var(--color-foreground);
         opacity: 0.5;
         cursor: pointer;
@@ -9204,11 +10119,12 @@
   function buildBestTradesModal(kind) {
     const config = BEST_TRADE_KINDS[kind];
     refreshBestTradeCutoffs(kind);
+    // The cache holds up to TOP_LIMIT_MAX trades; the configured size only decides how many of the biggest are shown
     const trades = sortBestTradesByAmount(
       readBestTrades(kind).filter(
         (entry) => entry && typeof entry === "object",
       ),
-    );
+    ).slice(0, getTopLimit());
 
     return buildTopListModal({
       title: config.modalTitle(),
@@ -10943,6 +11859,311 @@
   }
 
   // ============================================================
+  // Rule 40: on /marketplace, on the "Parcourir" tab only, a switch is appended to the row of rarity filter buttons
+  // (the div.flex-wrap.gap-2 holding button.rounded-full, in the search bar's div.space-y-3), styled after those
+  // buttons, as /collection's action buttons are (Feature EBC). It sits in a div (wm-dim-up-dock) pushed to the end
+  // of that row with an auto left margin, so it stays docked at its right whatever the number of filter buttons. It
+  // is also kept as the row's last child: the "Réinitialiser" button the site appends once a filter is picked is moved
+  // back in front of it (see keepDimUpDockLast). While it is on, the cards whose price arrow points
+  // up (▲, Feature MPA: the price is at or above the reference, i.e. not a bargain) are dimmed to 50% opacity. MPA
+  // flags such cards with data-wm-mpa-up; the dimming itself is driven by a body attribute
+  // (data-wm-dim-up, only set while the switch is on AND "Parcourir" is the active tab), so flipping the switch or
+  // changing tab needs no re-scan. The state is persisted in localStorage under "wm-dim-up-cards". The switch is
+  // removed from the page when leaving the tab.
+  // ============================================================
+  const DIM_UP_CARDS_KEY = "wm-dim-up-cards";
+  const DIM_UP_CARDS_OPACITY = 0.2;
+
+  function readDimUpCardsState() {
+    try {
+      return localStorage.getItem(DIM_UP_CARDS_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function isParcourirTabActive() {
+    return Array.from(
+      document.querySelectorAll("div.overflow-x-auto button"),
+    ).some(
+      (btn) =>
+        btn.textContent.trim().startsWith(MPA_TAB_LABELS[0]) &&
+        btn.classList.contains("border-b-2"),
+    );
+  }
+
+  // The rarity filter buttons' row of the marketplace search bar
+  function findMarketplaceFilterRow() {
+    return (
+      Array.from(document.querySelectorAll("div.flex-wrap.gap-2")).find((row) =>
+        row.querySelector(":scope > button.rounded-full"),
+      ) ?? null
+    );
+  }
+
+  function syncDimUpCardsAttribute(on) {
+    const active =
+      on &&
+      window.location.pathname.startsWith("/marketplace") &&
+      isParcourirTabActive();
+    document.body.toggleAttribute("data-wm-dim-up", active);
+  }
+
+  // Keeps the dock the very last child of the row: once a rarity filter is picked, the site appends its own
+  // "Réinitialiser" button at the end of the row, past our dock, so whatever follows the dock is moved back in
+  // front of it. That button is pushed to the right by an auto margin of its own (ml-auto), and two auto margins
+  // would split the free space between them: when a previous sibling has one, the dock only gets a small margin and
+  // follows it instead.
+  function keepDimUpDockLast(row, dock) {
+    Array.from(row.children)
+      .filter(
+        (child) =>
+          child !== dock &&
+          dock.compareDocumentPosition(child) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+      )
+      .forEach((child) => row.insertBefore(child, dock));
+
+    const followsAutoMargin = Array.from(row.children).some(
+      (child) => child !== dock && child.classList.contains("ml-auto"),
+    );
+    dock.classList.toggle("wm-dim-up-dock-tight", followsAutoMargin);
+  }
+
+  function updateDimUpCardsSwitch() {
+    // The switch lives in a dock (div.wm-dim-up-dock) pushed to the end of the row: both go away together
+    const existing = document.querySelector(".wm-dim-up-dock");
+    const onParcourir =
+      window.location.pathname.startsWith("/marketplace") &&
+      isParcourirTabActive();
+    syncDimUpCardsAttribute(readDimUpCardsState());
+
+    if (!onParcourir) {
+      existing?.remove();
+      return;
+    }
+
+    const row = findMarketplaceFilterRow();
+    if (!row) return;
+    if (existing && existing.parentElement === row) {
+      keepDimUpDockLast(row, existing);
+      return;
+    }
+    existing?.remove();
+
+    // Styled after the row's own buttons, so it blends in; the colors are ours (those are set inline per rarity)
+    const referenceBtn = row.querySelector(":scope > button.rounded-full");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${referenceBtn.className} wm-dim-up-switch`;
+    btn.textContent = "▲ Estomper";
+    btn.title = `Estomper à ${Math.round(DIM_UP_CARDS_OPACITY * 100)} % les cartes dont la flèche pointe vers le haut`;
+    btn.setAttribute("role", "switch");
+
+    const sync = () => {
+      const on = readDimUpCardsState();
+      btn.setAttribute("aria-pressed", String(on));
+      btn.setAttribute("aria-checked", String(on));
+      syncDimUpCardsAttribute(on);
+    };
+    btn.addEventListener("click", () => {
+      const next = !readDimUpCardsState();
+      try {
+        localStorage.setItem(DIM_UP_CARDS_KEY, String(next));
+        logger(CPL.LOG, `Dim cards with a rising price: ${next}`);
+      } catch (error) {
+        logger(CPL.ERROR, "Dim switch state not saved", error);
+      }
+      sync();
+    });
+    sync();
+
+    const dock = document.createElement("div");
+    dock.className = "wm-dim-up-dock";
+    dock.appendChild(btn);
+    row.appendChild(dock);
+    keepDimUpDockLast(row, dock);
+  }
+
+  function watchDimUpCardsSwitch() {
+    GM_addStyle(`
+      .wm-dim-up-dock {
+        display: flex;
+        margin-left: auto;
+      }
+      .wm-dim-up-dock-tight {
+        margin-left: 0.5rem;
+      }
+      .wm-dim-up-switch {
+        border: 1px solid #fbbf24;
+        background-color: transparent;
+        color: #fbbf24;
+      }
+      .wm-dim-up-switch[aria-pressed="true"] {
+        opacity: 1 !important;
+        background-color: rgba(251, 191, 36, 0.2);
+      }
+      div[id^="marketplace-auction-"] {
+        transition: opacity 0.2s ease;
+      }
+      body[data-wm-dim-up] div[id^="marketplace-auction-"][data-wm-mpa-up="true"] {
+        opacity: ${DIM_UP_CARDS_OPACITY};
+      }
+    `);
+
+    updateDimUpCardsSwitch();
+
+    // Class changes too: switching tab can be nothing more than the tab buttons' classes changing
+    const observer = new MutationObserver(() => updateDimUpCardsSwitch());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+
+  // ============================================================
+  // Rule 41: remembers the names of your tags. On /collection, whenever the tag filter's popover (ul.rounded-xl
+  // [role="listbox"], the list Rules 24 and 34 work on) is open, the label of each of its options that starts with
+  // "#" is read (without that "#" and without the trailing " (count)", via TAG_COUNT_REGEX) and the names are
+  // stored as a JSON array in localStorage under "wm-tags", in the site's order. The list shows every tag you have, so
+  // the stored array is replaced by what is read (a deleted tag disappears); it is only written when it changed.
+  // The "Étiquette « TBD »" setting of Feature CFG offers these names. Not part of the export: it is rebuilt by
+  // opening the list.
+  // ============================================================
+  const KNOWN_TAGS_KEY = "wm-tags";
+
+  function readKnownTagNames() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(KNOWN_TAGS_KEY) ?? "[]");
+      return Array.isArray(parsed)
+        ? parsed.filter((name) => typeof name === "string" && name !== "")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function rememberTagNamesFrom(list) {
+    const names = [];
+    list.querySelectorAll('button[role="option"]').forEach((option) => {
+      const label = option.textContent
+        .trim()
+        .replace(TAG_COUNT_REGEX, "")
+        .trim();
+      if (!label.startsWith("#")) return;
+
+      const name = label.slice(1).trim();
+      if (name && !names.includes(name)) names.push(name);
+    });
+    if (names.length === 0) return;
+
+    if (JSON.stringify(names) === JSON.stringify(readKnownTagNames())) return;
+    try {
+      localStorage.setItem(KNOWN_TAGS_KEY, JSON.stringify(names));
+      logger(CPL.INFO, `Tag names remembered (${names.length})`);
+    } catch (error) {
+      logger(CPL.ERROR, "Tag names not saved", error);
+    }
+  }
+
+  function processTagNamesRecording() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+
+    document
+      .querySelectorAll('ul.rounded-xl[role="listbox"]')
+      .forEach(rememberTagNamesFrom);
+  }
+
+  function watchTagNamesRecording() {
+    processTagNamesRecording();
+
+    const observer = new MutationObserver(() => processTagNamesRecording());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 42: in the owned card modal (div.card-frame.p-6), hitting Backspace in the tag input while it is empty moves
+  // the focus to the remove button of the card's last tag (the chips are those of Feature TBD:
+  // CARD_TAG_CHIPS_SELECTOR). The button is marked (data-wm-tag-nav) while it holds the focus: once it is clicked
+  // (mouse, Enter or Space), the focus moves to the previous tag's button, or back to the input when none is left.
+  // Nothing is removed by Backspace itself, and a held key (repeat) is ignored.
+  // ============================================================
+  const TAG_NAV_ATTRIBUTE = "data-wm-tag-nav";
+
+  function getTagRemoveButtons() {
+    return Array.from(document.querySelectorAll(CARD_TAG_CHIPS_SELECTOR))
+      .map((chip) => chip.querySelector("button"))
+      .filter(Boolean);
+  }
+
+  function handleTagInputBackspace(event) {
+    if (event.key !== "Backspace" || event.repeat) return;
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.value !== "") return;
+    if (!input.matches("div.relative input")) return;
+    if (!input.closest("div.card-frame.p-6")) return;
+
+    const buttons = getTagRemoveButtons();
+    if (buttons.length === 0) return;
+
+    event.preventDefault();
+    const last = buttons[buttons.length - 1];
+    last.setAttribute(TAG_NAV_ATTRIBUTE, "");
+    last.focus();
+    logger(CPL.DEBUG, `Tag navigation: focus on last tag (${buttons.length})`);
+  }
+
+  async function handleTagRemoveClick(event) {
+    const button =
+      event.target instanceof Element
+        ? event.target.closest(`button[${TAG_NAV_ATTRIBUTE}]`)
+        : null;
+    if (!button) return;
+
+    const before = getTagRemoveButtons();
+    const index = before.indexOf(button);
+    const inputSelector = "div.card-frame.p-6 div.relative input";
+
+    // The chips re-render once the tag is gone: wait for one fewer, then pick the previous one by its position
+    const removed = await waitUntil(
+      () => getTagRemoveButtons().length < before.length,
+      { stopped: false },
+    );
+    if (!removed) return;
+
+    const after = getTagRemoveButtons();
+    const target = index > 0 ? after[index - 1] : null;
+    if (target) {
+      target.setAttribute(TAG_NAV_ATTRIBUTE, "");
+      target.focus();
+      logger(CPL.DEBUG, "Tag navigation: focus on previous tag");
+    } else {
+      document.querySelector(inputSelector)?.focus();
+      logger(CPL.DEBUG, "Tag navigation: focus back on the tag input");
+    }
+  }
+
+  function watchTagInputBackspace() {
+    document.addEventListener("keydown", handleTagInputBackspace, true);
+    document.addEventListener("click", handleTagRemoveClick, true);
+    document.addEventListener(
+      "focusout",
+      (event) => {
+        if (event.target instanceof Element) {
+          event.target.removeAttribute(TAG_NAV_ATTRIBUTE);
+        }
+      },
+      true,
+    );
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -11029,6 +12250,9 @@
     run("feature-mpa", watchMarketplaceArrows);
     run("feature-dad", watchDefaultAuctionDuration);
     run("feature-wat", watchWatchedAuctions);
+    run("rule-40", watchDimUpCardsSwitch);
+    run("rule-41", watchTagNamesRecording);
+    run("rule-42", watchTagInputBackspace);
 
     watchFeatureConfigButton();
     watchMyUsernameDetection();
