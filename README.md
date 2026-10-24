@@ -114,6 +114,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, celles en cours d'abord ; un bouton « Ouvrir les enchères terminées » ouvre d'un coup toutes celles qui sont finies
   - Nettoyage automatique : une enchère terminée est retirée de la liste quand vous la visitez, et celles terminées depuis longtemps (réglable) sont retirées à chaque visite de votre profil
 - **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère, en comparant le prix affiché — majoré de 10 % (le coût d'une nouvelle enchère) uniquement sur les cartes où vous êtes « Surenchéri » — : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
+  - Sur l'onglet « Parcourir », un interrupteur « Cacher indésirables » masque les cartes qui ne sont pas dans votre liste de souhaits ; leurs noms sont mémorisés quand vous cliquez sur « Feuilleter (WMB) » sur /global-collection en mode liste de souhaits : le bouton parcourt pour vous toutes les pages
   - Sur l'onglet « Parcourir », un interrupteur « ▲ Estomper », calé à droite de la rangée des filtres de rareté, atténue de moitié les cartes dont la flèche pointe vers le haut (prix pas intéressant) ; son état est mémorisé
 
 ### 📦 Catalogue

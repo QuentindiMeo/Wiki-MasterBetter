@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.11
+// @version      0.30.16
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -5069,6 +5069,11 @@
       label:
         "Retour arrière sur un champ d'étiquette vide : sélectionner les étiquettes de la carte",
     },
+    {
+      id: "rule-43",
+      label:
+        "Interrupteur pour cacher les cartes hors de votre liste de souhaits (marché, Parcourir) et bouton « Feuilleter (WMB) » pour la mémoriser",
+    },
   ];
 
   function readFeatureFlags() {
@@ -6255,7 +6260,7 @@
         color: var(--color-foreground);
       }
       .wm-settings-panel:not([hidden]) {
-        animation: wm-settings-panel-in 0.25s ease;
+        animation: wm-settings-panel-in 0.5s ease;
       }
       @keyframes wm-settings-panel-in {
         from { opacity: 0; transform: translateY(0.4rem); }
@@ -6295,6 +6300,7 @@
         margin: 0 0 0.75rem 0;
       }
       .wm-settings-hint {
+        white-space: pre-line;
         font-size: 0.85rem;
         opacity: 0.7;
         margin: 0;
@@ -6382,14 +6388,15 @@
         color: var(--color-accent);
       }
       .wm-settings-config {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 1rem 1.5rem;
         min-width: 46rem;
         max-width: 90vw;
         max-height: 60vh;
-        overflow-y: auto;
         padding-right: 0.25rem;
+        padding-bottom: 0.25rem;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem 1.5rem;
+        overflow-y: auto;
       }
       .wm-config-group-title {
         grid-column: 1 / -1;
@@ -6773,78 +6780,93 @@
   // itself: it's documentation, not a behavior to disable. Reuses the settings modal's overlay/header/close
   // styling (.wm-settings-*) so it looks consistent, with its own single-column list style for readable prose.
   // ============================================================
+  // An entry flagged `cache: true` relies on data kept in the browser that the export/import of Feature BSP carries
+  // (sale prices, estimates, followed players, player descriptions); it gets a 💾 badge in the top right corner
+  const TUTORIAL_CACHE_BADGE_TITLE =
+    "Cette fonctionnalité s'appuie sur des données mémorisées dans votre navigateur : elles s'exportent et s'importent depuis votre profil (à côté de « Vider le cache »).";
   const TUTORIAL_ENTRIES = [
     {
-      title: "La barre de menu à gauche",
-      text: "Elle se réduit en petites icônes. Passez la souris dessus pour la voir en entier, ou cliquez sur 📌 pour qu'elle reste toujours ouverte.",
-    },
-    {
-      title: "Le bouton ⚙️ (réglages)",
-      text: "Il permet d'activer ou de désactiver chaque fonctionnalité de ce script. Il faut recharger la page après avoir changé quelque chose pour que les changements s'appliquent.",
-    },
-    {
-      title: "Être prévenu par notification bureau",
-      text: "Si vous autorisez les notifications du navigateur, le script vous prévient quand vous avez beaucoup de paquets à ouvrir, ou juste avant la fin d'une de vos enchères ouvertes.",
-    },
-    {
-      title: "Enchérir plus vite",
-      text: "Dans votre collection, tapez la mise minimale puis appuyez sur Entrée : l'enchère démarre directement, sans avoir à cliquer sur un bouton.",
-    },
-    {
-      title: "Sélectionner ses cartes sans étiquette",
-      text: "Dans votre collection, un bouton sélectionne en un clic toutes les cartes qui n'ont pas encore d'étiquette.",
+      title: "Estimer toute votre collection d'un coup",
+      cache: true,
+      text: "Dans votre collection, le bouton rouge « Estimation en masse » estime les cartes de la page qui n'ont pas de prix, puis passe à la page suivante, jusqu'à la fin. « Arrêter la reconnaissance » l'interrompt quand vous voulez. Laissez l'onglet ouvert et visible pendant tout ce temps : s'il passe en arrière-plan, le navigateur le ralentit et l'estimation devient peu fiable.",
     },
     {
       title: "Savoir si un prix est bon",
-      text: "Sur une page d'enchère, une petite étiquette de couleur vous dit si le prix est intéressant ou non, en le comparant aux ventes conclues de cette carte que vous avez observées. Si c'est vous qui vendez, elle vous dit si votre vente est bonne.",
+      cache: true,
+      text: "Sur la page d'une enchère, une petite étiquette de couleur vous dit si le prix est intéressant. Elle compare avec les prix auxquels cette carte s'est déjà vendue sous vos yeux. Si c'est vous qui vendez, elle vous dit si votre vente est réussie.",
+    },
+    {
+      title: "Repérer les bonnes affaires",
+      cache: true,
+      text: "Sur le marché, dans l'onglet « Parcourir », une flèche colorée apparaît à côté du prix des cartes que vous connaissez : ▼ si le prix est bas (bonne affaire), ▲ s'il est élevé. Passez la souris dessus pour plus de détails.",
+    },
+    {
+      title: "Cacher les cartes qui ne vous intéressent pas",
+      text: "Sur le marché, onglet « Parcourir », le bouton « Cacher indésirables » masque les cartes qui ne sont pas dans votre liste de souhaits. Pour cela, le script doit d'abord connaître votre liste : ouvrez « Toutes les cartes », activez « Liste de souhaits » et laissez-le faire quelques secondes, il feuillette les pages tout seul. Re-cliquez sur le bouton pour tout ré-afficher ; le choix est mémorisé.",
+    },
+    {
+      title: "Estomper les cartes trop chères",
+      text: "Sur le marché, onglet « Parcourir », le bouton « ▲ Estomper » (à droite des boutons de rareté) rend plus pâles les cartes à flèche ▲, c'est-à-dire celles dont le prix n'est pas une bonne affaire. Re-cliquez pour les voir normalement ; le choix est mémorisé.",
     },
     {
       title: "Le prix estimé d'une carte",
-      text: "Une fois qu'une carte a été estimée (lorsque vous vous apprêtez à la vendre), son prix est retenu et affiché à côté de sa rareté. Dans la collection, des boutons permettent d'estimer plusieurs cartes d'un coup, et de les trier par estimation.",
+      cache: true,
+      text: "Quand vous estimez une carte (au moment de la vendre), le script retient son prix et l'affiche à côté de sa rareté. Dans votre collection, des boutons estiment plusieurs cartes d'un coup et les classent par estimation.",
     },
     {
-      title: "Accéder à un profil en un clic",
-      text: "Dans la liste de souhaits globale, cliquer sur le pseudo d'un ami qui possède une carte ouvre directement son profil.",
+      title: "Garder une enchère à l'œil",
+      text: "Sur la page d'une enchère, « 📌 Surveiller » la met de côté (re-cliquez pour la retirer). Sur le marché, « 📌 Surveillées » liste ces enchères : cliquez sur l'une d'elles pour y retourner. Une enchère terminée est retirée toute seule quand vous la visitez.",
     },
     {
-      title: "Filtrer les notifications",
-      text: "En haut du panneau de notifications, des boutons 💰 🛒 🔨 ⭐ n'affichent que les notifications de ce type (ventes, achats, enchères, liste de souhaits). Cliquez à nouveau sur le bouton actif pour tout ré-afficher.",
+      title: "Lancer une enchère plus vite",
+      text: "Quand vous mettez une carte en vente, tapez le prix de départ puis appuyez sur Entrée : l'enchère démarre, sans cliquer sur le bouton.",
     },
     {
-      title: "Estimer toute une collection d'un coup",
-      text: "Dans votre collection, le bouton rouge « Estimation en masse » évalue les cartes sans estimation de la page, puis passe à la page suivante et recommence, jusqu'à la dernière. Le bouton « Arrêter la reconnaissance » interrompt le processus à n'importe quel moment. Laissez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan ou minimisée, le navigateur ralentit les temporisations dont cette fonctionnalité dépend, ce qui la rend peu fiable.",
+      title: "Voir vos plus grosses cartes",
+      cache: true,
+      text: "Dans votre collection, le bouton « Top 40 » à droite du titre montre vos 40 cartes les mieux estimées (vous pouvez changer ce nombre dans les réglages ⚙️, onglet « Config »). Le ✕ d'une ligne enlève cette estimation.",
     },
     {
-      title: "Voir les estimations les plus élevées",
-      text: "Dans votre collection, le bouton « Top 40 », à droite du titre, affiche les 40 plus grosses estimations mémorisées (la taille du classement se règle dans l'onglet « Config » de ⚙️). Le ✕ d'une ligne supprime cette estimation du cache.",
+      title: "Trier les notifications",
+      text: "En haut de la liste de notifications, les boutons 💰 🛒 🔨 ⭐ n'affichent qu'un seul type (ventes, achats, enchères, liste de souhaits). Cliquez à nouveau sur le bouton allumé pour tout revoir.",
+    },
+    {
+      title: "Être prévenu sur votre ordinateur",
+      text: "Si vous acceptez les notifications du navigateur, le script vous prévient quand vous avez beaucoup de paquets à ouvrir, et juste avant la fin d'une de vos enchères.",
     },
     {
       title: "Suivre un joueur",
-      text: "Sur le profil d'un joueur, le bouton « Suivre » en forme d'œil, à côté de « Signaler », le suit : l'œil devient rouge, et un petit œil rouge apparaît à côté de son pseudo sur les pages d'enchère. Cliquez à nouveau pour ne plus le suivre.",
+      cache: true,
+      text: "Sur le profil d'un joueur, le bouton « Suivre » (un œil), à côté de « Signaler », le met dans vos joueurs suivis : l'œil devient rouge, et un petit œil rouge apparaît à côté de son pseudo sur les pages d'enchère.",
     },
     {
-      title: "Décrire un joueur",
-      text: "Sur le profil d'un autre joueur, le bouton « Description » ouvre une modale où noter en max. 128 caractères ce qu'il cherche ou propose. Entrée enregistre, un texte vide efface la description. Elle s'affiche à côté de son pseudo sur son profil, sur la page des amis et dans la liste des joueurs suivis, et reste dans votre navigateur.",
+      title: "Retrouver les cartes sans estimation",
+      text: "Option éteinte au départ (à allumer dans ⚙️) : pendant une estimation en masse, une carte dont le prix reste inconnu (« ? ») reçoit l'étiquette « TBD » (ou une autre de vos étiquettes, au choix dans les réglages), pour la retrouver facilement. Vous pouvez aussi demander une étiquette selon le prix : par exemple, toutes les cartes estimées entre 500 et 1 000 reçoivent l'étiquette de votre choix.",
     },
     {
-      title: "Repérer les bonnes affaires sur le marché",
-      text: "Sur /marketplace, onglet « Parcourir », une flèche colorée apparaît à côté du prix des cartes déjà observées : ▼ si le prix est sous la valeur de référence, ▲ s'il est au-dessus. Les couleurs sont celles des étiquettes de la page d'enchère. Survolez la flèche pour le détail.",
+      title: "Choisir les cartes sans étiquette",
+      text: "Dans votre collection, un bouton choisit d'un clic toutes les cartes qui n'ont pas encore d'étiquette.",
     },
     {
-      title: "Repérer les cartes impossibles à estimer",
-      text: "Option désactivée par défaut (⚙️) : pendant une estimation en masse, chaque carte dont l'estimation reste « ? » reçoit l'étiquette « TBD » (ou une autre de vos étiquettes, au choix dans l'onglet Configuration), pour la retrouver facilement ensuite. Vous pouvez aussi définir des plages de valeur (de ≥ à ≤, avec une étiquette chacune) : une carte estimée reçoit l'étiquette de toutes les plages qui contiennent son estimation.",
+      title: "Noter un mot sur un joueur",
+      cache: true,
+      text: "Sur le profil d'un autre joueur, le bouton « Description » permet d'écrire une courte note (128 caractères maximum). Entrée l'enregistre, et une note vide l'efface. Elle s'affiche à côté de son pseudo, et vous seul la voyez.",
     },
     {
-      title: "Régler les valeurs du script",
-      text: "Dans ⚙️, l'onglet « Config » regroupe des réglages à choisir d'un clic, enregistrés tout de suite et sans recharger : la durée d'enchère proposée par défaut, l'onglet du marché ouvert à l'arrivée, la taille des classements « Top », le nombre de prix de vente gardés et utilisés pour la moyenne, les seuils d'alerte (pile de paquets, fin d'enchère), le nombre d'essais et les délais d'attente de l'estimation en masse, etc. Les valeurs de départ sont celles que le script utilisait avant.",
+      title: "Aller sur le profil d'un ami",
+      text: "Dans « Toutes les cartes », cliquez sur le pseudo d'un ami qui possède une carte pour ouvrir directement son profil.",
     },
     {
-      title: "Surveiller une enchère",
-      text: "Sur la page d'une enchère, le bouton « 📌 Surveiller » la garde de côté (re-cliquez pour la retirer ; une enchère terminée est retirée toute seule quand vous la visitez). Sur /marketplace, le bouton « 📌 Surveillées » ouvre la liste de ces enchères, avec depuis quand vous les surveillez ; cliquez sur une carte pour y retourner. Les enchères surveillées depuis plus de 7 jours sont retirées quand vous allez sur votre profil.",
+      title: "Adapter le script à vos habitudes",
+      text: "Dans ⚙️, l'onglet « Config » réunit des réglages qui se choisissent d'un clic et s'appliquent tout de suite : durée d'enchère proposée par défaut, onglet du marché ouvert à l'arrivée, taille des classements, moments où vous êtes prévenu, etc. Au départ, rien ne change par rapport à avant.",
     },
     {
-      title: "Estomper les cartes à flèche ▲",
-      text: "Sur /marketplace, onglet « Parcourir », le bouton « ▲ Estomper », à la suite des filtres de rareté, atténue de moitié les cartes dont la flèche pointe vers le haut, c'est-à-dire dont le prix n'est pas une bonne affaire. Cliquez à nouveau pour les ré-afficher ; le choix est mémorisé.",
+      title: "Le bouton ⚙️ (réglages)",
+      text: "Il sert à activer/désactiver chaque fonctionnalité du script. Rechargez la page après un changement pour qu'il soit pris en compte.",
+    },
+    {
+      title: "Le menu à gauche",
+      text: "Il se réduit à de petites icônes. Passez la souris dessus pour le voir en entier, ou cliquez sur 📌 pour qu'il reste toujours ouvert.",
     },
   ];
 
@@ -6876,14 +6898,37 @@
     const hint = document.createElement("p");
     hint.className = "wm-settings-hint";
     hint.textContent =
-      "Un petit guide pour les fonctionnalités les moins évidentes du script.";
+      "Un petit guide pour les fonctionnalités les moins évidentes du script. (rédigé par Claude)\nLe 💾 signale celles qui reposent sur des données mémorisées, exportables et importables depuis votre profil.";
+
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "wm-tutorial-search";
+    search.placeholder = "Rechercher dans les tutoriels...";
+    search.setAttribute("aria-label", "Rechercher dans les tutoriels");
 
     const list = document.createElement("div");
     list.className = "wm-tutorial-list";
 
-    TUTORIAL_ENTRIES.forEach(({ title: entryTitle, text }) => {
+    // The scroller (list) is not the multi-column box: a column box with a capped height spills its content into
+    // extra columns sideways instead of scrolling down
+    const columns = document.createElement("div");
+    columns.className = "wm-tutorial-columns";
+    list.appendChild(columns);
+
+    TUTORIAL_ENTRIES.forEach(({ title: entryTitle, text, cache }) => {
       const item = document.createElement("div");
       item.className = "wm-tutorial-item";
+
+      if (cache) {
+        const badge = document.createElement("span");
+        badge.className = "wm-tutorial-item-cache";
+        badge.textContent = "💾";
+        badge.title = TUTORIAL_CACHE_BADGE_TITLE;
+        badge.setAttribute("role", "img");
+        badge.setAttribute("aria-label", TUTORIAL_CACHE_BADGE_TITLE);
+        item.classList.add("wm-tutorial-item-has-cache");
+        item.appendChild(badge);
+      }
 
       const itemTitle = document.createElement("h3");
       itemTitle.className = "wm-tutorial-item-title";
@@ -6894,10 +6939,39 @@
       itemText.textContent = text;
 
       item.append(itemTitle, itemText);
-      list.appendChild(item);
+      columns.appendChild(item);
     });
 
-    modal.append(header, hint, list);
+    const noResult = document.createElement("p");
+    noResult.className = "wm-settings-hint wm-tutorial-no-result";
+    noResult.textContent = "Aucun tutoriel ne correspond à cette recherche.";
+    noResult.hidden = true;
+    list.appendChild(noResult);
+
+    // Accents and case are ignored, and the title and the text are both searched
+    const fold = (value) =>
+      value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+    search.addEventListener("input", () => {
+      const query = fold(search.value.trim());
+      let shown = 0;
+      columns.querySelectorAll(".wm-tutorial-item").forEach((item) => {
+        const match = !query || fold(item.textContent).includes(query);
+        item.hidden = !match;
+        if (match) shown++;
+      });
+      noResult.hidden = shown > 0;
+      logger(CPL.LOG, `Tutorial search "${query}": ${shown} result(s)`);
+    });
+
+    // Same panel as the settings tabs, so the content eases in with their fade and slide
+    const panel = document.createElement("div");
+    panel.className = "wm-settings-panel wm-tutorial-panel";
+    panel.append(hint, search, list);
+
+    modal.append(header, panel);
     overlay.appendChild(modal);
 
     const onKeydown = (event) => {
@@ -6913,6 +6987,8 @@
     });
     closeBtn.addEventListener("click", close);
     document.addEventListener("keydown", onKeydown);
+    logger(CPL.LOG, "Tutorial modal opened");
+    setTimeout(() => search.focus(), 0);
 
     return overlay;
   }
@@ -6950,16 +7026,58 @@
 
   function watchTutorialButton() {
     GM_addStyle(`
+      .wm-tutorial-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .wm-tutorial-search {
+        margin-inline: auto;
+        border-radius: 0.5rem;
+        border: 1px solid var(--color-border);
+        width: max(20rem,50%);
+        padding: 0.5rem 0.75rem;
+        background: transparent;
+        color: inherit;
+        font-size: 0.875rem;
+      }
+      .wm-tutorial-item {
+        position: relative;
+      }
+      .wm-tutorial-item-cache {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        font-size: 0.75rem;
+        line-height: 1;
+        opacity: 0.75;
+        cursor: help;
+      }
+      .wm-tutorial-item-has-cache .wm-tutorial-item-title {
+        padding-right: 1.5rem;
+      }
+      .wm-tutorial-item[hidden] {
+        display: none;
+      }
       .wm-tutorial-list {
         max-width: max(50rem,50vw);
         max-height: 80vh;
         padding-right: 0.25rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.6rem;
+        overflow-x: hidden;
         overflow-y: auto;
       }
+      .wm-tutorial-columns {
+        column-count: 2;
+        column-gap: 0.6rem;
+      }
+      @media (max-width: 640px) {
+        .wm-tutorial-columns {
+          column-count: 1;
+        }
+      }
       .wm-tutorial-item {
+        break-inside: avoid;
+        margin-bottom: 0.6rem;
         padding: 0.5rem 0.75rem;
         border: 1px solid rgba(128, 128, 128, 0.4);
         border-radius: 0.5rem;
@@ -8033,7 +8151,8 @@
   // distinct tag once; a range switched off in the settings is kept but not applied. A card is only touched if it has
   // no tag yet or carries at least one tag defined in the ranges (any range, switched on or not): the tags it carries
   // that the ranges define but that no longer match the new value are removed (the chip's button), then the missing
-  // matching ones are added. Cards carrying only other tags are left alone.
+  // matching ones are added (a value that falls in no range only removes the outdated tag; the TBD tag counts as one of them). Cards carrying only
+  // other tags are left alone.
   function getValueRangeTags(value) {
     const tags = [];
     getConfigValue(VALUE_RANGES_CONFIG_ID).forEach(
@@ -8047,10 +8166,15 @@
     return tags;
   }
 
+  // Every tag the automatic tagging manages: the ranges' ones (switched on or not) and the "TBD" one, which a found
+  // estimate makes outdated
   function getAllValueRangeTags() {
-    return getConfigValue(VALUE_RANGES_CONFIG_ID)
+    const tags = getConfigValue(VALUE_RANGES_CONFIG_ID)
       .map(({ tag }) => tag)
       .filter(Boolean);
+    const tbdTag = getTbdTag();
+    if (tbdTag && !tags.includes(tbdTag)) tags.push(tbdTag);
+    return tags;
   }
 
   // Clicks the remove button inside the chip reading that tag and waits for the chip to go; false when it never does
@@ -8070,7 +8194,7 @@
 
   async function tagCardForValueRanges(value) {
     const tags = getValueRangeTags(value);
-    if (tags.length === 0) return;
+    // The card is opened even when the value falls in no range: the TBD or price tag it carries (if any) is outdated
 
     const state = { stopped: false };
     const input = await openCardTagInput(state);
@@ -12164,6 +12288,292 @@
   }
 
   // ============================================================
+  // Rule 43: hides the cards that are NOT in your wishlist (the "unwanted" ones) from /marketplace's "Parcourir" tab. The names come from
+  // /global-collection: with its "wishlist only" toggle on (Rule 25's isWishlistOnlyToggleChecked), the names (h3)
+  // of the cards of its list (div.gap-3.justify-center) are read, and only when the user clicks the "Feuilleter (WMB)"
+  // button added next to the toggle (shown while it is on). That list is paginated (50 per page, "Page X / Y"),
+  // and right after a load the site still shows the whole catalog (thousands of pages) before applying the toggle,
+  // so a page is only read once two ticks in a row (WISHLIST_SETTLE_DELAY_MS apart) read the same page and Y is plausible (WISHLIST_MAX_PAGES at
+  // most); the pages are then walked with the site's own "Suivant"/"Précédent" buttons until every one of them has
+  // been read (a change of Y restarts the walk), and the page the visit started on is restored. Only a complete walk
+  // replaces the names stored as a JSON array in localStorage under "wm-wishlist-names". On the marketplace, a
+  // "Cacher indésirables" switch is added to Rule 40's dock, right before its "Estomper" one; the cards whose name is
+  // not stored get data-wm-unwanted (nothing is flagged while no name is stored), and the hiding itself is driven by a body attribute (data-wm-hide-wished, only set
+  // while the switch is on AND "Parcourir" is the active tab). The switch state is persisted under
+  // "wm-hide-wished-cards". It needs Rule 40's dock, hence Rule 40 enabled.
+  // ============================================================
+  const WISHLIST_NAMES_KEY = "wm-wishlist-names";
+  const HIDE_WISHED_CARDS_KEY = "wm-hide-wished-cards";
+  const WISHLIST_MAX_PAGES = 30;
+  const WISHLIST_SETTLE_DELAY_MS = 800;
+  let wishlistWalk = null;
+  let wishlistScanTimer = null;
+  let wishlistLastSignature = "";
+
+  function readWishlistNames() {
+    try {
+      const names = JSON.parse(
+        localStorage.getItem(WISHLIST_NAMES_KEY) ?? "[]",
+      );
+      return new Set(Array.isArray(names) ? names : []);
+    } catch (error) {
+      logger(CPL.WARN, "Stored wishlist names unreadable, reset", error);
+      return new Set();
+    }
+  }
+
+  function clickWishlistPager(label) {
+    const btn = Array.from(document.querySelectorAll("main button")).find((b) =>
+      b.textContent.includes(label),
+    );
+    if (!btn || btn.disabled) return false;
+    btn.click();
+    return true;
+  }
+
+  function scanWishlistNames() {
+    if (
+      !window.location.pathname.startsWith("/global-collection") ||
+      !isWishlistOnlyToggleChecked()
+    ) {
+      if (wishlistWalk) logger(CPL.LOG, "Wishlist browse cancelled");
+      wishlistWalk = null;
+      updateBrowseWishlistButton();
+      return;
+    }
+    // Nothing is read on its own: only the "Feuilleter (WMB)" button starts a walk
+    if (!wishlistWalk) return;
+
+    const cardList = document.querySelector("div.gap-3.justify-center");
+    const pageMatch = document
+      .querySelector("main")
+      ?.innerText.match(/Page (\d+) \/ (\d+)/);
+    if (!cardList || !pageMatch) return;
+    const page = Number(pageMatch[1]);
+    const total = Number(pageMatch[2]);
+    if (total > WISHLIST_MAX_PAGES) {
+      logger(
+        CPL.DEBUG,
+        `Wishlist scan waits: ${total} pages is not a wishlist yet`,
+      );
+      if (wishlistWalk.waits++ >= 10) {
+        logger(CPL.WARN, `Wishlist browse aborted: ${total} pages`);
+        wishlistWalk = null;
+        updateBrowseWishlistButton();
+      } else {
+        scheduleWishlistScan();
+      }
+      return;
+    }
+
+    const names = Array.from(cardList.children)
+      .map(getWishlistCardName)
+      .filter(Boolean);
+    if (names.length === 0) return;
+
+    // Settled once two ticks in a row read the same page: the site's own timers keep the DOM busy, so waiting for
+    // it to go quiet could never end
+    const signature = `${total}|${page}|${names.join("|")}`;
+    if (signature !== wishlistLastSignature) {
+      wishlistLastSignature = signature;
+      scheduleWishlistScan();
+      return;
+    }
+
+    if (wishlistWalk.total !== total) {
+      wishlistWalk.total = total;
+      wishlistWalk.startPage = page;
+      wishlistWalk.pages = new Map();
+    }
+    wishlistWalk.pages.set(page, names);
+    updateBrowseWishlistButton();
+
+    const read = wishlistWalk.pages;
+    const missing = Array.from({ length: total }, (_, i) => i + 1).filter(
+      (n) => !read.has(n),
+    );
+    const moved = (label) => {
+      if (clickWishlistPager(label)) return;
+      logger(CPL.WARN, `Wishlist browse aborted: no "${label}" button`);
+      wishlistWalk = null;
+      updateBrowseWishlistButton();
+    };
+    if (missing.some((n) => n > page)) {
+      moved("Suivant");
+    } else if (missing.length > 0) {
+      moved("Précédent");
+    } else {
+      const all = new Set([...read.values()].flat());
+      try {
+        const stored = JSON.stringify([...all]);
+        if (localStorage.getItem(WISHLIST_NAMES_KEY) !== stored) {
+          localStorage.setItem(WISHLIST_NAMES_KEY, stored);
+          logger(
+            CPL.INFO,
+            `Wishlist names stored: ${all.size} over ${total} page(s)`,
+          );
+        }
+      } catch (error) {
+        logger(CPL.ERROR, "Wishlist names not saved", error);
+      }
+      if (page !== wishlistWalk.startPage) {
+        clickWishlistPager(
+          page < wishlistWalk.startPage ? "Suivant" : "Précédent",
+        );
+      }
+      wishlistWalk = null;
+      updateBrowseWishlistButton();
+    }
+  }
+
+  function updateBrowseWishlistButton() {
+    const btn = document.querySelector(".wm-browse-wishlist");
+    if (!btn) return;
+    btn.disabled = !!wishlistWalk;
+    btn.textContent = wishlistWalk
+      ? `Feuilletage… (${wishlistWalk.pages?.size ?? 0}/${wishlistWalk.total ?? "?"})`
+      : "Feuilleter (WMB)";
+  }
+
+  function updateBrowseWishlistButtonVisibility() {
+    const onWishlist = window.location.pathname.startsWith("/global-collection");
+    const toggle = document.querySelector("button.gap-1\\.5:nth-child(1)");
+    let btn = document.querySelector(".wm-browse-wishlist");
+    if (!onWishlist || !toggle || !isWishlistOnlyToggleChecked()) {
+      btn?.remove();
+      return;
+    }
+    if (btn) return;
+
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${toggle.className} wm-browse-wishlist`;
+    btn.title =
+      "Parcourt toutes les pages de votre liste de souhaits pour mémoriser les noms des cartes (utilisés par « Cacher indésirables » sur le marché)";
+    btn.addEventListener("click", () => {
+      if (wishlistWalk) return;
+      logger(CPL.INFO, "Wishlist browse started");
+      wishlistWalk = { total: null, startPage: null, pages: new Map(), waits: 0 };
+      wishlistLastSignature = "";
+      updateBrowseWishlistButton();
+      scheduleWishlistScan();
+    });
+    (document.querySelector(".wm-wishlist-cleanup") ?? toggle).after(btn);
+    updateBrowseWishlistButton();
+  }
+
+  function scheduleWishlistScan() {
+    if (!window.location.pathname.startsWith("/global-collection")) return;
+    if (wishlistScanTimer) return;
+    wishlistScanTimer = setTimeout(() => {
+      wishlistScanTimer = null;
+      scanWishlistNames();
+    }, WISHLIST_SETTLE_DELAY_MS);
+  }
+
+  function readHideWishedState() {
+    try {
+      return localStorage.getItem(HIDE_WISHED_CARDS_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function markWishedCards() {
+    const onParcourir =
+      window.location.pathname.startsWith("/marketplace") &&
+      isParcourirTabActive();
+    document.body.toggleAttribute(
+      "data-wm-hide-wished",
+      onParcourir && readHideWishedState(),
+    );
+    if (!onParcourir) return;
+
+    const names = readWishlistNames();
+    document
+      .querySelectorAll('div[id^="marketplace-auction-"]')
+      .forEach((card) => {
+        const name = card.querySelector("h3")?.textContent.trim();
+        const unwanted = !!name && names.size > 0 && !names.has(name);
+        if (card.hasAttribute("data-wm-unwanted") !== unwanted) {
+          card.toggleAttribute("data-wm-unwanted", unwanted);
+        }
+      });
+  }
+
+  function updateHideWishedSwitch() {
+    const dock = document.querySelector(".wm-dim-up-dock");
+    if (!dock) return;
+    if (dock.querySelector(".wm-hide-wished-switch")) return;
+
+    const referenceBtn = dock.querySelector(".wm-dim-up-switch");
+    if (!referenceBtn) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${referenceBtn.className} wm-hide-wished-switch`;
+    btn.textContent = "Cacher indésirables";
+    btn.title =
+      "Cacher les cartes hors de votre liste de souhaits (noms lus sur /global-collection, liste de souhaits seule)";
+    btn.setAttribute("role", "switch");
+
+    const sync = () => {
+      const on = readHideWishedState();
+      btn.setAttribute("aria-pressed", String(on));
+      btn.setAttribute("aria-checked", String(on));
+      markWishedCards();
+      const known = readWishlistNames().size;
+      const plural = known > 1 ? "s" : "";
+      const hidden = document.querySelectorAll("[data-wm-unwanted]").length;
+      btn.title = `Cacher les cartes hors de votre liste de souhaits (${known} nom${plural} mémorisé${plural}, ${hidden} carte${plural} cachée${plural} sur la page). Les noms se lisent sur /global-collection, liste de souhaits seule activée.`;
+      if (on && known === 0) {
+        logger(
+          CPL.WARN,
+          "Hide unwanted cards is on but no wishlist name is stored: open /global-collection with the wishlist-only toggle on",
+        );
+      }
+    };
+    btn.addEventListener("click", () => {
+      const next = !readHideWishedState();
+      try {
+        localStorage.setItem(HIDE_WISHED_CARDS_KEY, String(next));
+        logger(CPL.LOG, `Hide unwanted cards: ${next}`);
+      } catch (error) {
+        logger(CPL.ERROR, "Hide switch state not saved", error);
+      }
+      sync();
+    });
+    sync();
+    dock.insertBefore(btn, referenceBtn);
+  }
+
+  function watchWishlistedCardsHiding() {
+    GM_addStyle(`
+      .wm-dim-up-dock {
+        gap: 0.5rem;
+      }
+      body[data-wm-hide-wished] div[id^="marketplace-auction-"][data-wm-unwanted] {
+        display: none;
+      }
+    `);
+
+    const update = () => {
+      if (wishlistWalk) scheduleWishlistScan();
+      updateBrowseWishlistButtonVisibility();
+      updateHideWishedSwitch();
+      markWishedCards();
+    };
+    update();
+
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -12253,6 +12663,7 @@
     run("rule-40", watchDimUpCardsSwitch);
     run("rule-41", watchTagNamesRecording);
     run("rule-42", watchTagInputBackspace);
+    run("rule-43", watchWishlistedCardsHiding);
 
     watchFeatureConfigButton();
     watchMyUsernameDetection();

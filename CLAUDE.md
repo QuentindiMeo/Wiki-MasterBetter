@@ -9,7 +9,7 @@ When features are edited, soldered or added, always add the logger calls relevan
 NEVER bump the version in the docblock at the top of the JS file.
 
 Every new rule/feature must be appended the documentation file `DOCS.md`, once its development is complete.
-DO NOT move an existing rule/feature upon modification.
+DO NOT move an existing rule/feature around in the file upon modification.
 The same principle applies to the main() function and TUTORIAL_ENTRIES.
 
 The documentation file is the primary source of truth for feature description to put in the README.
