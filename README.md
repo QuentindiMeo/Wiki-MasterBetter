@@ -95,6 +95,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Historique en deux colonnes** : L'onglet « Historique » s'affiche en deux colonnes flexibles qui s'adaptent à la hauteur de chaque échange, plutôt qu'une seule liste
 - **Filtrer par partenaire** : Un champ de recherche au-dessus de l'historique filtre les échanges par nom de partenaire
+- **Total des estimations** : Dans le détail d'un échange, un total vert « (total X) » s'ajoute après « En échange de », somme des estimations mémorisées des cartes reçues
 
 ### 💰 Marché & Enchères
 
@@ -115,6 +116,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Nettoyage automatique : une enchère terminée est retirée de la liste quand vous la visitez, et celles terminées depuis longtemps (réglable) sont retirées à chaque visite de votre profil
 - **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère, en comparant le prix affiché — majoré de 10 % (le coût d'une nouvelle enchère) uniquement sur les cartes où vous êtes « Surenchéri » — : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
   - Sur l'onglet « Parcourir », un interrupteur « Cacher indésirables » masque les cartes qui ne sont pas dans votre liste de souhaits ; leurs noms sont mémorisés quand vous cliquez sur « Feuilleter (WMB) » sur /global-collection en mode liste de souhaits : le bouton parcourt pour vous toutes les pages
+    - Une fois cette liste mémorisée, ajouter ou retirer une carte de votre liste de souhaits depuis sa modale sur /global-collection la met à jour automatiquement
   - Sur l'onglet « Parcourir », un interrupteur « ▲ Estomper », calé à droite de la rangée des filtres de rareté, atténue de moitié les cartes dont la flèche pointe vers le haut (prix pas intéressant) ; son état est mémorisé
 
 ### 📦 Catalogue

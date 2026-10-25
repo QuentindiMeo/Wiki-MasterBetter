@@ -1,12 +1,10 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.16
+// @version      0.30.22
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
-// @exclude      https://www.wiki-masters.com/battle*
-// @exclude      https://www.wiki-masters.com/settings*
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -150,6 +148,39 @@
     );
   }
 
+  // Paths where WMB must leave the page alone (they used to be @exclude-d in the header). The site is an SPA, so
+  // this can't be decided once at load: styles added by the features are switched off while on such a path (and back
+  // on elsewhere), the callbacks of observers and intervals are skipped (see the shadowed functions below), and the
+  // initialization itself waits for the first allowed path (see the end of the script)
+  const EXCLUDED_PATH_PREFIXES = ["/battle", "/settings"];
+  const isExcludedPath = () =>
+    EXCLUDED_PATH_PREFIXES.some((prefix) =>
+      window.location.pathname.startsWith(prefix),
+    );
+
+  const featureStyles = [];
+
+  // True while the navbar buttons start (see startWhenAllowed): what they create is exempt from the exclusion, as
+  // the buttons must stay available on every path
+  let exemptFromExclusion = false;
+
+  function syncFeatureStyles() {
+    const excluded = isExcludedPath();
+    featureStyles.forEach((style) => {
+      style.disabled = excluded;
+    });
+  }
+
+  // Same as GM_addStyle, but the stylesheet follows the excluded paths
+  function addStyle(css) {
+    const style = GM_addStyle(css);
+    if (style instanceof HTMLStyleElement && !exemptFromExclusion) {
+      featureStyles.push(style);
+      style.disabled = isExcludedPath();
+    }
+    return style;
+  }
+
   function checkNavigation() {
     const path = window.location.pathname;
     if (path === tracedPath) return;
@@ -159,6 +190,7 @@
     tracedOnceKeys.clear();
     tracedFeaturePaths.clear();
     logger(CPL.INFO, `Navigation: ${previousPath} -> ${path}`);
+    syncFeatureStyles();
     flushPageDigest(previousPath);
   }
 
@@ -201,13 +233,27 @@
     };
   }
 
+  // Wraps an observer/interval callback so it does nothing on an excluded path (checkNavigation runs first, which is
+  // what notices the path change and switches the styles). Timeouts are left alone: they are mostly the delays of
+  // async flows, which would never resume if skipped.
+  function skipOnExcludedPath(callback) {
+    if (exemptFromExclusion) return callback;
+    return function (...args) {
+      checkNavigation();
+      if (isExcludedPath()) return undefined;
+      return callback.apply(this, args);
+    };
+  }
+
   // Shadow the globals for the rest of this script only
   const MutationObserver = class extends NativeMutationObserver {
     constructor(callback, ...rest) {
       super(
-        currentFeatureId
-          ? trackFeature(currentFeatureId, callback, "observer")
-          : callback,
+        skipOnExcludedPath(
+          currentFeatureId
+            ? trackFeature(currentFeatureId, callback, "observer")
+            : callback,
+        ),
         ...rest,
       );
     }
@@ -215,8 +261,12 @@
 
   const setInterval = (callback, delay, ...rest) =>
     nativeSetInterval(
-      currentFeatureId && typeof callback === "function"
-        ? trackFeature(currentFeatureId, callback, "interval")
+      typeof callback === "function"
+        ? skipOnExcludedPath(
+            currentFeatureId
+              ? trackFeature(currentFeatureId, callback, "interval")
+              : callback,
+          )
         : callback,
       delay,
       ...rest,
@@ -231,6 +281,14 @@
       ...rest,
     );
 
+  // Lower-cases and strips the accents, for the text filters
+  function foldAccents(value) {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  }
+
   // Logs a calculation's outcome once per page (the same message is not repeated until the path changes)
   function traceOnce(message, ...extra) {
     checkNavigation();
@@ -244,7 +302,7 @@
   // Rule 1a: give div.overflow-hidden.card-frame.shadow-xl a max-height of 80vh and a width of 50vw
   // ============================================================
   function applyCardFrameMaxHeight() {
-    GM_addStyle(`
+    addStyle(`
       div.overflow-hidden.card-frame.shadow-xl {
         max-height: 75vh !important;
         width: 42vw !important;
@@ -441,7 +499,7 @@
   }
 
   function watchFriendsGrid() {
-    GM_addStyle(`
+    addStyle(`
       .friend-list-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -537,7 +595,7 @@
   }
 
   function watchSidebarFold() {
-    GM_addStyle(`
+    addStyle(`
       .wm-sidebar {
         width: 4.5rem !important;
         padding-left: 0.75rem !important;
@@ -824,7 +882,7 @@
   }
 
   function watchMarkAllReadButtonStyle() {
-    GM_addStyle(`
+    addStyle(`
       .wm-mark-all-read-btn {
         text-box: alphabetic;
       }
@@ -911,7 +969,7 @@
   }
 
   function watchCollectionQuickActionButtons() {
-    GM_addStyle(`
+    addStyle(`
       .wm-quick-action {
         display: block;
         font-size: 0.75rem;
@@ -1254,7 +1312,7 @@
   }
 
   function watchProfileButtonColor() {
-    GM_addStyle(`
+    addStyle(`
       .wm-profile-btn:not(:hover) {
         color: #ccc;
       }
@@ -1356,7 +1414,7 @@
   }
 
   function watchPullsCounterNotification() {
-    GM_addStyle(`
+    addStyle(`
       .wm-pnp-mute-toggle {
         align-self: flex-start;
         margin-inline: auto;
@@ -1891,7 +1949,7 @@
   }
 
   function watchAuctionGroupToggle() {
-    GM_addStyle(`
+    addStyle(`
       .wm-group-toggle {
         font-size: 0.9rem;
         margin-left: 0.75rem;
@@ -2031,7 +2089,7 @@
   }
 
   function watchBidTimerNotification() {
-    GM_addStyle(`
+    addStyle(`
       .wm-pnb-mute-toggle {
         margin-inline: 0.25rem auto;
         background: none;
@@ -2143,7 +2201,7 @@
   }
 
   function watchBidTimerUrgency() {
-    GM_addStyle(`
+    addStyle(`
       .wm-bid-timer-urgent {
         color: #ef4444;
         animation: wm-bid-timer-urgent-glow 2s ease-in-out infinite;
@@ -2214,7 +2272,7 @@
   }
 
   function watchClaimAllButton() {
-    GM_addStyle(`
+    addStyle(`
       .wm-claim-all {
         display: block;
         margin: 0 auto 0.5rem auto;
@@ -2414,7 +2472,7 @@
   }
 
   function watchPullsTutorialPanel() {
-    GM_addStyle(`
+    addStyle(`
       .wm-akp-tutorial {
         position: fixed;
         transform: translate(-100%, calc(-100% - 1.5rem));
@@ -2524,7 +2582,7 @@
   }
 
   function watchWishlistToastWrap() {
-    GM_addStyle(`
+    addStyle(`
       .wm-wishlist-listed {
         color: #f4c2f6;
         font-weight: 600;
@@ -2600,7 +2658,7 @@
   }
 
   function watchOwnBidButtonColor() {
-    GM_addStyle(`
+    addStyle(`
       .wm-own-bid-leading {
         background-color: #fca5a5 !important;
         opacity: 0.5;
@@ -3436,7 +3494,7 @@
   }
 
   function watchSnipableBadge() {
-    GM_addStyle(`
+    addStyle(`
       h1.flex-1 {
         display: contents;
       }
@@ -3656,7 +3714,7 @@
   }
 
   function watchMarketplaceArrows() {
-    GM_addStyle(`
+    addStyle(`
       .${MPA_ARROW_CLASS} {
         font-weight: 700;
         cursor: help;
@@ -4207,6 +4265,27 @@
 
     dump.appendChild(title);
 
+    // Text filter on the card names (case- and accent-insensitive); hides the entries that don't match. Being a
+    // direct child of the block, it is folded away with the entries
+    const filterInput = document.createElement("input");
+    filterInput.type = "text";
+    filterInput.className = "wm-bsp-dump-filter";
+    filterInput.placeholder = "Filtrer par nom de carte...";
+    filterInput.addEventListener("input", () => {
+      const needle = foldAccents(filterInput.value.trim());
+      let shown = 0;
+      rows.forEach(({ cardName, entryEl }) => {
+        const match = foldAccents(cardName).includes(needle);
+        entryEl.style.display = match ? "" : "none";
+        if (match) shown++;
+      });
+      logger(
+        CPL.LOG,
+        `Profile cache filter "${needle}": ${shown}/${rows.length} card(s) shown`,
+      );
+    });
+    dump.appendChild(filterInput);
+
     const rows = [];
 
     const entriesWithAverage = entries.map(([cardName, prices]) => {
@@ -4351,7 +4430,7 @@
   }
 
   function watchStoredBidPricesGrid() {
-    GM_addStyle(`
+    addStyle(`
       .wm-bsp-dump {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -4499,6 +4578,18 @@
       .wm-bsp-dump-entry-cleared {
         opacity: 0.35;
       }
+      .wm-bsp-dump-filter {
+        grid-column: 1 / -1;
+        justify-self: center;
+        width: 25%;
+        min-width: 12rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--color-border);
+        background: transparent;
+        color: inherit;
+        font-size: 0.875rem;
+      }
       .wm-bsp-dump-name {
         font-size: .825rem;
         font-weight: 600;
@@ -4620,7 +4711,7 @@
   }
 
   // ============================================================
-  // Feature ETS (cont'd): on /collection, whenever the cards grid (div.gap-3.justify-center) changes, append each
+  // Feature ETS (cont'd): on /collection (and in the trade detail modal of /trades), whenever the cards grid (div.gap-3.justify-center) changes, append each
   // card's cached eval price (Feature ETS, keyed "eval-{name}") to its rarity tag (div.top-2.left-2), as
   // "{rarity} ({eval})". The eval value is reformatted first: below the configured threshold (the "Seuil « sans valeur » des estimations" setting of Feature CFG, 10 by
   // default), it's replaced outright with "💩"; above 1000, it's abbreviated to "{X,X} K" (French decimal comma); otherwise it's shown as stored, including the "?"
@@ -4647,15 +4738,30 @@
     return rawValue;
   }
 
-  function appendEvalToRarityTags() {
-    if (!window.location.pathname.startsWith("/collection")) return;
+  // Rule 44 (cont'd): the cards of the trade detail modal on /trades (div.max-w-4xl) get the same appendix
+  function getRarityTaggedCards() {
+    const path = window.location.pathname;
+    if (path.startsWith("/collection")) {
+      const grid = document.querySelector("div.gap-3.justify-center");
+      return grid ? Array.from(grid.children) : [];
+    }
+    if (path.startsWith("/trades")) {
+      const modal = document.querySelector("div.max-w-4xl");
+      if (!modal) return [];
+      return Array.from(modal.querySelectorAll("h3"))
+        .map((h3) => h3.closest("div.relative.rounded-2xl"))
+        .filter(Boolean);
+    }
+    return [];
+  }
 
-    const grid = document.querySelector("div.gap-3.justify-center");
-    if (!grid) return;
+  function appendEvalToRarityTags() {
+    const cards = getRarityTaggedCards();
+    if (cards.length === 0) return;
 
     const threshold = getWorthlessThreshold();
     let appended = 0;
-    Array.from(grid.children).forEach((card) => {
+    cards.forEach((card) => {
       const nameEl = card.querySelector("h3");
       const rarityEl = card.querySelector("div.top-2.left-2");
       if (!nameEl || !rarityEl) return;
@@ -4695,7 +4801,7 @@
   }
 
   function watchRarityEvalTags() {
-    GM_addStyle(`
+    addStyle(`
       .wm-eval-appendix {
         font-size: 0.75em;
         opacity: 0.5;
@@ -4821,7 +4927,7 @@
   }
 
   function watchCollectionModalInputFocus(flags) {
-    GM_addStyle(`
+    addStyle(`
       nav a[href="/pulls"]:focus {
         outline: none;
       }
@@ -5073,6 +5179,15 @@
       id: "rule-43",
       label:
         "Interrupteur pour cacher les cartes hors de votre liste de souhaits (marché, Parcourir) et bouton « Feuilleter (WMB) » pour la mémoriser",
+    },
+    {
+      id: "rule-44",
+      label:
+        "Total des estimations des cartes reçues dans le détail d'un échange (/trades)",
+    },
+    {
+      id: "rule-45",
+      label: "Réduire la marge sous le bloc du haut de la barre de navigation",
     },
   ];
 
@@ -6202,7 +6317,7 @@
   }
 
   function watchFeatureConfigButton() {
-    GM_addStyle(`
+    addStyle(`
       .wm-fold-toggle,
       .wm-settings-toggle {
         display: flex;
@@ -6949,11 +7064,7 @@
     list.appendChild(noResult);
 
     // Accents and case are ignored, and the title and the text are both searched
-    const fold = (value) =>
-      value
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase();
+    const fold = foldAccents;
     search.addEventListener("input", () => {
       const query = fold(search.value.trim());
       let shown = 0;
@@ -7025,7 +7136,7 @@
   }
 
   function watchTutorialButton() {
-    GM_addStyle(`
+    addStyle(`
       .wm-tutorial-panel {
         display: flex;
         flex-direction: column;
@@ -7218,7 +7329,7 @@
   }
 
   function watchNotificationRewrites() {
-    GM_addStyle(`
+    addStyle(`
       .wm-returned-card-message {
         color: #fdba74;
       }
@@ -7377,7 +7488,7 @@
   }
 
   function watchNotificationFilterButtons() {
-    GM_addStyle(`
+    addStyle(`
       .wm-notification-filter-row {
         display: flex;
         gap: 0.35rem;
@@ -7486,7 +7597,7 @@
   }
 
   function watchGlobalCollectionFriendProfileLinks() {
-    GM_addStyle(`
+    addStyle(`
       .wm-friend-username-hover {
         cursor: pointer;
         text-decoration: underline;
@@ -7674,7 +7785,7 @@
   }
 
   function watchWishlistOwnedCardCount() {
-    GM_addStyle(`
+    addStyle(`
       .wm-wishlist-cleanup-stop {
         position: absolute;
         top: 1rem;
@@ -7808,7 +7919,7 @@
   }
 
   function watchTradesHistoryGrid() {
-    GM_addStyle(`
+    addStyle(`
       .wm-trades-history-grid {
         position: relative;
       }
@@ -7896,7 +8007,7 @@
   }
 
   function watchTradesHistoryFilter() {
-    GM_addStyle(`
+    addStyle(`
       .wm-trades-history-filter {
         display: block;
         margin-inline: auto;
@@ -8658,7 +8769,7 @@
   }
 
   function watchEvaluateUnratedButton() {
-    GM_addStyle(`
+    addStyle(`
       .wm-eval-stop {
         position: absolute;
         top: 1rem;
@@ -8869,7 +8980,7 @@
   }
 
   function watchCardModalNameCopyButton() {
-    GM_addStyle(`
+    addStyle(`
       .wm-copy-name {
         background: none;
         border: none;
@@ -8959,7 +9070,7 @@
   }
 
   function watchSpinnerAndAuctionNotFoundCentering() {
-    GM_addStyle(`
+    addStyle(`
       main {
         position: relative;
       }
@@ -9199,7 +9310,7 @@
   }
 
   function watchCollectionSearchClearButton() {
-    GM_addStyle(`
+    addStyle(`
       .wm-search-clear-wrapper {
         position: relative;
         width: 100%;
@@ -9308,7 +9419,7 @@
   }
 
   function watchMultiTagModalSizing() {
-    GM_addStyle(`
+    addStyle(`
       .wm-multi-tag-list {
         max-height: 50vh !important;
         display: flex !important;
@@ -9488,7 +9599,7 @@
   }
 
   function watchTagFilterListKeyboardNav() {
-    GM_addStyle(`
+    addStyle(`
       ul.rounded-xl[role="listbox"] button[role="option"]:focus-visible {
         outline: none;
         background-color: var(--color-surface-light);
@@ -10010,7 +10121,7 @@
   }
 
   function watchCollectionPageJump() {
-    GM_addStyle(`
+    addStyle(`
       .wm-page-jump {
         cursor: pointer;
         transition: scale 0.1s ease;
@@ -10051,7 +10162,7 @@
     if (topListStylesInjected) return;
     topListStylesInjected = true;
 
-    GM_addStyle(`
+    addStyle(`
       .wm-top-evals-btn {
         margin-left: 0.75rem;
         padding: 0.2rem 0.6rem;
@@ -10555,7 +10666,7 @@
   }
 
   function watchFollowedUsers() {
-    GM_addStyle(`
+    addStyle(`
       .wm-followed-dump {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -10749,7 +10860,7 @@
   }
 
   function watchNoEvalHalo() {
-    GM_addStyle(`
+    addStyle(`
       .wm-no-eval-toggle {
         margin-left: 0.5rem;
         padding: 0.2rem 0.6rem;
@@ -11034,7 +11145,7 @@
   }
 
   function watchUserDescriptions() {
-    GM_addStyle(`
+    addStyle(`
       .wm-user-desc-host {
         display: flex;
         flex-wrap: wrap;
@@ -11784,7 +11895,7 @@
   }
 
   function watchWatchedAuctions() {
-    GM_addStyle(`
+    addStyle(`
       .wm-watch-btn,
       .wm-watch-list-btn {
         font-size: 0.9rem;
@@ -12110,7 +12221,7 @@
   }
 
   function watchDimUpCardsSwitch() {
-    GM_addStyle(`
+    addStyle(`
       .wm-dim-up-dock {
         display: flex;
         margin-left: auto;
@@ -12436,7 +12547,8 @@
   }
 
   function updateBrowseWishlistButtonVisibility() {
-    const onWishlist = window.location.pathname.startsWith("/global-collection");
+    const onWishlist =
+      window.location.pathname.startsWith("/global-collection");
     const toggle = document.querySelector("button.gap-1\\.5:nth-child(1)");
     let btn = document.querySelector(".wm-browse-wishlist");
     if (!onWishlist || !toggle || !isWishlistOnlyToggleChecked()) {
@@ -12453,7 +12565,12 @@
     btn.addEventListener("click", () => {
       if (wishlistWalk) return;
       logger(CPL.INFO, "Wishlist browse started");
-      wishlistWalk = { total: null, startPage: null, pages: new Map(), waits: 0 };
+      wishlistWalk = {
+        total: null,
+        startPage: null,
+        pages: new Map(),
+        waits: 0,
+      };
       wishlistLastSignature = "";
       updateBrowseWishlistButton();
       scheduleWishlistScan();
@@ -12546,8 +12663,49 @@
     dock.insertBefore(btn, referenceBtn);
   }
 
+  // Rule 43 (cont'd): on /global-collection, clicking the card modal's wishlist button ("Ajouter à la liste de
+  // souhaits" / "Retirer...") adds the card's name to, or removes it from, the stored names. Nothing is written while
+  // no names are stored yet (a lone name would start hiding every other card on the marketplace: only a complete
+  // walk may create the list).
+  function syncWishlistNamesOnToggle(event) {
+    if (!window.location.pathname.startsWith("/global-collection")) return;
+    const btn = event.target.closest?.("div.card-frame.p-6 button");
+    if (!btn || !/liste de souhaits|^\s*retirer/i.test(btn.textContent)) return;
+
+    const nameEl = btn
+      .closest("div.card-frame.p-6")
+      .querySelector("h2.text-xl.pr-10");
+    const cardName = Array.from(nameEl?.childNodes ?? [])
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join("")
+      .trim();
+    if (!cardName) {
+      logger(CPL.WARN, "Wishlist toggled but the card name was not found");
+      return;
+    }
+    if (localStorage.getItem(WISHLIST_NAMES_KEY) === null) return;
+
+    const adding = /^\s*ajouter/i.test(btn.textContent);
+    const names = readWishlistNames();
+    if (adding === names.has(cardName)) return;
+    if (adding) names.add(cardName);
+    else names.delete(cardName);
+    try {
+      localStorage.setItem(WISHLIST_NAMES_KEY, JSON.stringify([...names]));
+      logger(
+        CPL.INFO,
+        `Wishlist names: "${cardName}" ${adding ? "added" : "removed"} (${names.size} stored)`,
+      );
+    } catch (error) {
+      logger(CPL.ERROR, "Wishlist names not saved", error);
+    }
+  }
+
   function watchWishlistedCardsHiding() {
-    GM_addStyle(`
+    document.addEventListener("click", syncWishlistNamesOnToggle, true);
+
+    addStyle(`
       .wm-dim-up-dock {
         gap: 0.5rem;
       }
@@ -12574,6 +12732,88 @@
   }
 
   // ============================================================
+  // Rule 44: on /trades, in the trade detail modal (div.max-w-4xl, titled "Détail de l'échange"), a dark green
+  // "(total {value})" span is appended to the "En échange de" paragraph: the sum of the cached ETS evals
+  // (getCardEvalValueByName) of the cards listed under it (the h3 of the div following that paragraph). When at
+  // least one of them has no usable eval, the sum of the others is followed by "+?" ("{value}+?", or just "?" when
+  // none is known). The span (data-wm-trade-total) is rewritten in place when the sum changes and re-created if the
+  // site's re-render drops it.
+  // ============================================================
+  const TRADE_TOTAL_ATTRIBUTE = "data-wm-trade-total";
+
+  function computeTradeTotalLabel(cardsRow) {
+    const names = Array.from(cardsRow.querySelectorAll("h3"))
+      .map((h3) => h3.textContent.trim())
+      .filter(Boolean);
+    let sum = 0;
+    let known = 0;
+    names.forEach((name) => {
+      const value = getCardEvalValueByName(name);
+      if (value === null) return;
+      sum += value;
+      known++;
+    });
+    const missing = names.length - known;
+    const amount = Math.round(sum).toLocaleString("fr-FR");
+    let label;
+    if (missing === 0) label = amount;
+    else label = known === 0 ? "?" : `${amount}+?`;
+    return { label, names: names.length, missing };
+  }
+
+  function updateTradeTotal() {
+    if (!window.location.pathname.startsWith("/trades")) return;
+
+    const modal = document.querySelector("div.max-w-4xl");
+    if (!modal) return;
+
+    const heading = Array.from(modal.querySelectorAll("p")).find(
+      (p) => p.firstChild?.textContent.trim() === "En échange de",
+    );
+    const cardsRow = heading?.nextElementSibling;
+    if (!heading || !cardsRow) return;
+
+    const { label, names, missing } = computeTradeTotalLabel(cardsRow);
+    if (names === 0) return;
+
+    let span = heading.querySelector(`span[${TRADE_TOTAL_ATTRIBUTE}]`);
+    const text = `(total ${label})`;
+    if (span?.textContent === text) return;
+
+    if (!span) {
+      span = document.createElement("span");
+      span.setAttribute(TRADE_TOTAL_ATTRIBUTE, "");
+      span.style.cssText =
+        "color:#15803d;margin-left:0.5rem;text-transform:none;font-weight:700;";
+      heading.appendChild(span);
+    }
+    span.textContent = text;
+    logger(
+      CPL.LOG,
+      `Trade total: ${label} (${names} card(s), ${missing} without estimate)`,
+    );
+  }
+
+  function watchTradeTotal() {
+    updateTradeTotal();
+
+    const observer = new MutationObserver(() => updateTradeTotal());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 45 (started on every path, see startNavbarButtons): nav div.mb-8 gets a margin-bottom of 0.25rem (the site's own is 2rem), tightening the sidebar
+  // ============================================================
+  function applyNavBlockSpacing() {
+    addStyle(`
+      nav div.mb-8 {
+        margin-bottom: 0.5rem !important;
+      }
+    `);
+    logger(CPL.LOG, "Navigation block spacing applied");
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -12597,7 +12837,6 @@
     run("rule-5", watchActionButtonLabels);
     run("rule-6", watchSidebarFold);
     run("rule-6", watchCardFrameDocking);
-    run("feature-npn", watchNavFoldToggle);
     run("rule-7", watchMarkAllReadTrigger);
     run("rule-7", watchMarkAllReadButtonStyle);
     run("feature-tbc", watchCollectionQuickActionButtons);
@@ -12664,12 +12903,52 @@
     run("rule-41", watchTagNamesRecording);
     run("rule-42", watchTagInputBackspace);
     run("rule-43", watchWishlistedCardsHiding);
+    run("rule-44", watchTradeTotal);
 
-    watchFeatureConfigButton();
     watchMyUsernameDetection();
-    watchTutorialButton();
     logger(CPL.LOG, "Initialization complete");
   }
 
-  main();
+  // The navbar buttons (pin, settings, tutorials) and Rule 45's navbar spacing are the only things started on an
+  // excluded path, and are exempt from the exclusion: the navbar has to look the same everywhere
+  function startNavbarButtons() {
+    exemptFromExclusion = true;
+    try {
+      if (readFeatureFlags()["feature-npn"]) {
+        trackFeature("feature-npn", watchNavFoldToggle, "start")();
+      }
+      watchFeatureConfigButton();
+      watchTutorialButton();
+      if (readFeatureFlags()["rule-45"]) {
+        trackFeature("rule-45", applyNavBlockSpacing, "start")();
+      }
+    } finally {
+      exemptFromExclusion = false;
+    }
+  }
+
+  // Nothing else is initialized while on an excluded path: the start waits (cheap polling, the SPA changes path
+  // without a reload) for the first path where WMB is allowed to act
+  function startWhenAllowed() {
+    startNavbarButtons();
+    syncFeatureStyles();
+
+    if (!isExcludedPath()) {
+      main();
+      return;
+    }
+
+    logger(
+      CPL.INFO,
+      `Excluded path ${window.location.pathname}: initialization deferred`,
+    );
+    const waiting = nativeSetInterval(() => {
+      if (isExcludedPath()) return;
+      window.clearInterval(waiting);
+      logger(CPL.INFO, "Allowed path reached, initialization starts");
+      main();
+    }, 500);
+  }
+
+  startWhenAllowed();
 })();
