@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.22
+// @version      0.30.33
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -571,9 +571,96 @@
   }
 
   // ============================================================
-  // Rule 6: fold the left navbar by default; on hover, smoothly expand it. Folded: only each anchor's icon is visible,
-  // and the site logo is squashed horizontally instead of hidden
+  // Rule 6: the left navbar is compact by default (only each anchor's icon is visible, and the site logo gives way to
+  // the "running" mark) and static: it doesn't react to hover, Feature NPN's pin toggle expands it (smoothly) or
+  // compacts it back
+  // Rule 6 (cont'd): a "✓ WMB v{version}" mark is added below the logo (inside its link, whose click it swallows) to
+  // show the script is running; compact, only "✓ WMB" fits, the version appears with the expansion
   // ============================================================
+  const RUNNING_MARK_TITLE = `Wiki-MasterBetter est actif (version ${WMB_VERSION})`;
+
+  function insertRunningMark(logo) {
+    const link = logo.closest("a");
+    if (!link || link.querySelector(":scope > .wm-running-mark")) return;
+
+    const mark = document.createElement("div");
+    mark.className = "wm-running-mark";
+    mark.title = RUNNING_MARK_TITLE;
+
+    const sign = document.createElement("span");
+    sign.className = "wm-running-mark-sign";
+    sign.textContent = "✓";
+
+    const version = document.createElement("span");
+    version.className = "wm-running-mark-version";
+    version.textContent = ` v${WMB_VERSION}`;
+
+    const prefix = document.createElement("span");
+    prefix.className = "wm-running-mark-prefix";
+    prefix.textContent = " augmenté par";
+
+    mark.append(sign, prefix, " WMB", version);
+    mark.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    link.appendChild(mark);
+    logger(CPL.LOG, `Running mark added (version ${WMB_VERSION})`);
+  }
+
+  // Compact, the labels are hidden: hovering (or focusing) an anchor shows its label in a floating tooltip to the right
+  // of the bar, styled like the settings' hints. One element is shared by every anchor; it is only shown while the
+  // bar is compact (expanded, the label is visible) and hidden as the bar is toggled.
+  let navTip = null;
+
+  function hideNavTip() {
+    navTip?.classList.remove("wm-nav-tip-visible");
+  }
+
+  function showNavTip(nav, link) {
+    if (nav.classList.contains("wm-sidebar-pinned")) return;
+    const label = link.querySelector(".wm-nav-label")?.textContent.trim();
+    if (!label) return;
+
+    if (!navTip) {
+      navTip = document.createElement("div");
+      navTip.className = "wm-nav-tip";
+      navTip.setAttribute("role", "tooltip");
+      document.body.appendChild(navTip);
+    }
+    navTip.textContent = label;
+
+    const rect = link.getBoundingClientRect();
+    navTip.style.left = `${nav.getBoundingClientRect().right + 8}px`;
+    navTip.style.top = `${rect.top + rect.height / 2 - navTip.offsetHeight / 2}px`;
+    navTip.classList.add("wm-nav-tip-visible");
+    traceOnce(`[NPN] compact navbar: tooltip shown for "${label}"`);
+  }
+
+  function bindNavTooltips(nav) {
+    if (nav.dataset.wmNavTipBound === "true") return;
+    nav.dataset.wmNavTipBound = "true";
+
+    const linkOf = (event) => {
+      const link = event.target.closest?.("a[href]");
+      return link?.parentElement === nav ? link : null;
+    };
+    nav.addEventListener("mouseover", (event) => {
+      const link = linkOf(event);
+      if (link) showNavTip(nav, link);
+    });
+    nav.addEventListener("mouseout", (event) => {
+      if (linkOf(event)) hideNavTip();
+    });
+    nav.addEventListener("focusin", (event) => {
+      const link = linkOf(event);
+      if (link) showNavTip(nav, link);
+    });
+    nav.addEventListener("focusout", hideNavTip);
+    nav.addEventListener("click", hideNavTip);
+    nav.addEventListener("scroll", hideNavTip);
+  }
+
   function foldSidebarNav() {
     const logo = document.querySelector("nav h1");
     const nav = logo?.closest("nav");
@@ -581,6 +668,8 @@
 
     nav.classList.add("wm-sidebar");
     logo.classList.add("wm-logo");
+    insertRunningMark(logo);
+    logo.closest("a")?.parentElement?.classList.add("wm-sidebar-header");
 
     nav.querySelectorAll(":scope > a[href]").forEach((link) => {
       Array.from(link.childNodes).forEach((node) => {
@@ -592,6 +681,7 @@
         }
       });
     });
+    bindNavTooltips(nav);
   }
 
   function watchSidebarFold() {
@@ -601,25 +691,20 @@
         padding-left: 0.75rem !important;
         padding-right: 0.75rem !important;
         overflow-x: hidden;
-        transition: width 0.25s ease, padding 0.25s ease;
+        transition: width 0.25s ease;
       }
-      .wm-sidebar:hover,
       .wm-sidebar.wm-sidebar-pinned {
         width: 16rem !important;
-        padding-left: 1.5rem !important;
-        padding-right: 1.5rem !important;
       }
+      /* The paddings are the same compact and expanded, so that the icons stay in place */
       .wm-sidebar > a {
         gap: 0 !important;
         padding-left: 0.75rem !important;
         padding-right: 0.75rem !important;
-        transition: gap 0.25s ease, padding 0.25s ease;
+        transition: gap 0.25s ease;
       }
-      .wm-sidebar:hover > a,
       .wm-sidebar.wm-sidebar-pinned > a {
         gap: 0.75rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
       }
       .wm-sidebar > a > *:not(:first-child) {
         opacity: 0;
@@ -628,21 +713,89 @@
         white-space: nowrap;
         transition: opacity 0.15s ease, max-width 0.25s ease;
       }
-      .wm-sidebar:hover > a > *:not(:first-child),
       .wm-sidebar.wm-sidebar-pinned > a > *:not(:first-child) {
         opacity: 1;
         max-width: 12rem;
         transition: opacity 0.2s ease 0.1s, max-width 0.25s ease;
       }
-      .wm-logo {
-        display: inline-block;
-        transform-origin: left center;
-        transform: scale(0.35);
-        transition: transform 0.25s ease;
+      .wm-running-mark {
+        margin-top: -0.25rem;
+        font-size: 0.65rem;
+        font-weight: 600;
+        white-space: nowrap;
+        opacity: 0.6;
+        cursor: default;
       }
-      .wm-sidebar:hover .wm-logo,
-      .wm-sidebar.wm-sidebar-pinned .wm-logo {
-        transform: scale(1);
+      .wm-running-mark-sign {
+        color: #22c55e;
+      }
+      .wm-running-mark-version,
+      .wm-running-mark-prefix {
+        display: none;
+      }
+      .wm-sidebar.wm-sidebar-pinned .wm-running-mark-version,
+      .wm-sidebar.wm-sidebar-pinned .wm-running-mark-prefix {
+        display: inline;
+      }
+      /* Compact: there is only 3rem of inner width, so the toggles are stacked, the logo (unreadable once squashed)
+         is dropped for the "✓ WMB" mark, and the bell goes under it instead of over it */
+      .wm-sidebar:not(.wm-sidebar-pinned) > .wm-toggle-row {
+        flex-direction: column;
+      }
+      .wm-sidebar:not(.wm-sidebar-pinned) > .wm-toggle-row > .wm-fold-toggle {
+        flex: none;
+        width: 100%;
+      }
+      .wm-sidebar:not(.wm-sidebar-pinned) > .wm-sidebar-header {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0;
+      }
+      .wm-sidebar:not(.wm-sidebar-pinned) > .wm-sidebar-header > a {
+        flex: none;
+        min-width: auto;
+      }
+      .wm-sidebar:not(.wm-sidebar-pinned) .wm-logo {
+        display: none;
+      }
+      .wm-sidebar:not(.wm-sidebar-pinned) .wm-running-mark {
+        margin-top: 0;
+        text-align: center;
+      }
+      .wm-nav-tip {
+        position: fixed;
+        z-index: 10001;
+        padding: 0.4rem 0.75rem;
+        border: 1px solid var(--color-border);
+        border-radius: 0.6rem;
+        background-color: var(--color-surface-light);
+        color: var(--color-foreground);
+        font-size: 0.8rem;
+        font-weight: 600;
+        white-space: nowrap;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+        pointer-events: none;
+        opacity: 0;
+        transform: translateX(-0.4rem);
+        transition: opacity 0.15s ease, transform 0.15s ease;
+      }
+      .wm-nav-tip::before {
+        content: "";
+        position: absolute;
+        left: -5px;
+        top: 50%;
+        width: 8px;
+        height: 8px;
+        margin-top: -4px;
+        border-left: 1px solid var(--color-border);
+        border-bottom: 1px solid var(--color-border);
+        background-color: var(--color-surface-light);
+        transform: rotate(45deg);
+      }
+      .wm-nav-tip-visible {
+        opacity: 1;
+        transform: none;
       }
       .wm-fold-toggle {
         display: flex;
@@ -686,22 +839,23 @@
   }
 
   // ============================================================
-  // Feature NPN: pin toggle to switch the navbar between "foldable on hover" (Rule 6's default) and "always expanded".
+  // Feature NPN: pin toggle to switch the navbar between compact (Rule 6's default) and expanded.
   // The choice persists across page loads via GM_setValue.
   // ============================================================
   function applyNavPinState(nav, pinned) {
     nav.classList.toggle("wm-sidebar-pinned", pinned);
+    hideNavTip();
   }
 
   // Shared by the pin toggle (feature NPN) and the settings toggle
   // (feature FCP): both sit, in that order, inside this single
-  // horizontal flex row, always the sidebar's first child.
+  // horizontal flex row, always the sidebar's last child.
   function ensureToggleRow(nav) {
     let row = nav.querySelector(":scope > .wm-toggle-row");
     if (!row) {
       row = document.createElement("div");
       row.className = "wm-toggle-row";
-      nav.insertBefore(row, nav.firstChild);
+      nav.appendChild(row);
     }
     return row;
   }
@@ -722,8 +876,8 @@
     toggle.className = "wm-fold-toggle";
     toggle.setAttribute("aria-pressed", String(pinned));
     toggle.title = pinned
-      ? "Barre latérale toujours dépliée (cliquer pour la rendre repliable)"
-      : "Barre latérale repliable (cliquer pour toujours la déplier)";
+      ? "Barre latérale dépliée (cliquer pour la compacter)"
+      : "Barre latérale compacte (cliquer pour la déplier)";
 
     const icon = document.createElement("span");
     icon.className = "wm-fold-toggle-icon";
@@ -735,8 +889,8 @@
       applyNavPinState(nav, next);
       toggle.setAttribute("aria-pressed", String(next));
       toggle.title = next
-        ? "Barre latérale toujours dépliée (cliquer pour la rendre repliable)"
-        : "Barre latérale repliable (cliquer pour toujours la déplier)";
+        ? "Barre latérale dépliée (cliquer pour la compacter)"
+        : "Barre latérale compacte (cliquer pour la déplier)";
       GM_setValue("wm-sidebar-pinned", next);
       logger(CPL.LOG, `Sidebar pinned: ${next}`);
     });
@@ -1044,11 +1198,33 @@
   // its button labelled "Lancer l'enchère" (button inside div.mt-6). The sell modal is the div.card-frame holding
   // that button, so this works on any page and for any of its fields, not only the starting bid (input
   // [aria-label="Mise de départ"]) — an input of another modal has no such button in its card frame and is left alone.
+  // The bid pages' own fields are handled too (see findBidPageSubmitButton).
   // ============================================================
   function findSellModalLaunchButton(input) {
     const scope = input.closest("div.card-frame") ?? document;
     return Array.from(scope.querySelectorAll("div.mt-6 button")).find(
       (btn) => btn.textContent.trim() === "Lancer l'enchère",
+    );
+  }
+
+  // Feature LBD (cont'd): on a bid page, Enter in the bid field ("Montant de la mise") clicks "Miser", and in the
+  // lowered starting bid field of the user's own auction ("Nouvelle mise de départ") clicks "Appliquer". The button
+  // is the one sharing the field's row (div.flex.gap-2); a disabled one is left alone.
+  const BID_PAGE_FIELD_BUTTONS = {
+    "Montant de la mise": "Miser",
+    "Nouvelle mise de départ": "Appliquer",
+  };
+
+  function findBidPageSubmitButton(input) {
+    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return null;
+    const label = BID_PAGE_FIELD_BUTTONS[input.getAttribute("aria-label")];
+    if (!label) return null;
+
+    const row = input.closest("div.flex.gap-2");
+    return (
+      Array.from(row?.querySelectorAll(":scope > button") ?? []).find(
+        (btn) => btn.textContent.trim() === label,
+      ) ?? null
     );
   }
 
@@ -1060,14 +1236,25 @@
       if (!(input instanceof HTMLInputElement)) return;
 
       const launchBtn = findSellModalLaunchButton(input);
-      if (!launchBtn) return;
+      if (launchBtn) {
+        event.preventDefault();
+        logger(
+          CPL.INFO,
+          "Enter pressed in the sell modal: launching the auction",
+        );
+        launchBtn.click();
+        return;
+      }
+
+      const bidBtn = findBidPageSubmitButton(input);
+      if (!bidBtn || bidBtn.disabled) return;
 
       event.preventDefault();
       logger(
         CPL.INFO,
-        "Enter pressed in the sell modal: launching the auction",
+        `Enter pressed in the bid page's field "${input.getAttribute("aria-label")}": clicking "${bidBtn.textContent.trim()}"`,
       );
-      launchBtn.click();
+      bidBtn.click();
     });
   }
 
@@ -4370,7 +4557,7 @@
     const clearCacheBtn = document.createElement("button");
     clearCacheBtn.type = "button";
     clearCacheBtn.className = "wm-bsp-dump-clear-cache";
-    clearCacheBtn.textContent = `Vider le cache (~${totalCacheSizeKb} Ko)`;
+    clearCacheBtn.textContent = `Vider le cache de WMB (~${totalCacheSizeKb} Ko)`;
     actionsRow.appendChild(clearCacheBtn);
 
     clearCacheBtn.addEventListener("click", () => {
@@ -5185,10 +5372,6 @@
       label:
         "Total des estimations des cartes reçues dans le détail d'un échange (/trades)",
     },
-    {
-      id: "rule-45",
-      label: "Réduire la marge sous le bloc du haut de la barre de navigation",
-    },
   ];
 
   function readFeatureFlags() {
@@ -5218,7 +5401,7 @@
   // "wm-config" (a JSON object, id -> chosen option) and saved as soon as one is picked — no reload needed, since
   // whatever reads them does so when it acts. A stored value that is no longer one of the entry's options falls back
   // to its default. The entries are laid out in a 2-column grid (1 column on narrow screens). The first entry is Feature DAD's default auction duration; the second is the age after which
-  // Feature WAT's watched auctions are removed automatically; the third is the size of the "Top" lists (Rule 35, Feature BBS); the fourth is the estimate under which a card shows "💩" (Feature ETS); the fifth is how many sale prices Feature BSP keeps per card; the sixth is how many of the cheapest of them average into the reference price (never more than the fifth); the seventh is the pack pile size from which Feature PNP notifies (50, 70, 90 by default, 100 %); the eighth is the time left (5, 10, 15 by default, 30 s) from which Rule 32's countdown glows red; the ninth is the number of attempts per card (1, 3 by default, 5) before Feature EBC skips a card that gets no estimate; the tenth is how long Feature EBC waits for a card's estimate, on the first attempt / on the retries (4 s / 10 s, 8 s / 20 s by default, 15 s / 40 s); the eleventh is the marketplace tab Rule 9 opens on arrival (Parcourir, Mes enchères by default, Historique, Gagnées, Aucun).
+  // Feature WAT's watched auctions are removed automatically; the third is the size of the "Top" lists (Rule 35, Feature BBS); the fourth is the estimate under which a card shows "💩" (Feature ETS); the fifth is how many sale prices Feature BSP keeps per card; the sixth is how many of the cheapest of them average into the reference price (never more than the fifth); the seventh is the pack pile size from which Feature PNP notifies (50, 70, 90 by default, 100 %); the eighth is the time left (5, 10, 15 by default, 30 s) from which Rule 32's countdown glows red; the ninth is the number of attempts per card (1, 3 by default, 5) before Feature EBC skips a card that gets no estimate; the tenth is how long Feature EBC waits for a card's estimate, on the first attempt / on the retries (4 s / 10 s, 8 s / 20 s by default, 15 s / 40 s); the eleventh is the marketplace tab Rule 9 opens on arrival (Parcourir, Mes enchères by default, Historique, Gagnées, Aucun); the twelfth is the opacity (0 to 80 %, 20 by default) Rule 40 leaves to the dimmed cards.
   // ============================================================
   const CONFIG_KEY = "wm-config";
 
@@ -5236,6 +5419,7 @@
   const EVAL_MAX_ATTEMPTS_CONFIG_ID = "eval-max-attempts";
   const EVAL_TIMEOUTS_CONFIG_ID = "eval-timeouts";
   const DEFAULT_MARKETPLACE_TAB_CONFIG_ID = "default-marketplace-tab";
+  const DIM_UP_OPACITY_CONFIG_ID = "dim-up-opacity";
   // The marketplace tabs the script knows the site uses (Rule 9, Feature MPA, Feature BBS)
   const DEFAULT_MARKETPLACE_TAB_LABELS = [
     "Parcourir",
@@ -5326,6 +5510,17 @@
         Aucun: null,
       },
       hint: "Onglet sélectionné automatiquement à l'arrivée sur /marketplace",
+    },
+    {
+      id: DIM_UP_OPACITY_CONFIG_ID,
+      group: "auctions",
+      type: "range",
+      label: "Opacité des cartes estompées (%)",
+      min: 0,
+      max: 80,
+      step: 5,
+      defaultValue: "20",
+      hint: "Opacité restante des cartes à flèche ▲ quand « ▲ Estomper » est activé sur le marché (0 : invisibles)",
     },
     {
       id: TOP_LIMIT_CONFIG_ID,
@@ -6082,7 +6277,11 @@
   // natural ones instead of letting it jump. Skipped when the user prefers reduced motion or the size is unchanged.
   const MODAL_RESIZE_MS = 250;
 
+  // A resize still running (typing in a search restarts it on every keystroke) is superseded: its cleanup is cancelled
+  const modalResizeTimers = new WeakMap();
+
   function animateModalResize(modal, apply) {
+    clearTimeout(modalResizeTimers.get(modal));
     const from = modal.getBoundingClientRect();
     modal.style.transition = "none";
     modal.style.width = "";
@@ -6111,11 +6310,14 @@
     modal.style.width = `${to.width}px`;
     modal.style.height = `${to.height}px`;
 
-    setTimeout(() => {
-      ["transition", "width", "height", "boxSizing", "overflow"].forEach(
-        (prop) => (modal.style[prop] = ""),
-      );
-    }, MODAL_RESIZE_MS + 30);
+    modalResizeTimers.set(
+      modal,
+      setTimeout(() => {
+        ["transition", "width", "height", "boxSizing", "overflow"].forEach(
+          (prop) => (modal.style[prop] = ""),
+        );
+      }, MODAL_RESIZE_MS + 30),
+    );
     logger(
       CPL.LOG,
       `Settings modal resized ${Math.round(from.width)}x${Math.round(from.height)} -> ${Math.round(to.width)}x${Math.round(to.height)}`,
@@ -6165,16 +6367,25 @@
 
     const checkboxes = [];
 
+    // While the search filters the list, "Tout sélectionner" only acts on the features still shown
+    const shownCheckboxes = () =>
+      checkboxes.filter(
+        (checkbox) => !checkbox.closest(".wm-settings-item").hidden,
+      );
+
     const updateSelectAllLabel = () => {
-      const allChecked = checkboxes.every((checkbox) => checkbox.checked);
+      const allChecked = shownCheckboxes().every(
+        (checkbox) => checkbox.checked,
+      );
       selectAllBtn.textContent = allChecked
         ? "Tout désélectionner"
         : "Tout sélectionner";
     };
 
     selectAllBtn.addEventListener("click", () => {
-      const next = !checkboxes.every((checkbox) => checkbox.checked);
-      checkboxes.forEach((checkbox) => {
+      const targets = shownCheckboxes();
+      const next = !targets.every((checkbox) => checkbox.checked);
+      targets.forEach((checkbox) => {
         checkbox.checked = next;
         flags[checkbox.dataset.wmFeatureId] = next;
       });
@@ -6215,6 +6426,34 @@
 
     updateSelectAllLabel();
 
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "wm-settings-search";
+    search.placeholder = "Rechercher une fonctionnalité...";
+    search.setAttribute("aria-label", "Rechercher une fonctionnalité");
+
+    const noResult = document.createElement("p");
+    noResult.className = "wm-settings-hint";
+    noResult.textContent =
+      "Aucune fonctionnalité ne correspond à cette recherche.";
+    noResult.hidden = true;
+
+    // Accents and case are ignored, and both the identifier and the label are searched
+    search.addEventListener("input", () => {
+      const query = foldAccents(search.value.trim());
+      let shown = 0;
+      animateModalResize(modal, () => {
+        list.querySelectorAll(".wm-settings-item").forEach((item) => {
+          const match = !query || foldAccents(item.textContent).includes(query);
+          item.hidden = !match;
+          if (match) shown++;
+        });
+        noResult.hidden = shown > 0;
+        updateSelectAllLabel();
+      });
+      logger(CPL.LOG, `Feature search "${query}": ${shown} result(s)`);
+    });
+
     const footer = document.createElement("div");
     footer.className = "wm-settings-footer";
 
@@ -6231,7 +6470,7 @@
 
     const featuresPanel = document.createElement("div");
     featuresPanel.className = "wm-settings-panel";
-    featuresPanel.append(hintRow, list, footer);
+    featuresPanel.append(hintRow, search, list, noResult, footer);
 
     featuresPanel.hidden = true;
 
@@ -6348,6 +6587,8 @@
         display: flex;
         flex-direction: row;
         gap: 0.5rem;
+        margin-top: auto;
+        padding-top: 0.5rem;
         margin-bottom: 0.5rem;
       }
       .wm-toggle-row > .wm-fold-toggle {
@@ -6444,6 +6685,20 @@
         gap: 0.75rem 0.5rem;
         overflow-y: auto;
         padding-right: 0.25rem;
+      }
+      .wm-settings-search {
+        display: block;
+        margin: 0 auto 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--color-border);
+        width: max(20rem, 50%);
+        padding: 0.5rem 0.75rem;
+        background: transparent;
+        color: inherit;
+        font-size: 0.875rem;
+      }
+      .wm-settings-item[hidden] {
+        display: none;
       }
       .wm-settings-item {
         display: flex;
@@ -6917,11 +7172,11 @@
     },
     {
       title: "Cacher les cartes qui ne vous intéressent pas",
-      text: "Sur le marché, onglet « Parcourir », le bouton « Cacher indésirables » masque les cartes qui ne sont pas dans votre liste de souhaits. Pour cela, le script doit d'abord connaître votre liste : ouvrez « Toutes les cartes », activez « Liste de souhaits » et laissez-le faire quelques secondes, il feuillette les pages tout seul. Re-cliquez sur le bouton pour tout ré-afficher ; le choix est mémorisé.",
+      text: "Sur le marché, dans l'onglet « Parcourir », le bouton « Cacher indésirables » masque les cartes qui ne sont pas dans votre liste de souhaits. Pour cela, le script doit d'abord connaître votre liste : ouvrez « Toutes les cartes », activez « Liste de souhaits » et déclenchez le feuilletage.",
     },
     {
       title: "Estomper les cartes trop chères",
-      text: "Sur le marché, onglet « Parcourir », le bouton « ▲ Estomper » (à droite des boutons de rareté) rend plus pâles les cartes à flèche ▲, c'est-à-dire celles dont le prix n'est pas une bonne affaire. Re-cliquez pour les voir normalement ; le choix est mémorisé.",
+      text: "Sur le marché, dans l'onglet « Parcourir », le bouton « ▲ Estomper » ternit les cartes à flèche ▲, c'est-à-dire celles dont le prix n'est pas une bonne affaire.",
     },
     {
       title: "Le prix estimé d'une carte",
@@ -6947,25 +7202,25 @@
     },
     {
       title: "Être prévenu sur votre ordinateur",
-      text: "Si vous acceptez les notifications du navigateur, le script vous prévient quand vous avez beaucoup de paquets à ouvrir, et juste avant la fin d'une de vos enchères.",
+      text: "Si vous acceptez les notifications du navigateur, le script vous prévient quand vous avez beaucoup de paquets à ouvrir, et juste avant la fin d'une enchère ouverte dans un onglet.",
     },
     {
       title: "Suivre un joueur",
       cache: true,
-      text: "Sur le profil d'un joueur, le bouton « Suivre » (un œil), à côté de « Signaler », le met dans vos joueurs suivis : l'œil devient rouge, et un petit œil rouge apparaît à côté de son pseudo sur les pages d'enchère.",
+      text: "Sur le profil d'un joueur, le bouton « Suivre » fait apparaître un petit œil rouge à côté de son pseudo sur les pages d'enchère.",
     },
     {
       title: "Retrouver les cartes sans estimation",
-      text: "Option éteinte au départ (à allumer dans ⚙️) : pendant une estimation en masse, une carte dont le prix reste inconnu (« ? ») reçoit l'étiquette « TBD » (ou une autre de vos étiquettes, au choix dans les réglages), pour la retrouver facilement. Vous pouvez aussi demander une étiquette selon le prix : par exemple, toutes les cartes estimées entre 500 et 1 000 reçoivent l'étiquette de votre choix.",
+      text: "(Désactivée par défaut, voir dans ⚙️) : pendant une estimation en masse, une carte dont le prix reste inconnu (« ? ») reçoit l'étiquette « TBD » (ou une autre de vos étiquettes), pour la retrouver facilement. Vous pouvez aussi assigner une étiquette à un prix donné ; par exemple, toutes les cartes estimées entre 500 et 1 000 reçoivent l'étiquette \"$$$\".",
     },
     {
       title: "Choisir les cartes sans étiquette",
-      text: "Dans votre collection, un bouton choisit d'un clic toutes les cartes qui n'ont pas encore d'étiquette.",
+      text: "Dans votre collection, lors d'une sélection en masse, un bouton permet de sélectionner toutes les cartes qui n'ont pas encore d'étiquette.",
     },
     {
       title: "Noter un mot sur un joueur",
       cache: true,
-      text: "Sur le profil d'un autre joueur, le bouton « Description » permet d'écrire une courte note (128 caractères maximum). Entrée l'enregistre, et une note vide l'efface. Elle s'affiche à côté de son pseudo, et vous seul la voyez.",
+      text: "Sur le profil d'un autre joueur, le bouton « Description » permet d'écrire une courte note (128 caractères maximum). Elle s'affiche à côté de son pseudo, et vous seul.e la voyez. Entrez une note vide pour l'effacer.",
     },
     {
       title: "Aller sur le profil d'un ami",
@@ -6973,11 +7228,11 @@
     },
     {
       title: "Adapter le script à vos habitudes",
-      text: "Dans ⚙️, l'onglet « Config » réunit des réglages qui se choisissent d'un clic et s'appliquent tout de suite : durée d'enchère proposée par défaut, onglet du marché ouvert à l'arrivée, taille des classements, moments où vous êtes prévenu, etc. Au départ, rien ne change par rapport à avant.",
+      text: "Dans ⚙️, l'onglet « Configuration » réunit les réglages qui se configurent à la volée : durée d'enchère proposée par défaut, onglet du marché ouvert à l'arrivée, taille des classements, moments où vous êtes prévenu, etc. Vos choix sont sauvegardés instantanément.",
     },
     {
-      title: "Le bouton ⚙️ (réglages)",
-      text: "Il sert à activer/désactiver chaque fonctionnalité du script. Rechargez la page après un changement pour qu'il soit pris en compte.",
+      title: "Désactiver ou activer des fonctionnalités",
+      text: "Dans ⚙️, l'onglet « Fonctionnalités » sert à activer/désactiver chaque fonctionnalité du script. Rechargez la page après un changement pour qu'il soit pris en compte.",
     },
     {
       title: "Le menu à gauche",
@@ -7217,7 +7472,7 @@
   // (div.card-frame.shadow-xl.overflow-hidden) rewrites whichever of these three notification types it matches:
   //   - the fixed phrase "Votre carte vous est rendue." — with no name in it, that phrase is only how this
   //     notification type is identified. The card name isn't in that <p>: it's found by scanning the enclosing
-  //     notification item (button.w-full.items-start)'s whole text content for a quoted segment (straight quotes or
+  //     notification item (NOTIFICATION_ITEM_SELECTOR)'s whole text content for a quoted segment (straight quotes or
   //     « » guillemets). Rewritten to "Personne n'a enchéri pour votre carte « {name} »", tinted light orange
   //   - an outbid refund notification, "{username} a misé {bid} wikibidous sur « {card} ». Vos {refund}
   //     wikibidous vous ont été remboursés.", rewritten to "Enchère pour « {card} » : {bid} > {refund}.
@@ -7241,7 +7496,7 @@
   function rewriteReturnedCardParagraph(p) {
     if (!p.textContent.trim().endsWith(RETURNED_CARD_PHRASE)) return false;
 
-    const item = p.closest("button.w-full.items-start");
+    const item = p.closest(NOTIFICATION_ITEM_SELECTOR);
     const match = item?.textContent.match(QUOTED_TEXT_REGEX);
     if (!match) return false;
 
@@ -7373,7 +7628,7 @@
   // fallback, a <p> reading exactly "Liste de souhaits"). Both the original and Rule 19-rewritten phrasing are
   // checked since this can run before or after Rule 19 processes the same item.
   //
-  // Rule 31 (cont'd): clicking a button shows only notification items (button.w-full.items-start) of that type
+  // Rule 31 (cont'd): clicking a button shows only notification items (NOTIFICATION_ITEM_SELECTOR: a or button) of that type
   // and hides the rest (display: none); clicking the already-active button clears the filter and shows everything
   // again. Only one button can be active at a time — activating one deactivates whichever was active before. The
   // active filter (or its absence) is remembered in localStorage and reapplied automatically, including to
@@ -7434,7 +7689,7 @@
 
     const activeType = getNotificationFilter();
 
-    container.querySelectorAll("button.w-full.items-start").forEach((item) => {
+    container.querySelectorAll(NOTIFICATION_ITEM_SELECTOR).forEach((item) => {
       item.style.display =
         !activeType || getNotificationItemType(item) === activeType
           ? ""
@@ -7835,9 +8090,8 @@
   }
 
   // ============================================================
-  // Rule 26: on /trades, once the "Historique" tab (identified by which tab button currently carries the active
-  // class, button.border-\[var\(--color-accent\)\]) is selected and its list (div.space-y-3.animate-fade-in-up)
-  // has loaded (i.e. has at least one child), rearrange it into two flexible columns — not a strict grid (equal
+  // Rule 26: on /trades, on any of its tabs ("Reçues", "Envoyées", "Historique": see hotfix 4), once the list
+  // (div.space-y-3.animate-fade-in-up) holds trades and has loaded (i.e. has at least one child), rearrange it into two flexible columns — not a strict grid (equal
   // row heights) nor CSS multi-column (which would fill the whole first column before spilling into the second,
   // i.e. items 1-N/2 then N/2+1-N). Instead, items are read in their original top-to-bottom order and each one
   // is placed into whichever column is currently shorter, so the reading order still goes roughly left-to-right,
@@ -7869,9 +8123,27 @@
   // ever lays out children whose "display" isn't "none" — a hidden item keeps whatever stale position it had, which
   // is harmless since it isn't shown anyway.
   // ============================================================
+  // Rule 26 (hotfix 5): the list is pseudo-virtualized, like the notifications: only the first
+  // TRADES_PAGE_SIZE trades are shown (list.dataset.wmTradesLimit), TRADES_PAGE_SIZE more each time the list's bottom
+  // comes within TRADES_LOAD_MORE_MARGIN_PX of the viewport's (see loadMoreTrades), so a long history doesn't have to be
+  // measured and laid out at once. The trades past the limit are hidden by a class (the display of the filter, Rule 27,
+  // is its own business): the limit counts the trades the filter lets through. A change of the list's trades, or of
+  // the filter, starts over from the first page.
+  const TRADES_PAGE_SIZE = 20;
+  const TRADES_LOAD_MORE_MARGIN_PX = 300;
+
+  function getTradesLimit(list) {
+    return Number(list.dataset.wmTradesLimit) || TRADES_PAGE_SIZE;
+  }
+
   function layoutTradesHistoryColumns(list) {
-    const items = Array.from(list.children).filter(
-      (item) => item.style.display !== "none",
+    const children = Array.from(list.children);
+    children.forEach((item) => item.classList.add("wm-trades-history-item"));
+    const unfiltered = children.filter((item) => item.style.display !== "none");
+    const limit = getTradesLimit(list);
+    const items = unfiltered.slice(0, limit);
+    unfiltered.forEach((item, i) =>
+      item.classList.toggle("wm-trades-history-more", i >= limit),
     );
     const gap = 12;
     const columnWidth = (list.clientWidth - gap) / 2;
@@ -7881,7 +8153,6 @@
     // full width under-counts how tall it actually ends up once placed in a column — the next item placed below it
     // then overlaps it instead of being pushed down.
     items.forEach((item) => {
-      item.classList.add("wm-trades-history-item");
       item.style.width = `${columnWidth}px`;
     });
 
@@ -7899,23 +8170,88 @@
     list.style.height = `${Math.max(columnHeights[0], columnHeights[1]) - gap}px`;
   }
 
+  // Rule 26 (hotfix 4): the layout applies to every tab of /trades ("Reçues", "Envoyées" and "Historique"), as soon as
+  // its list holds trades (div.card-frame.p-4). The active tab is no longer consulted: the tab buttons' classes switch
+  // before the list's content does, so a tab check could pass on the wrong list. The site reuses the same list
+  // element from one tab to the next, so what was laid out is undone when the list stops holding trades (the "no
+  // offer" card of an empty tab, which must stay full width), along with Rule 27's filter input, and the layout is
+  // redone when a tab swaps in other trades: it is told by a signature of the list (its length and its text's).
+  function resetTradesHistoryColumns(list) {
+    list.classList.remove("wm-trades-history-grid");
+    list.style.height = "";
+    delete list.dataset.wmTradesSignature;
+    delete list.dataset.wmTradesLimit;
+    Array.from(list.children).forEach((item) => {
+      item.classList.remove("wm-trades-history-item", "wm-trades-history-more");
+      ["width", "left", "top"].forEach((prop) => (item.style[prop] = ""));
+    });
+    const filter = list.previousElementSibling;
+    if (filter?.classList.contains("wm-trades-history-filter")) {
+      filter.remove();
+    }
+  }
+
   function updateTradesHistoryGrid() {
     if (!window.location.pathname.startsWith("/trades")) return;
 
     const list = document.querySelector("div.space-y-3.animate-fade-in-up");
     if (!list || list.children.length === 0) return;
 
-    const alreadyLaidOut = Array.from(list.children).every((item) =>
-      item.classList.contains("wm-trades-history-item"),
+    const holdsTrades = Array.from(list.children).every((item) =>
+      item.classList.contains("p-4"),
     );
+    if (!holdsTrades) {
+      if (list.classList.contains("wm-trades-history-grid")) {
+        resetTradesHistoryColumns(list);
+        logger(CPL.LOG, "Trades layout reset: the list holds no trades");
+      }
+      return;
+    }
+
+    const signature = `${list.children.length}|${list.textContent.length}`;
+    const alreadyLaidOut =
+      list.dataset.wmTradesSignature === signature &&
+      Array.from(list.children).every((item) =>
+        item.classList.contains("wm-trades-history-item"),
+      );
     if (alreadyLaidOut) return;
 
-    const activeTab = document.querySelector(
-      "button.border-\\[var\\(--color-accent\\)\\]",
-    );
-    if (activeTab?.textContent.trim() !== "Historique") return;
-
+    delete list.dataset.wmTradesLimit;
     layoutTradesHistoryColumns(list);
+    list.dataset.wmTradesSignature = signature;
+    logger(
+      CPL.LOG,
+      `Trades laid out in two columns: ${Math.min(list.children.length, TRADES_PAGE_SIZE)}/${list.children.length} shown`,
+    );
+    loadMoreTrades();
+  }
+
+  // Shows the next page of trades while the list's bottom is near the viewport's: called on scroll and after a layout
+  // (the first page may not fill the screen)
+  function loadMoreTrades() {
+    if (!window.location.pathname.startsWith("/trades")) return;
+
+    const list = document.querySelector("div.wm-trades-history-grid");
+    if (!list) return;
+
+    const total = Array.from(list.children).filter(
+      (item) => item.style.display !== "none",
+    ).length;
+    let limit = getTradesLimit(list);
+    let loaded = false;
+    while (
+      limit < total &&
+      list.getBoundingClientRect().bottom <=
+        window.innerHeight + TRADES_LOAD_MORE_MARGIN_PX
+    ) {
+      limit += TRADES_PAGE_SIZE;
+      list.dataset.wmTradesLimit = String(limit);
+      layoutTradesHistoryColumns(list);
+      loaded = true;
+    }
+    if (loaded) {
+      logger(CPL.LOG, `Trades shown: ${Math.min(limit, total)}/${total}`);
+    }
   }
 
   function watchTradesHistoryGrid() {
@@ -7926,9 +8262,27 @@
       .wm-trades-history-item {
         position: absolute;
       }
+      .wm-trades-history-more {
+        display: none !important;
+      }
     `);
 
     updateTradesHistoryGrid();
+
+    // Capture: the page's scroller isn't known, and scroll events don't bubble
+    let scrollQueued = false;
+    document.addEventListener(
+      "scroll",
+      () => {
+        if (scrollQueued) return;
+        scrollQueued = true;
+        requestAnimationFrame(() => {
+          scrollQueued = false;
+          loadMoreTrades();
+        });
+      },
+      true,
+    );
 
     const observer = new MutationObserver(() => updateTradesHistoryGrid());
     observer.observe(document.body, {
@@ -7941,7 +8295,7 @@
 
   // ============================================================
   // Rule 27: on /trades, once Rule 26's div.wm-trades-history-grid exists, insert a text input right before it
-  // to filter the "Historique" list by trading partner. Each trade instance (div.card-frame.p-4) carries its
+  // to filter the "Historique" list by trading partner (or by card, see below). Each trade instance (div.card-frame.p-4) carries its
   // partner's name in span.text-sm, prefixed with "De " (they initiated it) or "À " (you did) — stripped before
   // matching. Items whose partner name doesn't contain the (case-insensitive) filter text are hidden via
   // "display: none"; an empty filter shows everything again. Rule 26's own column layout is then re-run so the
@@ -7961,17 +8315,30 @@
       .trim();
   }
 
+  // Rule 27 (cont'd): the filter matches either the partner's name or the name of a card present in the trade (the
+  // title of each card's chip, which holds the full name where the chip's text is truncated); case and accents are
+  // ignored
+  function getTradeCardNames(item) {
+    return Array.from(item.querySelectorAll("span[title]")).map(
+      (chip) => chip.title,
+    );
+  }
+
   function filterTradesHistoryByPartner(grid, query) {
-    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedQuery = foldAccents(query.trim());
 
     grid.querySelectorAll(".card-frame.p-4").forEach((item) => {
       const partnerName = getTradePartnerName(item) ?? "";
       const matches =
-        !normalizedQuery || partnerName.toLowerCase().includes(normalizedQuery);
+        !normalizedQuery ||
+        [partnerName, ...getTradeCardNames(item)].some((name) =>
+          foldAccents(name).includes(normalizedQuery),
+        );
       item.style.display = matches ? "" : "none";
     });
 
     layoutTradesHistoryColumns(grid);
+    loadMoreTrades();
   }
 
   function insertTradesHistoryFilterInput(grid) {
@@ -7986,9 +8353,11 @@
     const input = document.createElement("input");
     input.type = "text";
     input.className = "wm-trades-history-filter";
-    input.placeholder = "Filtrer par nom d'utilisateur...";
+    input.placeholder = "Filtrer par utilisateur ou par carte...";
 
     input.addEventListener("input", () => {
+      // A new filter starts over from the first page of trades (Rule 26's pseudo-virtualization)
+      delete grid.dataset.wmTradesLimit;
       filterTradesHistoryByPartner(grid, input.value);
     });
 
@@ -8030,28 +8399,27 @@
 
   // ============================================================
   // Feature EBC: on /collection, add three buttons as the last children of div.flex-wrap.gap-2 (rarity filter
-  // buttons): "Ré-estimer la page" (re-evaluates every card), "Estimer les cartes non évaluées" (only cards
+  // buttons): "Ré-estimation" (re-evaluates every card), "Estimer les inconnues" (only cards
   // whose rarity tag doesn't yet carry an ETS appendix, or carries the "?" unknown marker — hidden outright once
-  // that count reaches 0 on the current page), and "Ordonner la page par prix" (reorders the grid by
-  // each card's raw eval value, unknowns last). The two evaluation
-  // buttons show a fixed "Arrêter la reconnaissance" button and, for each targeted card, click its
-  // .wm-quick-action button, wait for Feature ETS to record a fresh value under its "eval-{name}" localStorage
-  // key, then press Escape to close the modal before moving to the next card. The stop button cancels the run
-  // after the current card; the two evaluation buttons disable each other while either is running. Whenever a
-  // native rarity filter button (button.px-3.py-1.transition-colors) shows up after "Ré-estimer la page" —
-  // e.g. a new rarity tier's filter button getting appended past our own controls — it's moved back in front of
-  // it, keeping the site's own filter buttons grouped together ahead of ours.
+  // that count reaches 0 on the current page), and "Ordonner par prix" (reorders the grid by each card's raw eval
+  // value, unknowns last; each click flips between descending and ascending, starting with descending). The two evaluation buttons show a fixed "Arrêter la reconnaissance" button and, for each
+  // targeted card, click its .wm-quick-action button, wait for Feature ETS to record a fresh value under its
+  // "eval-{name}" localStorage key, then press Escape to close the modal before moving to the next card. The stop
+  // button cancels the run after the current card; the two evaluation buttons disable each other while either is
+  // running. Whenever a native rarity filter button (button.px-3.py-1.transition-colors) shows up after
+  // "Ré-estimation" — e.g. a new rarity tier's filter button getting appended past our own controls — it's moved back
+  // in front of it, keeping the site's own filter buttons grouped together ahead of ours.
   //
-  // Feature EBC (cont'd): the action buttons (the three above and the "Estimation complète" one below) are wrapped in a
+  // Feature EBC (cont'd): the action buttons (the three above and the "Estimer tout" one below) are wrapped in a
   // dock, a div (wm-eval-dock) pushed to the end of that row with an auto left margin, as Rule 40's switch is on
-  // /marketplace; the native filter buttons are kept ahead of the dock instead of ahead of "Ré-estimer la page".
+  // /marketplace; the native filter buttons are kept ahead of the dock instead of ahead of "Ré-estimation".
   //
   // Feature EBC (cont'd): cards marked as favorite (they contain a button.text-amber-200) are skipped by every bulk
   // evaluation, and left out of the counts and durations shown: such a card has no "Mettre aux enchères" button, so
-  // its estimate can't be reached. More generally, a card that can't be put up for sale (no sell button in its modal, no
-  // card image to click, e.g. already on auction or in a trade) is skipped as soon as the quick action says so, and a
-  // card still without an estimate after the configured number of attempts (Feature CFG, default 3) is skipped too, with a warning each time and the
-  // skipped names listed when the run ends.
+  // its estimate can't be reached. More generally, a card that can't be put up for sale (no sell button in its modal,
+  // no card image to click, e.g. already on auction or in a trade) is skipped as soon as the quick action says so, and
+  // a card still without an estimate after the configured number of attempts (Feature CFG, default 3) is skipped too,
+  // with a warning each time and the skipped names listed when the run ends.
   //
   // Feature EBC (cont'd): both evaluation buttons, and the "Estimation en masse" one below, only run reliably
   // while their tab is the active one and the window isn't minimized — their polling (waitForCardEvaluation's
@@ -8160,11 +8528,13 @@
 
     const label =
       cards === null
-        ? "Estimer les cartes non évaluées (chargement...)"
-        : `Estimer les cartes non évaluées (${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__BEST)} – ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__WORST)} s)`;
+        ? "Estimer les inconnues (chargement...)"
+        : `Estimer les inconnues (${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__BEST)} – ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__WORST)} s)`;
 
     if (btn.textContent === label) return;
     btn.textContent = label;
+    btn.title =
+      "Estimer les cartes de la pages n'ayant pas d'estimation de prix sur le marché (prend du temps quand le site est saturé)";
   }
 
   // Feature TBD (cont'd of EBC, off by default): once a batch evaluation has ended on "?" for a card, the market
@@ -8515,7 +8885,7 @@
   // ============================================================
   // Feature EBC (cont'd): a fourth button, "Estimation en masse" (styled red, unlike its other three siblings
   // which just inherit the site's own filter-button look) — walks every page of the collection in turn, running
-  // the same "evaluate unrated cards" pass as the "Estimer les cartes non évaluées" button on each one. A single
+  // the same "evaluate unrated cards" pass as the "Estimer les inconnues" button on each one. A single
   // stop button/state is shared across the whole run (evaluateCollectionCards's sharedState parameter, above)
   // rather than spawning a new one per page. Between pages, the pagination control's second child button
   // (div.gap-2.py-3 — the first is "previous page") is clicked once it stops being disabled: it can briefly stay
@@ -8621,9 +8991,10 @@
     return getCardEvalValueByName(cardName);
   }
 
-  function sortCollectionByPriceDescending() {
+  // Sorts the page's cards by eval value, unknowns always last; returns false when there is no grid
+  function sortCollectionByPrice(descending) {
     const grid = document.querySelector("div.gap-3.justify-center");
-    if (!grid) return;
+    if (!grid) return false;
 
     const sorted = Array.from(grid.children)
       .map((card, index) => ({ card, index, value: getCardEvalValue(card) }))
@@ -8631,11 +9002,12 @@
         if (a.value === null && b.value === null) return a.index - b.index;
         if (a.value === null) return 1;
         if (b.value === null) return -1;
-        return b.value - a.value;
+        return descending ? b.value - a.value : a.value - b.value;
       })
       .map((entry) => entry.card);
 
     grid.append(...sorted);
+    return true;
   }
 
   // Reads the number of pages left to go off the pagination indicator's whole text ("Page 1 / 92" -> 92 - 1 = 91);
@@ -8660,9 +9032,11 @@
     const pagesLeft = getCollectionPagesLeft();
     const label =
       pagesLeft === null
-        ? "Estimation complète 🗃️"
-        : `Estimation complète 🗃️ (>${pagesLeft} min)`;
+        ? "Estimer tout 🗃️"
+        : `Estimer tout 🗃️ (>${pagesLeft} min)`;
     if (btn.textContent !== label) btn.textContent = label;
+    btn.title =
+      "Lancer une estimation de toutes les pages de cette collection (prend du temps quand le site est saturé)";
   }
 
   function insertEvaluateUnratedButton() {
@@ -8686,7 +9060,9 @@
       reevaluateBtn.className = baseClass
         ? `${baseClass} wm-eval-reevaluate-all`
         : "wm-eval-reevaluate-all";
-      reevaluateBtn.textContent = "Ré-estimer la page";
+      reevaluateBtn.textContent = "Ré-estimation";
+      reevaluateBtn.title =
+        "Ré-estimation de toutes les cartes de la page, même celles déjà évaluées";
 
       unratedBtn = document.createElement("button");
       unratedBtn.type = "button";
@@ -8699,7 +9075,9 @@
       sortBtn.className = baseClass
         ? `${baseClass} wm-eval-sort`
         : "wm-eval-sort";
-      sortBtn.textContent = "Ordonner la page par prix";
+      sortBtn.textContent = "Ordonner par prix";
+      sortBtn.title =
+        "Ordonner les cartes de cette page par prix décroissant/croissant";
 
       const massBtn = document.createElement("button");
       massBtn.type = "button";
@@ -8726,8 +9104,16 @@
         });
       });
 
+      // Each click flips the direction: descending first, then ascending, and so on
+      let sortDescending = true;
       sortBtn.addEventListener("click", () => {
-        sortCollectionByPriceDescending();
+        if (!sortCollectionByPrice(sortDescending)) return;
+        logger(
+          CPL.LOG,
+          `Collection sorted by price, ${sortDescending ? "descending" : "ascending"}`,
+        );
+        sortBtn.textContent = `Ordonner par prix ${sortDescending ? "▼" : "▲"}`;
+        sortDescending = !sortDescending;
       });
 
       massBtn.addEventListener("click", () => {
@@ -10181,10 +10567,17 @@
         opacity: 1;
         background: rgba(255, 215, 0, 0.1);
       }
+      .wm-top-evals-modal .wm-settings-header {
+        justify-content: flex-start;
+      }
       .wm-top-evals-loading {
         margin-left: 0.75rem;
         font-size: 0.75rem;
         opacity: 0.6;
+      }
+      /* Without a sort button, the close button is what pushes itself to the far end (with one, the sort button does) */
+      .wm-top-evals-loading + .wm-settings-close {
+        margin-left: auto;
       }
       .wm-top-evals-overlay {
         animation: wm-top-evals-fade-in 0.5s ease-out;
@@ -10267,7 +10660,7 @@
         animation: wm-top-eval-glow 3s ease-in-out infinite;
       }
       .wm-top-evals-max .wm-top-evals-clear {
-        margin-left: 0.25rem;
+        margin-left: 0.5rem;
       }
       .wm-top-evals-max .wm-top-evals-name,
       .wm-top-evals-max .wm-top-evals-value {
@@ -10915,6 +11308,11 @@
   // p.truncate). It is a span.wm-user-desc inserted as a sibling of the name element (the site's framework owns the
   // name's content); the name's parent becomes a wrapping flex row (wm-user-desc-host) so both sit on one line,
   // wrapping the description below the name when it doesn't fit.
+  //
+  // Feature UDS (cont'd): the same goes, on any page, for the header of the messaging panel (div.card-frame.
+  // animate-fade-in-up > div > a[href^="/profile/"] > span.truncate, the conversation partner). There the link is
+  // already a single flex row (avatar, name), so it is left as is and the description, truncated with an ellipsis,
+  // just follows the name.
   // ============================================================
   const USER_DESC_KEY_PREFIX = "desc-";
   const USER_DESC_MAX_LENGTH = 128;
@@ -10951,7 +11349,7 @@
     }
   }
 
-  function syncUserDescription(nameEl, username) {
+  function syncUserDescription(nameEl, username, { wrap = true } = {}) {
     const host = nameEl.parentElement;
     if (!host || !username) return;
 
@@ -10964,7 +11362,7 @@
       return;
     }
 
-    host.classList.add("wm-user-desc-host");
+    if (wrap) host.classList.add("wm-user-desc-host");
     if (existing) {
       if (existing.textContent !== text) existing.textContent = text;
       existing.title = text;
@@ -10972,7 +11370,7 @@
     }
 
     const span = document.createElement("span");
-    span.className = "wm-user-desc";
+    span.className = wrap ? "wm-user-desc" : "wm-user-desc wm-user-desc-inline";
     span.textContent = text;
     span.title = text;
     nameEl.after(span);
@@ -10980,6 +11378,16 @@
 
   function updateUserDescriptions() {
     const path = window.location.pathname;
+
+    document
+      .querySelectorAll(
+        'div.card-frame.animate-fade-in-up > div > a[href^="/profile/"] > span.truncate',
+      )
+      .forEach((nameEl) => {
+        const href = nameEl.closest("a").getAttribute("href");
+        const username = decodeURIComponent(href.slice("/profile/".length));
+        syncUserDescription(nameEl, username, { wrap: false });
+      });
 
     if (path.startsWith("/profile/")) {
       const username = getViewedProfileUsername();
@@ -11163,6 +11571,13 @@
         opacity: 0.5;
         overflow-wrap: anywhere;
       }
+      .wm-user-desc-inline {
+        min-width: 0;
+        flex-shrink: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .wm-user-desc-modal {
         width: min(28rem, 90vw);
       }
@@ -11266,14 +11681,18 @@
   // removed from the array; any other entry of "wm-saved" is left alone.
   //
   // Feature WAT (cont'd): on the marketplace's list page, every card (div[id^="marketplace-auction-"], whose id ends
-  // with the auction's UUID) also gets a small pin button docked at its top right corner (button.wm-card-pin)
+  // with the auction's UUID) also gets a small pin button docked on the top right corner of that wrapper (button.wm-card-pin), straddling its edge so it stays off the card's artwork
   // that watches / un-watches that auction the same way, without opening the card (its click is stopped before it
-  // reaches the card). The pin is filled while the auction is watched.
+  // reaches the card). The pin is filled while the auction is watched. It is not shown on the "Gagnées" and "Historique" tabs, which only
+  // list auctions that are over.
   //
   // Feature WAT (cont'd): visiting a watched auction that is over un-watches it automatically. "Over" is: the page has
   // finished loading (no div.animate-spin, h1.flex-1 and span.text-2xl present, and the DOM has been quiet for a
   // second, so a page still hydrating isn't mistaken for an ended auction) and the "time left" span
   // (span.tabular-nums.font-medium, same as Feature PNB's) is absent.
+  //
+  // Feature WAT (cont'd): once an auction is certified over (same checks as above, watched or not), its "Surveiller"
+  // button is disabled (tooltip "Enchère terminée : rien à surveiller"); if the countdown shows up again, it is enabled back.
   //
   // Feature WAT (cont'd): the entry's epoch is the auction's END, not the moment it was watched: "watched-{auction
   // id}-{end epoch in ms}-{card name}" (the end is estimated as now + the countdown, "Se termine dans 1h 44m"; "???"
@@ -11483,12 +11902,21 @@
     return true;
   }
 
+  // Auctions of the current session certified over by unwatchAuctionIfOver's checks (page loaded, DOM quiet, no
+  // countdown): their "Surveiller" button is disabled
+  const wmOverAuctionIds = new Set();
+
   function setWatchButtonState(btn, watched) {
     btn.setAttribute("aria-pressed", String(watched));
     btn.textContent = watched ? "📌 Surveillée" : "📌 Surveiller";
     btn.title = watched
       ? "Ne plus surveiller cette enchère"
       : "Surveiller cette enchère";
+
+    // Nothing to watch once over; a watched one that is over still can be un-watched
+    const over = !watched && wmOverAuctionIds.has(btn.dataset.wmWatchId);
+    btn.disabled = over;
+    if (over) btn.title = "Enchère terminée : rien à surveiller";
   }
 
   function ensureWatchButton() {
@@ -11508,7 +11936,9 @@
     const isWatched = readWatchedAuctions().some((w) => w.id === id);
 
     if (btn) {
-      if (btn.getAttribute("aria-pressed") !== String(isWatched))
+      const overChanged =
+        btn.disabled !== (!isWatched && wmOverAuctionIds.has(id));
+      if (btn.getAttribute("aria-pressed") !== String(isWatched) || overChanged)
         setWatchButtonState(btn, isWatched);
       return;
     }
@@ -11698,12 +12128,26 @@
       : "Surveiller cette enchère";
   }
 
+  // The "Gagnées" and "Historique" tabs only list auctions that are over: nothing left to watch there
+  const WATCH_OVER_TAB_LABELS = ["Gagnées", "Historique"];
+
+  function isOverAuctionsTabActive() {
+    return Array.from(
+      document.querySelectorAll("div.overflow-x-auto button"),
+    ).some(
+      (btn) =>
+        WATCH_OVER_TAB_LABELS.some((label) =>
+          btn.textContent.trim().startsWith(label),
+        ) && btn.classList.contains("border-b-2"),
+    );
+  }
+
   function ensureCardPins() {
     const pins = document.querySelectorAll(".wm-card-pin");
     const isListPage =
       window.location.pathname.startsWith("/marketplace") &&
       !MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname);
-    if (!isListPage) {
+    if (!isListPage || isOverAuctionsTabActive()) {
       pins.forEach((pin) => pin.remove());
       return;
     }
@@ -11764,18 +12208,28 @@
     if (!match) return;
 
     const id = match[1];
-    if (!readWatchedAuctions().some((w) => w.id === id)) return;
 
     // Still loading: the countdown isn't there yet either
     if (document.querySelector("div.animate-spin")) return;
     if (!document.querySelector("h1.flex-1")) return;
     if (!document.querySelector("span.text-2xl")) return;
 
-    if (document.querySelector("span.tabular-nums.font-medium")) return;
+    // Running: a button disabled by an earlier check (e.g. an extension of the auction) is enabled back
+    if (document.querySelector("span.tabular-nums.font-medium")) {
+      if (wmOverAuctionIds.delete(id)) ensureWatchButton();
+      return;
+    }
 
-    logger(CPL.INFO, `Watched auction is over, un-watching it (${id})`);
-    if (toggleWatchedAuction(id, getBidPageCardName()) === false)
-      ensureWatchButton();
+    if (!wmOverAuctionIds.has(id)) {
+      wmOverAuctionIds.add(id);
+      logger(CPL.INFO, `Auction is over, watch button disabled (${id})`);
+    }
+
+    if (readWatchedAuctions().some((w) => w.id === id)) {
+      logger(CPL.INFO, `Watched auction is over, un-watching it (${id})`);
+      toggleWatchedAuction(id, getBidPageCardName());
+    }
+    ensureWatchButton();
   }
 
   function scheduleUnwatchAuctionIfOver() {
@@ -11913,13 +12367,18 @@
       .wm-watch-list-btn:hover {
         background: #ffffff3f;
       }
+      .wm-watch-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+        background: #ffffff0f;
+      }
       .wm-watch-btn[aria-pressed="true"] {
         color: var(--color-accent);
       }
       .wm-card-pin {
         position: absolute;
-        top: 0.5rem;
-        right: 0.5rem;
+        top: -0.5rem;
+        right: -0.5rem;
         z-index: 30;
         display: flex;
         align-items: center;
@@ -12100,14 +12559,25 @@
   // of that row with an auto left margin, so it stays docked at its right whatever the number of filter buttons. It
   // is also kept as the row's last child: the "Réinitialiser" button the site appends once a filter is picked is moved
   // back in front of it (see keepDimUpDockLast). While it is on, the cards whose price arrow points
-  // up (▲, Feature MPA: the price is at or above the reference, i.e. not a bargain) are dimmed to 50% opacity. MPA
+  // up (▲, Feature MPA: the price is at or above the reference, i.e. not a bargain) are dimmed (to the opacity of the "Opacité des cartes estompées" setting of Feature CFG, 20 % by default). MPA
   // flags such cards with data-wm-mpa-up; the dimming itself is driven by a body attribute
   // (data-wm-dim-up, only set while the switch is on AND "Parcourir" is the active tab), so flipping the switch or
   // changing tab needs no re-scan. The state is persisted in localStorage under "wm-dim-up-cards". The switch is
   // removed from the page when leaving the tab.
   // ============================================================
   const DIM_UP_CARDS_KEY = "wm-dim-up-cards";
-  const DIM_UP_CARDS_OPACITY = 0.2;
+  // The opacity (in %) the dimmed cards are left with: the "Opacité des cartes estompées" setting of Feature CFG.
+  // The stylesheet reads it from a CSS variable on <body>, refreshed on every pass (a change needs no reload)
+  function applyDimUpCardsOpacity() {
+    const percent = getConfigValue(DIM_UP_OPACITY_CONFIG_ID);
+    document.body.style.setProperty(
+      "--wm-dim-up-opacity",
+      String(percent / 100),
+    );
+    const title = `Estomper à ${percent} % les cartes dont la flèche pointe vers le haut`;
+    const btn = document.querySelector(".wm-dim-up-switch");
+    if (btn && btn.title !== title) btn.title = title;
+  }
 
   function readDimUpCardsState() {
     try {
@@ -12171,6 +12641,7 @@
     const onParcourir =
       window.location.pathname.startsWith("/marketplace") &&
       isParcourirTabActive();
+    applyDimUpCardsOpacity();
     syncDimUpCardsAttribute(readDimUpCardsState());
 
     if (!onParcourir) {
@@ -12192,7 +12663,6 @@
     btn.type = "button";
     btn.className = `${referenceBtn.className} wm-dim-up-switch`;
     btn.textContent = "▲ Estomper";
-    btn.title = `Estomper à ${Math.round(DIM_UP_CARDS_OPACITY * 100)} % les cartes dont la flèche pointe vers le haut`;
     btn.setAttribute("role", "switch");
 
     const sync = () => {
@@ -12218,6 +12688,7 @@
     dock.appendChild(btn);
     row.appendChild(dock);
     keepDimUpDockLast(row, dock);
+    applyDimUpCardsOpacity();
   }
 
   function watchDimUpCardsSwitch() {
@@ -12239,10 +12710,10 @@
         background-color: rgba(251, 191, 36, 0.2);
       }
       div[id^="marketplace-auction-"] {
-        transition: opacity 0.2s ease;
+        transition: opacity 0.1s ease;
       }
       body[data-wm-dim-up] div[id^="marketplace-auction-"][data-wm-mpa-up="true"] {
-        opacity: ${DIM_UP_CARDS_OPACITY};
+        opacity: var(--wm-dim-up-opacity, 0.2);
       }
     `);
 
@@ -12802,18 +13273,6 @@
   }
 
   // ============================================================
-  // Rule 45 (started on every path, see startNavbarButtons): nav div.mb-8 gets a margin-bottom of 0.25rem (the site's own is 2rem), tightening the sidebar
-  // ============================================================
-  function applyNavBlockSpacing() {
-    addStyle(`
-      nav div.mb-8 {
-        margin-bottom: 0.5rem !important;
-      }
-    `);
-    logger(CPL.LOG, "Navigation block spacing applied");
-  }
-
-  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -12909,7 +13368,7 @@
     logger(CPL.LOG, "Initialization complete");
   }
 
-  // The navbar buttons (pin, settings, tutorials) and Rule 45's navbar spacing are the only things started on an
+  // The navbar buttons (pin, settings, tutorials) are the only things started on an
   // excluded path, and are exempt from the exclusion: the navbar has to look the same everywhere
   function startNavbarButtons() {
     exemptFromExclusion = true;
@@ -12919,9 +13378,6 @@
       }
       watchFeatureConfigButton();
       watchTutorialButton();
-      if (readFeatureFlags()["rule-45"]) {
-        trackFeature("rule-45", applyNavBlockSpacing, "start")();
-      }
     } finally {
       exemptFromExclusion = false;
     }

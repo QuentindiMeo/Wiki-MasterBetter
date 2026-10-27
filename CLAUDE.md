@@ -3,6 +3,7 @@
 ### Development
 
 When features are edited, soldered or added, always add the logger calls relevant to its processes.
+When using the chrome-attach feature, immediately update the Tampermonkey script you're using in the browser once the feature is ready/edited; then test your implementation against the initial request.
 
 ### Docs
 

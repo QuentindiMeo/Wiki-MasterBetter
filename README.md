@@ -28,7 +28,7 @@
 
 ## 📝 Description
 
-Un script local Tampermonkey qui ajoute une couche d'ajustements de confort, de raccourcis et de petites automatisations sur [wiki-masters.com](https://www.wiki-masters.com) — navbar repliable, notifications plus intelligentes, pulls pilotables au clavier, suivi des prix du marché, et bien plus.
+Un script local Tampermonkey qui ajoute une couche d'ajustements de confort, de raccourcis et de petites automatisations sur [wiki-masters.com](https://www.wiki-masters.com) — navbar compacte ou dépliée, notifications plus intelligentes, pulls pilotables au clavier, suivi des prix du marché, et bien plus.
 
 ## 🚀 Installation
 
@@ -50,10 +50,11 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 ### 🔔 Barre de navigation & Notifications
 
-- **Barre de navigation repliable** : Se replie en icônes par défaut, se déplie en douceur au survol — ou épinglez-la grâce au bouton en haut de la barre
+- **Barre de navigation repliable** : Compacte par défaut (seulement des icônes) et statique, elle ne réagit pas au survol : le bouton 📌 en bas de la barre la déplie ou la recompacte, et votre choix est retenu ; compacte, au survol, chaque lien affiche son nom dans une infobulle stylisée à droite de la barre
+- **Indicateur de fonctionnement** : Une mention « ✓ WMB v{version} » sous le logo du site confirme que le script tourne, et indique sa version
 - **Panneau de configuration** : Un bouton à roue crantée, à côté de celui d'épinglage, ouvre une modale à deux onglets ; les choix sont sauvegardés dans votre cache de navigateur dès que vous les faites, sans recharger la page
   - **« Configuration »** : des réglages rangés par thème, chacun expliqué dans une infobulle
-    - **Enchères & marché** : durée d'enchère par défaut, délai de suppression automatique des enchères surveillées, onglet du marché ouvert à l'arrivée
+    - **Enchères & marché** : durée d'enchère par défaut, délai de suppression automatique des enchères surveillées, onglet du marché ouvert à l'arrivée, opacité des cartes estompées par « ▲ Estomper »
     - **Prix de vente observés** : nombre de prix gardés par carte et nombre de prix retenus pour la moyenne de référence
     - **Estimations & classements** : taille des classements « Top », seuil sous lequel une estimation s'affiche en "💩"
     - **Estimation en masse** : étiquette « TBD » (au choix parmi vos étiquettes), plages de valeur qui étiquettent automatiquement les cartes selon leur estimation, nombre d'essais par carte et délais d'attente de l'estimation
@@ -77,9 +78,10 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
 - **Estimations mémorisées** : Les estimations du marché dans la modale de vente sont mémorisées et affichées à côté de la rareté dans votre collection ("💩" sous un seuil réglable)
 - **Évaluation en masse** : Deux boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation, réévaluer toute la page ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours ; les cartes marquées comme favorites, ou qui ne peuvent pas être mises aux enchères (déjà en vente, en échange…), sont ignorées, tout comme une carte qui n'obtient toujours pas d'estimation après le nombre d'essais choisi (3 par défaut, réglable dans la configuration), pour ne pas bloquer toute l'évaluation
-- **Estimation en masse sur une collection** : Le bouton rouge « Estimation complète » répète l'évaluation des cartes sans estimation sur chaque page de la collection, en changeant de page automatiquement ; son libellé indique une durée minimale en minutes, d'après le nombre de pages restantes
+- **Estimation en masse sur une collection** : Le bouton rouge « Estimer tout » répète l'évaluation des cartes sans estimation sur chaque page de la collection, en changeant de page automatiquement
   - ⚠️ Pour ces deux évaluations en masse, gardez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan, le navigateur ralentit les temporisations dont elles dépendent, ce qui les rend peu fiables
-- **Tri par prix décroissant** : Un bouton permet de trier les cartes de la page par prix décroissant, pour repérer rapidement les plus chères
+  - ⚠️ À cause de la façon dont les serveurs de WM fonctionnent, il est possible que cette estimation soit interrompue par une erreur serveur disant qu'il n'a trouvé aucune carte ou que l'affichage a pris trop de temps — c'est de la faute du site, on n'y peut rien.
+- **Tri par prix** : Un bouton permet de trier les cartes de la page par prix croissant ou décroissant
 - **Top de vos plus grosses cartes** : Un bouton « Top 40 » (réglable) à droite du titre ouvre en fondu une modale listant les plus grosses estimations mémorisées en trois colonnes ; un ✕ supprime une estimation du cache
 - **Étiquetage pendant l'estimation en masse (désactivé par défaut)** : Les évaluations en masse étiquettent les cartes sans valeur déclarée sur le marché — à condition qu'elles n'aient encore aucune étiquette —, parfaitement configurable depuis les paramètres
 - **Halo sur les cartes sans estimation** : Un interrupteur « Sans estimation » entoure d'un halo rouge clair les cartes de la page sans estimation (un « ? » compte comme une estimation)
@@ -93,8 +95,8 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 ### 🔄 Échanges
 
-- **Historique en deux colonnes** : L'onglet « Historique » s'affiche en deux colonnes flexibles qui s'adaptent à la hauteur de chaque échange, plutôt qu'une seule liste
-- **Filtrer par partenaire** : Un champ de recherche au-dessus de l'historique filtre les échanges par nom de partenaire
+- **Échanges en deux colonnes** : Les onglets « Reçues », « Envoyées » et « Historique » s'affichent en deux colonnes plutôt qu'une seule liste, dès l'ouverture de l'onglet
+- **Filtrer par utilisateur ou par carte** : Un champ de recherche au-dessus de l'historique filtre les échanges par nom de utilisateur ou par nom de carte présente dans l'échange
 - **Total des estimations** : Dans le détail d'un échange, un total vert « (total X) » s'ajoute après « En échange de », somme des estimations mémorisées des cartes reçues
 
 ### 💰 Marché & Enchères
@@ -111,7 +113,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Un indice de fiabilité accompagne le tag
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
 - **Enchères surveillées** : Gardez des enchères de côté pour les retrouver depuis le marché
-  - Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle en haut à droite de chaque carte de `/marketplace`) la surveille
+  - Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle posée sur le coin supérieur droit de chaque carte sur `/marketplace`) la surveille ; le bouton est désactivé une fois l'enchère terminée
   - Un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, celles en cours d'abord ; un bouton « Ouvrir les enchères terminées » ouvre d'un coup toutes celles qui sont finies
   - Nettoyage automatique : une enchère terminée est retirée de la liste quand vous la visitez, et celles terminées depuis longtemps (réglable) sont retirées à chaque visite de votre profil
 - **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère, en comparant le prix affiché — majoré de 10 % (le coût d'une nouvelle enchère) uniquement sur les cartes où vous êtes « Surenchéri » — : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
@@ -126,7 +128,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 👤 Profil & Amis
 
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits
-- **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche à côté de leur pseudo sur leur profil et sur la page des amis, et sous leur pseudo dans la liste des joueurs suivis
+- **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche ensuite à côté de leur pseudo
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 - **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre
 - **Mes plus grosses ventes et achats** : Vos 100 plus grosses ventes et vos 100 plus gros achats sont mémorisés, et la modale en affiche 40 par défaut (réglable ; changer ce réglage ne supprime rien) (depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché) ; deux boutons sur votre profil les listent dans une modale, la première mise en avant par une lueur dorée, un ✕ retire une entrée du cache
