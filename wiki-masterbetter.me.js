@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.33
+// @version      0.30.38
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -5372,6 +5372,16 @@
       label:
         "Total des estimations des cartes reçues dans le détail d'un échange (/trades)",
     },
+    {
+      id: "rule-45",
+      label:
+        "Supprimer les marges des blocs à espacement vertical (/collection)",
+    },
+    {
+      id: "rule-46",
+      label:
+        "Revenir sur /pulls après avoir lancé une enchère depuis /pulls",
+    },
   ];
 
   function readFeatureFlags() {
@@ -7633,6 +7643,11 @@
   // again. Only one button can be active at a time — activating one deactivates whichever was active before. The
   // active filter (or its absence) is remembered in localStorage and reapplied automatically, including to
   // notifications that stream in afterward.
+  //
+  // Rule 31 (cont'd): when a filter is active, the list holds notifications, and none of them matches, a short
+  // message ("Aucune notification « {label} » pour le moment.") is shown right under the header instead of an
+  // empty panel. It is a single .wm-notification-filter-empty element, created once and only toggled afterwards;
+  // it stays hidden while no filter is active or while the list has no notification at all (still loading).
   // ============================================================
   const NOTIFICATION_FILTER_STORAGE_KEY = "wm-notification-filter";
   const NOTIFICATION_FILTER_TYPES = [
@@ -7689,12 +7704,45 @@
 
     const activeType = getNotificationFilter();
 
+    let total = 0;
+    let shown = 0;
     container.querySelectorAll(NOTIFICATION_ITEM_SELECTOR).forEach((item) => {
-      item.style.display =
-        !activeType || getNotificationItemType(item) === activeType
-          ? ""
-          : "none";
+      const matches = !activeType || getNotificationItemType(item) === activeType;
+      item.style.display = matches ? "" : "none";
+      total++;
+      if (matches) shown++;
     });
+
+    updateNotificationFilterEmptyMessage(
+      container,
+      activeType,
+      Boolean(activeType) && total > 0 && shown === 0,
+    );
+  }
+
+  function updateNotificationFilterEmptyMessage(container, activeType, visible) {
+    let message = container.querySelector(":scope > .wm-notification-filter-empty");
+    if (!message) {
+      const header = container.firstElementChild;
+      if (!header) return;
+      message = document.createElement("p");
+      message.className = "wm-notification-filter-empty";
+      message.hidden = true;
+      header.after(message);
+    }
+
+    if (visible) {
+      const label = NOTIFICATION_FILTER_TYPES.find(
+        ({ id }) => id === activeType,
+      )?.label;
+      const text = `Aucune notification « ${label} » pour le moment.`;
+      if (message.textContent !== text) message.textContent = text;
+    }
+    if (message.hidden === visible) {
+      message.hidden = !visible;
+      if (visible)
+        logger(CPL.LOG, `Notification filter "${activeType}": nothing matches`);
+    }
   }
 
   function setupNotificationFilterButtons() {
@@ -7767,6 +7815,15 @@
       .wm-notification-filter-btn[aria-pressed="true"] {
         background: var(--color-accent);
         opacity: 1;
+      }
+      .wm-notification-filter-empty {
+        padding: 1rem;
+        text-align: center;
+        font-size: 0.875rem;
+        opacity: 0.6;
+      }
+      .wm-notification-filter-empty[hidden] {
+        display: none;
       }
     `);
 
@@ -8769,6 +8826,14 @@
       `Evaluating ${cards.length} card(s), ${maxAttempts} attempt(s) per card, estimate wait ${timeouts.first} ms / ${timeouts.retry} ms (first attempt / retries)`,
     );
     const skipped = [];
+    const stats = {
+      targeted: cards.length,
+      evaluated: [],
+      unknown: [],
+      skipped,
+      retries: 0,
+      tagged: 0,
+    };
     for (let i = 0; i < cards.length; i++) {
       if (state.stopped) break;
 
@@ -8796,6 +8861,7 @@
       let skipReason = null;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (attempt > 1) {
+          stats.retries++;
           logger(
             CPL.WARN,
             `No estimate yet for "${cardName}" (attempt ${attempt - 1}/${maxAttempts}), reopening its modal`,
@@ -8837,12 +8903,22 @@
         localStorage.setItem(key, previousValue);
       }
 
+      if (recorded) {
+        const value = getCardEvalValueByName(cardName);
+        if (value === null) stats.unknown.push(cardName);
+        else stats.evaluated.push({ cardName, value });
+      }
+
       if (recorded && readFeatureFlags()["feature-tbd"]) {
         if (localStorage.getItem(key) === UNKNOWN_EVAL_VALUE) {
           await tagCardAsToBeDetermined();
+          stats.tagged++;
         } else {
           const value = getCardEvalValueByName(cardName);
-          if (value !== null) await tagCardForValueRanges(value);
+          if (value !== null) {
+            await tagCardForValueRanges(value);
+            stats.tagged++;
+          }
         }
       }
 
@@ -8859,6 +8935,7 @@
       skipped,
     );
     stopBtn?.remove();
+    return stats;
   }
 
   async function evaluateUnratedCollectionCards(button, otherButton) {
@@ -8936,13 +9013,30 @@
     const stopBtn = insertStopEvaluationButton(state);
 
     let page = 1;
+    const startedAt = Date.now();
+    const run = {
+      pages: [],
+      targeted: 0,
+      evaluated: [],
+      unknown: [],
+      skipped: [],
+      retries: 0,
+      tagged: 0,
+    };
     logger(CPL.INFO, "Full-collection evaluation started");
     while (!state.stopped) {
       button.textContent = `Estimation en masse... (page ${page})`;
       logger(CPL.LOG, `Full-collection evaluation: page ${page}`);
 
       const cards = getUnevaluatedCollectionCards() ?? [];
-      await evaluateCollectionCards(button, cards, state);
+      const stats = await evaluateCollectionCards(button, cards, state);
+      run.pages.push({ page, targeted: stats.targeted });
+      run.targeted += stats.targeted;
+      run.evaluated.push(...stats.evaluated);
+      run.unknown.push(...stats.unknown);
+      run.skipped.push(...stats.skipped);
+      run.retries += stats.retries;
+      run.tagged += stats.tagged;
       if (state.stopped) break;
 
       const nextBtn = getCollectionNextPageButton();
@@ -8971,6 +9065,149 @@
     otherButtons.forEach((btn) => {
       btn.disabled = false;
     });
+
+    showEvaluationStatsModal({
+      ...run,
+      stopped: state.stopped,
+      elapsedMs: Date.now() - startedAt,
+    });
+  }
+
+  // ============================================================
+  // Feature EBC (cont'd): once "Estimer tout" ends (completed or stopped), a modal sums up the run: how long it took,
+  // the pages walked, the cards targeted, estimated (with their total and average value and the priciest one),
+  // left unknown ("?"), skipped (names listed), retried attempts and, when Feature TBD is on,
+  // cards tagged. Closed by its cross, a click outside or Escape. The figures are gathered by evaluateCollectionCards.
+  // ============================================================
+  function formatDuration(ms) {
+    const totalSeconds = Math.round(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes > 0 ? `${minutes} min ${seconds} s` : `${seconds} s`;
+  }
+
+  function buildEvaluationStatsRows(run) {
+    const total = run.evaluated.reduce((sum, { value }) => sum + value, 0);
+    const best = run.evaluated.reduce(
+      (top, entry) => (!top || entry.value > top.value ? entry : top),
+      null,
+    );
+    const format = (value) => value.toLocaleString("fr-FR");
+
+    const rows = [
+      ["Durée", formatDuration(run.elapsedMs)],
+      ["Pages parcourues", String(run.pages.length)],
+      ["Cartes à estimer", String(run.targeted)],
+      ["Cartes estimées", String(run.evaluated.length)],
+      ["Estimation inconnue (?)", String(run.unknown.length)],
+      ["Cartes ignorées", String(run.skipped.length)],
+      ["Réitérations", String(run.retries)],
+    ];
+    if (readFeatureFlags()["feature-tbd"]) {
+      rows.push(["Cartes étiquetées", String(run.tagged)]);
+    }
+    if (run.evaluated.length > 0) {
+      rows.push(
+        ["Valeur totale estimée", format(Math.round(total))],
+        ["Valeur moyenne", format(Math.round(total / run.evaluated.length))],
+        ["Plus grosse estimation", `${best.cardName} (${format(best.value)})`],
+      );
+    }
+    return rows;
+  }
+
+  function showEvaluationStatsModal(run) {
+    logger(
+      CPL.INFO,
+      `Evaluation stats: ${run.evaluated.length} estimated, ${run.unknown.length} unknown, ${run.skipped.length} skipped, ${run.pages.length} page(s), ${formatDuration(run.elapsedMs)}${run.stopped ? " (stopped)" : ""}`,
+    );
+    if (document.querySelector(".wm-ebc-stats-overlay")) return;
+
+    addStyle(`
+      .wm-ebc-stats-modal {
+        width: min(32rem, 90vw);
+        max-height: 85vh;
+        overflow-y: auto;
+      }
+      .wm-ebc-stats-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.25rem 0;
+        border-bottom: 1px solid var(--color-border);
+        font-size: 0.875rem;
+      }
+      .wm-ebc-stats-row > span:last-child {
+        font-weight: 600;
+        text-align: right;
+      }
+      .wm-ebc-stats-skipped {
+        margin: 0;
+        font-size: 0.8rem;
+        opacity: 0.8;
+      }
+    `);
+
+    const overlay = document.createElement("div");
+    overlay.className = "wm-settings-overlay wm-ebc-stats-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "wm-settings-modal wm-ebc-stats-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    const titleText = run.stopped
+      ? "Estimation interrompue : bilan"
+      : "Estimation terminée : bilan";
+    modal.setAttribute("aria-label", titleText);
+
+    const header = document.createElement("div");
+    header.className = "wm-settings-header";
+
+    const title = document.createElement("h2");
+    title.className = "wm-settings-title";
+    title.textContent = titleText;
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "wm-settings-close";
+    closeBtn.setAttribute("aria-label", "Fermer");
+    closeBtn.textContent = "✕";
+    header.append(title, closeBtn);
+    modal.appendChild(header);
+
+    buildEvaluationStatsRows(run).forEach(([label, value]) => {
+      const row = document.createElement("div");
+      row.className = "wm-ebc-stats-row";
+      const labelEl = document.createElement("span");
+      labelEl.textContent = label;
+      const valueEl = document.createElement("span");
+      valueEl.textContent = value;
+      row.append(labelEl, valueEl);
+      modal.appendChild(row);
+    });
+
+    if (run.skipped.length > 0) {
+      const skipped = document.createElement("p");
+      skipped.className = "wm-ebc-stats-skipped";
+      skipped.textContent = `Ignorées : ${run.skipped.join(", ")}`;
+      modal.appendChild(skipped);
+    }
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKeydown);
+    };
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", onKeydown);
   }
 
   // Reads a card's raw eval value straight from localStorage (not its
@@ -9572,8 +9809,82 @@
   // (span.min-w-0.truncate inside each tag's span.inline-flex, and the two non-tag entries' text) doesn't
   // carry the leading-none class, so it's missed by that broad rule — the same fix is applied to it directly,
   // as soon as the list itself enters the DOM.
+  //
+  // Rule 24 (cont'd): tag names and amounts are buffered in a GM_setValue cache ({ name: amount }), refreshed
+  // every time a tag's real count shows up. While a tag's count hasn't loaded yet, its cached amount is shown
+  // right away (as a data-wm-cached-count attribute rendered by a CSS ::after, so the site's own text node is
+  // never touched) and the list is pre-sorted from the cache; once the real counts arrive, the cached amounts
+  // vanish, the cache is updated and the list is sorted again from the true values.
   // ============================================================
   const TAG_COUNT_REGEX = /\((\d+)\)\s*$/;
+  const TAG_CACHE_KEY = "wm-tags-cache";
+  const TAG_NAME_SELECTOR = "span > span.inline-flex > span.min-w-0.truncate";
+
+  function readTagCache() {
+    const cache = GM_getValue(TAG_CACHE_KEY, {});
+    return cache && typeof cache === "object" ? cache : {};
+  }
+
+  function getTagEntries(ul) {
+    return Array.from(ul.children)
+      .map((item) => {
+        const nameEl = item.querySelector(TAG_NAME_SELECTOR);
+        if (!nameEl) return null;
+
+        const text = nameEl.textContent.trim();
+        const match = text.match(TAG_COUNT_REGEX);
+        return {
+          item,
+          nameEl,
+          name: match ? text.replace(TAG_COUNT_REGEX, "").trim() : text,
+          count: match ? parseInt(match[1], 10) : null,
+        };
+      })
+      .filter((entry) => entry !== null);
+  }
+
+  function applyTagCache(ul) {
+    const entries = getTagEntries(ul);
+    if (!entries.length) return;
+
+    const cache = readTagCache();
+    let cacheChanged = false;
+
+    entries.forEach((entry) => {
+      if (entry.count !== null) {
+        entry.nameEl.removeAttribute("data-wm-cached-count");
+        if (cache[entry.name] !== entry.count) {
+          cache[entry.name] = entry.count;
+          cacheChanged = true;
+        }
+      } else if (entry.name && cache[entry.name] !== undefined) {
+        entry.nameEl.setAttribute(
+          "data-wm-cached-count",
+          ` (${cache[entry.name]})`,
+        );
+      }
+    });
+
+    if (cacheChanged) {
+      GM_setValue(TAG_CACHE_KEY, cache);
+      logger(CPL.LOG, "Rule 24: tag cache updated", cache);
+    }
+
+    if (ul.dataset.wmTagsSorted === "true") return;
+    const pending = entries.filter((entry) => entry.count === null);
+    if (!pending.length || pending.some((e) => cache[e.name] === undefined))
+      return;
+
+    const amountOf = (entry) => entry.count ?? cache[entry.name];
+    const sorted = [...entries].sort((a, b) => amountOf(b) - amountOf(a));
+    if (sorted.every((entry, i) => entry === entries[i])) return;
+
+    logger(CPL.LOG, "Rule 24: tag list pre-sorted from cache");
+    const anchor = document.createComment("wm-tags-sort-anchor");
+    ul.insertBefore(anchor, entries[0].item);
+    sorted.forEach(({ item }) => ul.insertBefore(item, anchor));
+    anchor.remove();
+  }
 
   function fixTruncateLineHeight() {
     document.querySelectorAll("span.truncate.leading-none").forEach((el) => {
@@ -9600,6 +9911,7 @@
       return;
 
     ul.dataset.wmTagsSorted = "true";
+    logger(CPL.LOG, "Rule 24: tag list sorted from loaded counts");
 
     const anchor = document.createComment("wm-tags-sort-anchor");
     ul.insertBefore(anchor, tagEntries[0].item);
@@ -9619,6 +9931,7 @@
     document.querySelectorAll("ul.rounded-xl").forEach((el) => {
       el.style.width = "auto";
       el.style.maxHeight = "80vh";
+      applyTagCache(el);
       sortUserTagListByCount(el);
 
       el.querySelectorAll("span.truncate").forEach((textEl) => {
@@ -9628,6 +9941,12 @@
   }
 
   function watchUserTagListSizing() {
+    addStyle(`
+      [data-wm-cached-count]::after {
+        content: attr(data-wm-cached-count);
+        opacity: 0.6;
+      }
+    `);
     styleUserTagList();
 
     const observer = new MutationObserver(() => styleUserTagList());
@@ -12795,6 +13114,8 @@
   // CARD_TAG_CHIPS_SELECTOR). The button is marked (data-wm-tag-nav) while it holds the focus: once it is clicked
   // (mouse, Enter or Space), the focus moves to the previous tag's button, or back to the input when none is left.
   // Nothing is removed by Backspace itself, and a held key (repeat) is ignored.
+  // Rule 42 (cont'd): while a tag's button holds the focus, Left/Right move it to the previous/next tag's button
+  // (stopping at both ends), Home/End to the first/last one.
   // ============================================================
   const TAG_NAV_ATTRIBUTE = "data-wm-tag-nav";
 
@@ -12823,6 +13144,37 @@
     last.setAttribute(TAG_NAV_ATTRIBUTE, "");
     last.focus();
     logger(CPL.DEBUG, `Tag navigation: focus on last tag (${buttons.length})`);
+  }
+
+  function handleTagButtonArrows(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) return;
+    if (!target.hasAttribute(TAG_NAV_ATTRIBUTE)) return;
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+
+    const buttons = getTagRemoveButtons();
+    const index = buttons.indexOf(target);
+    if (index === -1) return;
+
+    const destinations = {
+      ArrowLeft: Math.max(index - 1, 0),
+      ArrowRight: Math.min(index + 1, buttons.length - 1),
+      Home: 0,
+      End: buttons.length - 1,
+    };
+    const next = destinations[event.key];
+    if (next === undefined) return;
+
+    event.preventDefault();
+    if (next === index) return;
+    buttons[next].setAttribute(TAG_NAV_ATTRIBUTE, "");
+    buttons[next].focus();
+    logger(
+      CPL.DEBUG,
+      `Tag navigation: ${event.key}, focus on tag ${next + 1}/${buttons.length}`,
+    );
   }
 
   async function handleTagRemoveClick(event) {
@@ -12857,6 +13209,7 @@
 
   function watchTagInputBackspace() {
     document.addEventListener("keydown", handleTagInputBackspace, true);
+    document.addEventListener("keydown", handleTagButtonArrows, true);
     document.addEventListener("click", handleTagRemoveClick, true);
     document.addEventListener(
       "focusout",
@@ -13273,6 +13626,113 @@
   }
 
   // ============================================================
+  // Rule 45: on /collection, the spacing of every div.space-y-3 is nullified: Tailwind's space-y-3 puts a margin
+  // between the div's children, so those margins are set to 0. The site changes page without reloading, so the
+  // stylesheet is keyed on a body attribute (data-wm-no-space) that follows the path.
+  // Rule 45 (cont'd): div.space-y-3.animate-fade-in-up becomes a flex column with a 0.5rem gap, which replaces the
+  // spacing it lost.
+  // ============================================================
+  const NO_SPACE_ATTRIBUTE = "data-wm-no-space";
+
+  function syncNoSpaceAttribute() {
+    const active = window.location.pathname.startsWith("/collection");
+    if (document.body.hasAttribute(NO_SPACE_ATTRIBUTE) === active) return;
+
+    document.body.toggleAttribute(NO_SPACE_ATTRIBUTE, active);
+    logger(
+      CPL.LOG,
+      `div.space-y-3 margins ${active ? "nullified" : "restored"} (${window.location.pathname})`,
+    );
+  }
+
+  function watchNoSpaceOnCollection() {
+    addStyle(`
+      body[${NO_SPACE_ATTRIBUTE}] div.space-y-3,
+      body[${NO_SPACE_ATTRIBUTE}] div.space-y-3 > * {
+        margin: 0 !important;
+      }
+      body[${NO_SPACE_ATTRIBUTE}] div.space-y-3.animate-fade-in-up {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+    `);
+    syncNoSpaceAttribute();
+
+    const observer = new MutationObserver(() => syncNoSpaceAttribute());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 46: when the user launches an auction from /pulls (a click on the sell modal's "Lancer l'enchère" button,
+  // which Feature LBD's Enter key also goes through) the site redirects to the new auction's page; this pulls them
+  // straight back to /pulls so they can keep opening their packs. The click only arms the rule (capture phase, so
+  // it is seen even if the site stops the event): within PULLS_RETURN_WINDOW_MS, the first time the path becomes
+  // /marketplace/{UUID}, history.back() is called (the redirect is a pushState, so the previous entry is /pulls);
+  // if the page is still not /pulls shortly after, it falls back to a regular navigation. Launching from anywhere
+  // else than /pulls is left alone.
+  // ============================================================
+  const PULLS_RETURN_WINDOW_MS = 15000;
+  const PULLS_RETURN_POLL_MS = 50;
+  const PULLS_RETURN_FALLBACK_MS = 600;
+  let pullsReturnTimer = null;
+
+  function disarmPullsReturn() {
+    if (pullsReturnTimer === null) return;
+    clearInterval(pullsReturnTimer);
+    pullsReturnTimer = null;
+  }
+
+  function armPullsReturn() {
+    disarmPullsReturn();
+    const armedAt = Date.now();
+    logger(CPL.INFO, "Rule 46: auction launched from /pulls, waiting for the redirect");
+
+    pullsReturnTimer = setInterval(() => {
+      if (Date.now() - armedAt > PULLS_RETURN_WINDOW_MS) {
+        logger(CPL.LOG, "Rule 46: no redirect seen, disarmed");
+        disarmPullsReturn();
+        return;
+      }
+      if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
+
+      disarmPullsReturn();
+      logger(
+        CPL.INFO,
+        `Rule 46: redirected to ${window.location.pathname}, going back to /pulls`,
+      );
+      window.history.back();
+      setTimeout(() => {
+        if (window.location.pathname.startsWith("/pulls")) return;
+        logger(CPL.WARN, "Rule 46: history.back() did not return to /pulls, navigating");
+        window.location.assign("/pulls");
+      }, PULLS_RETURN_FALLBACK_MS);
+    }, PULLS_RETURN_POLL_MS);
+  }
+
+  function watchAuctionLaunchReturnToPulls() {
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (!window.location.pathname.startsWith("/pulls")) return;
+
+        const button =
+          event.target instanceof Element ? event.target.closest("button") : null;
+        if (
+          !button ||
+          button.disabled ||
+          !button.closest("div.mt-6") ||
+          button.textContent.trim() !== "Lancer l'enchère"
+        )
+          return;
+
+        armPullsReturn();
+      },
+      true,
+    );
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -13363,6 +13823,8 @@
     run("rule-42", watchTagInputBackspace);
     run("rule-43", watchWishlistedCardsHiding);
     run("rule-44", watchTradeTotal);
+    run("rule-45", watchNoSpaceOnCollection);
+    run("rule-46", watchAuctionLaunchReturnToPulls);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");
