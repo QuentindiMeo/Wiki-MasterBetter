@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.38
+// @version      0.30.42
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2496,6 +2496,28 @@
   }
 
   // ============================================================
+  // Feature AKP (cont'd): once V has clicked the sell button, the price <input> of the sell modal ("Mise de départ", not the tag <input> of the card modal) is given the focus as
+  // soon as it is in the DOM (polled, since React renders it a moment after the click), so the price can be typed
+  // right away. Gives up after 2 s.
+  function focusPullsSalePriceInput() {
+    const start = Date.now();
+    const poll = () => {
+      // Not "input.px-3": the card modal's tag <input> matches it too, and comes first in the DOM
+      const input = document.querySelector('input[aria-label="Mise de départ"]');
+      if (input) {
+        input.focus();
+        logger(CPL.LOG, "AKP: price input focused after V");
+        return;
+      }
+      if (Date.now() - start >= 2000) {
+        logger(CPL.WARN, "AKP: price input not found after V");
+        return;
+      }
+      setTimeout(poll, 50);
+    };
+    poll();
+  }
+
   // Feature AKP: on /pulls, once div.gap-4:not(.flex-col) is in the DOM, pressing ArrowLeft/ArrowRight clicks its
   // first/second button; ArrowUp/ArrowDown do the same but 4 times in a row (each click re-reads the container/buttons,
   // waiting 50ms between clicks for React to re-render). Pressing Space, only while no modal (div.fixed.inset-0)
@@ -2550,6 +2572,7 @@
         if (isV) {
           setTimeout(() => {
             document.querySelector("button.py-2\\.5.font-semibold")?.click();
+            focusPullsSalePriceInput();
           }, 50); //? 50ms delay to let React re-render the button after the card image click
         }
         return;
@@ -4898,7 +4921,7 @@
   }
 
   // ============================================================
-  // Feature ETS (cont'd): on /collection (and in the trade detail modal of /trades), whenever the cards grid (div.gap-3.justify-center) changes, append each
+  // Feature ETS (cont'd): on /collection (and in the trade detail modal of /trades, and the trade preparation modal), whenever the cards grid (div.gap-3.justify-center) changes, append each
   // card's cached eval price (Feature ETS, keyed "eval-{name}") to its rarity tag (div.top-2.left-2), as
   // "{rarity} ({eval})". The eval value is reformatted first: below the configured threshold (the "Seuil « sans valeur » des estimations" setting of Feature CFG, 10 by
   // default), it's replaced outright with "💩"; above 1000, it's abbreviated to "{X,X} K" (French decimal comma); otherwise it's shown as stored, including the "?"
@@ -4926,20 +4949,26 @@
   }
 
   // Rule 44 (cont'd): the cards of the trade detail modal on /trades (div.max-w-4xl) get the same appendix
+  // Rule 44 (cont'd): so do the cards of the trade preparation modal (div.max-w-5xl, "Contre-offre avec …"), on any page
+  // it can be opened from
   function getRarityTaggedCards() {
     const path = window.location.pathname;
+    const cards = [];
+    const addModalCards = (modal) => {
+      if (!modal) return;
+      Array.from(modal.querySelectorAll("h3"))
+        .map((h3) => h3.closest("div.relative.rounded-2xl"))
+        .filter(Boolean)
+        .forEach((card) => cards.push(card));
+    };
     if (path.startsWith("/collection")) {
       const grid = document.querySelector("div.gap-3.justify-center");
-      return grid ? Array.from(grid.children) : [];
+      if (grid) cards.push(...Array.from(grid.children));
     }
-    if (path.startsWith("/trades")) {
-      const modal = document.querySelector("div.max-w-4xl");
-      if (!modal) return [];
-      return Array.from(modal.querySelectorAll("h3"))
-        .map((h3) => h3.closest("div.relative.rounded-2xl"))
-        .filter(Boolean);
-    }
-    return [];
+    if (path.startsWith("/trades"))
+      addModalCards(document.querySelector("div.max-w-4xl"));
+    addModalCards(document.querySelector("div.max-w-5xl.flex-col"));
+    return cards;
   }
 
   function appendEvalToRarityTags() {
@@ -5099,6 +5128,9 @@
     modal.dataset.wmInputFocused = "true";
 
     setTimeout(() => {
+      // The sell modal's price input may already have the focus (Feature AKP's V): it is not taken away
+      if (document.activeElement?.matches('input[aria-label="Mise de départ"]'))
+        return;
       modal.querySelector("input.px-3")?.focus();
     }, 250);
   }
@@ -5379,8 +5411,17 @@
     },
     {
       id: "rule-46",
+      label: "Revenir sur /pulls après avoir lancé une enchère depuis /pulls",
+    },
+    {
+      id: "rule-47",
       label:
-        "Revenir sur /pulls après avoir lancé une enchère depuis /pulls",
+        "Afficher l'ancienne estimation dans le coin du résumé de la fenêtre de mise aux enchères",
+    },
+    {
+      id: "rule-48",
+      label:
+        "Agrandir la photo de profil (/profile) avec une pastille pour la dimensionner sur la largeur ou la hauteur",
     },
   ];
 
@@ -7707,7 +7748,8 @@
     let total = 0;
     let shown = 0;
     container.querySelectorAll(NOTIFICATION_ITEM_SELECTOR).forEach((item) => {
-      const matches = !activeType || getNotificationItemType(item) === activeType;
+      const matches =
+        !activeType || getNotificationItemType(item) === activeType;
       item.style.display = matches ? "" : "none";
       total++;
       if (matches) shown++;
@@ -7720,8 +7762,14 @@
     );
   }
 
-  function updateNotificationFilterEmptyMessage(container, activeType, visible) {
-    let message = container.querySelector(":scope > .wm-notification-filter-empty");
+  function updateNotificationFilterEmptyMessage(
+    container,
+    activeType,
+    visible,
+  ) {
+    let message = container.querySelector(
+      ":scope > .wm-notification-filter-empty",
+    );
     if (!message) {
       const header = container.firstElementChild;
       if (!header) return;
@@ -8673,8 +8721,13 @@
       return;
     }
 
-    // Only untagged cards get the TBD tag: any active tag already there (that one included) means leaving the card alone
-    if (readActiveCardTags().length > 0) return;
+    // Only untagged cards get the TBD tag: any active tag already there (a value tag included) means leaving the card
+    // alone — a value tag is never removed to make room for TBD
+    if (readActiveCardTags().length > 0) {
+      logger(CPL.LOG, "TBD tagging: card already tagged, left alone");
+      await closeCardModalFrom(input);
+      return;
+    }
 
     const tagged = await addTagToCard(input, tbdTag, state);
     if (tagged) logger(CPL.LOG, `Card tagged "${tbdTag}"`);
@@ -13686,7 +13739,10 @@
   function armPullsReturn() {
     disarmPullsReturn();
     const armedAt = Date.now();
-    logger(CPL.INFO, "Rule 46: auction launched from /pulls, waiting for the redirect");
+    logger(
+      CPL.INFO,
+      "Rule 46: auction launched from /pulls, waiting for the redirect",
+    );
 
     pullsReturnTimer = setInterval(() => {
       if (Date.now() - armedAt > PULLS_RETURN_WINDOW_MS) {
@@ -13704,7 +13760,10 @@
       window.history.back();
       setTimeout(() => {
         if (window.location.pathname.startsWith("/pulls")) return;
-        logger(CPL.WARN, "Rule 46: history.back() did not return to /pulls, navigating");
+        logger(
+          CPL.WARN,
+          "Rule 46: history.back() did not return to /pulls, navigating",
+        );
         window.location.assign("/pulls");
       }, PULLS_RETURN_FALLBACK_MS);
     }, PULLS_RETURN_POLL_MS);
@@ -13717,7 +13776,9 @@
         if (!window.location.pathname.startsWith("/pulls")) return;
 
         const button =
-          event.target instanceof Element ? event.target.closest("button") : null;
+          event.target instanceof Element
+            ? event.target.closest("button")
+            : null;
         if (
           !button ||
           button.disabled ||
@@ -13730,6 +13791,166 @@
       },
       true,
     );
+  }
+
+  // ============================================================
+  // Rule 47: in the auction modal ("Mettre aux enchères", div.card-frame), when the card already has a saved estimate
+  // (Feature ETS, "eval-{name}", the "?" placeholder doesn't count), that previous estimate is shown in the top right
+  // corner of the card summary (div.mb-5), as "Ancienne estimation : {value}" (formatted like Feature ETS's tags). It
+  // is read the moment the modal shows its card, since Feature ETS overwrites the stored value 300 ms later with the
+  // "Moyenne" the modal displays; the badge (data-wm-old-eval) keeps that earlier value for as long as the modal
+  // stays open on that card.
+  // ============================================================
+  const OLD_EVAL_ATTRIBUTE = "data-wm-old-eval";
+
+  function updateAuctionModalOldEval() {
+    const modal = Array.from(
+      document.querySelectorAll("div.card-frame"),
+    ).find((m) => m.querySelector("h2")?.textContent.trim() === "Mettre aux enchères");
+    const summary = modal?.querySelector("div.mb-5");
+    const nameEl = summary?.querySelector("p.truncate");
+    if (!summary || !nameEl) return;
+
+    const cardName = Array.from(nameEl.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join("")
+      .trim();
+    if (!cardName) return;
+
+    let badge = summary.querySelector(`:scope > span[${OLD_EVAL_ATTRIBUTE}]`);
+    if (badge?.dataset.wmCard === cardName) return;
+    badge?.remove();
+
+    const oldEval = localStorage.getItem(`eval-${cardName}`);
+    if (!oldEval || oldEval === UNKNOWN_EVAL_VALUE) {
+      logger(CPL.LOG, `Old estimate: "${cardName}" has none to show`);
+      // Remembered even without a badge, so a later overwrite by Feature ETS doesn't pass for an "old" value
+      badge = document.createElement("span");
+      badge.setAttribute(OLD_EVAL_ATTRIBUTE, "");
+      badge.dataset.wmCard = cardName;
+      badge.hidden = true;
+      summary.appendChild(badge);
+      return;
+    }
+
+    summary.style.position = "relative";
+    badge = document.createElement("span");
+    badge.setAttribute(OLD_EVAL_ATTRIBUTE, "");
+    badge.dataset.wmCard = cardName;
+    badge.title = "Estimation enregistrée avant l'ouverture de cette fenêtre";
+    badge.style.cssText =
+      "position:absolute;top:0.35rem;right:0.6rem;font-size:0.65rem;opacity:0.6;";
+    badge.textContent = `Ancienne estimation : ${formatEvalValue(oldEval)}`;
+    summary.appendChild(badge);
+    logger(CPL.LOG, `Old estimate shown: "${cardName}" ${oldEval}`);
+  }
+
+  function watchAuctionModalOldEval() {
+    updateAuctionModalOldEval();
+
+    const observer = new MutationObserver(() => updateAuctionModalOldEval());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 48: on /profile, the profile picture (button[title="Modifier la photo de
+  // profil"]) is much bigger than the site's 3rem, and a small round pill toggle docked to its top border, centered,
+  // switches how it is sized: horizontal (↔, the default) makes it a square of 8vw, vertical (↕) a square of 8vh.
+  // The pill is a sibling of the picture (the picture's button clips its content and is itself clickable), placed
+  // in the same row, which is made relative. The mode is driven by a body attribute (data-wm-avatar-vertical) and
+  // persisted in localStorage under "wm-avatar-vertical".
+  // ============================================================
+  const AVATAR_VERTICAL_KEY = "wm-avatar-vertical";
+  const AVATAR_BUTTON_SELECTOR = 'button[title="Modifier la photo de profil"]';
+
+  function readAvatarVertical() {
+    try {
+      return localStorage.getItem(AVATAR_VERTICAL_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function insertAvatarSizeToggle() {
+    if (window.location.pathname !== "/profile") return;
+
+    const avatar = document.querySelector(AVATAR_BUTTON_SELECTOR);
+    const row = avatar?.parentElement;
+    if (!avatar || !row || row.querySelector(":scope > .wm-avatar-toggle"))
+      return;
+
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "wm-avatar-toggle";
+
+    const sync = () => {
+      const vertical = readAvatarVertical();
+      document.body.toggleAttribute("data-wm-avatar-vertical", vertical);
+      pill.textContent = vertical ? "↕" : "↔";
+      pill.title = vertical
+        ? "Photo dimensionnée sur la hauteur (8vh) : passer à la largeur"
+        : "Photo dimensionnée sur la largeur (8vw) : passer à la hauteur";
+    };
+    pill.addEventListener("click", () => {
+      try {
+        const next = !readAvatarVertical();
+        localStorage.setItem(AVATAR_VERTICAL_KEY, String(next));
+        logger(CPL.LOG, `Profile picture sized on ${next ? "height (8vh)" : "width (8vw)"}`);
+      } catch {
+        logger(CPL.ERROR, "Failed to save profile picture size mode");
+      }
+      sync();
+    });
+    sync();
+    row.appendChild(pill);
+  }
+
+  function watchAvatarSizeToggle() {
+    addStyle(`
+      ${AVATAR_BUTTON_SELECTOR} {
+        width: 8vw !important;
+        height: 8vw !important;
+      }
+      body[data-wm-avatar-vertical] ${AVATAR_BUTTON_SELECTOR} {
+        width: 8vh !important;
+        height: 8vh !important;
+      }
+      div:has(> ${AVATAR_BUTTON_SELECTOR}) {
+        position: relative;
+      }
+      .wm-avatar-toggle {
+        position: absolute;
+        top: 0;
+        left: 4vw;
+        transform: translate(-50%, -50%);
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.5rem;
+        height: 1.5rem;
+        padding: 0;
+        border-radius: 9999px;
+        border: 1px solid var(--color-border);
+        background: var(--color-surface);
+        color: var(--color-foreground);
+        font-size: 0.8rem;
+        line-height: 1;
+        cursor: pointer;
+        transition: border-color 0.2s ease;
+      }
+      .wm-avatar-toggle:hover {
+        border-color: var(--color-accent);
+      }
+      body[data-wm-avatar-vertical] .wm-avatar-toggle {
+        left: 4vh;
+      }
+    `);
+    insertAvatarSizeToggle();
+
+    const observer = new MutationObserver(() => insertAvatarSizeToggle());
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // ============================================================
@@ -13825,6 +14046,8 @@
     run("rule-44", watchTradeTotal);
     run("rule-45", watchNoSpaceOnCollection);
     run("rule-46", watchAuctionLaunchReturnToPulls);
+    run("rule-47", watchAuctionModalOldEval);
+    run("rule-48", watchAvatarSizeToggle);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");

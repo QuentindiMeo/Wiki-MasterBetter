@@ -70,6 +70,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🎁 Paquets
 
 - **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées (gauche-droite, haut-bas pour aller au début/à la fin), Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente, W ouvre la page Wikipédia de la carte
+- **Retour aux paquets après une enchère** : Lancer une enchère depuis `/pulls` vous ramène directement sur `/pulls` au lieu de vous laisser sur la page de l'enchère
 - **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent (réglable) ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut)
 
 ### 📦 Collection
@@ -89,6 +90,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Étiquettes au clavier** : Dans la modale d'une carte, Retour arrière dans le champ d'étiquette vide place le focus sur la croix de la dernière étiquette ; une fois celle-ci activée, le focus passe à l'étiquette précédente, puis revient au champ ; les flèches gauche et droite passent d'une croix à l'autre, Début et Fin vont à la première et à la dernière
 - **Collection plus compacte** : Sur `/collection`, les marges entre les blocs empilés (`space-y-3`) sont supprimées, et les listes animées sont remplacées par une colonne espacée de 0,5 rem
 - **Durée d'enchère par défaut** : À l'ouverture de la modale de vente d'une carte, le bouton de durée choisi dans le panneau de configuration est sélectionné automatiquement
+- **Ancienne estimation** : Dans la modale « Mettre aux enchères », si la carte avait déjà une estimation, elle s'affiche en haut à droite du résumé (« Ancienne estimation : X »), avant d'être remplacée par la nouvelle moyenne, pour voir comment l'estimation a évolué
 - **Copier le nom d'une carte** : Un bouton 📋 à côté du nom, dans la modale de carte comme dans la modale d'enchère
 - **Aller directement à une page** : Une fois le catalogue chargé, cliquer sur l'indicateur « Page X / Y » le remplace par un champ numérique ; Entrée mène à la page saisie en enchaînant les boutons précédent/suivant du site, Échap annule
 - **Effacer la recherche** : Un bouton ✕ dans le champ de recherche de la collection vide son contenu
@@ -98,7 +100,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Échanges en deux colonnes** : Les onglets « Reçues », « Envoyées » et « Historique » s'affichent en deux colonnes plutôt qu'une seule liste, dès l'ouverture de l'onglet
 - **Filtrer par utilisateur ou par carte** : Un champ de recherche au-dessus de l'historique filtre les échanges par nom de utilisateur ou par nom de carte présente dans l'échange
-- **Total des estimations** : Dans le détail d'un échange, un total vert « (total X) » s'ajoute après « En échange de », somme des estimations mémorisées des cartes reçues
+- **Total des estimations** : Dans le détail d'un échange, un total vert « (total X) » s'ajoute après « En échange de », somme des estimations mémorisées des cartes reçues ; les estimations s'affichent aussi à côté de la rareté des cartes dans la modale de préparation d'une contre-offre
 
 ### 💰 Marché & Enchères
 
@@ -130,6 +132,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits
 - **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche ensuite à côté de leur pseudo
+- **Photo de profil agrandie** : Sur votre profil, la photo est agrandie ; choisissez de la dimensionner selon la largeur ou la hauteur
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 - **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre
 - **Mes plus grosses ventes et achats** : Vos 100 plus grosses ventes et vos 100 plus gros achats sont mémorisés, et la modale en affiche 40 par défaut (réglable ; changer ce réglage ne supprime rien) (depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché) ; deux boutons sur votre profil les listent dans une modale, la première mise en avant par une lueur dorée, un ✕ retire une entrée du cache
