@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.44
+// @version      0.30.51
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2438,7 +2438,9 @@
     const start = Date.now();
     const poll = () => {
       // Not "input.px-3": the card modal's tag <input> matches it too, and comes first in the DOM
-      const input = document.querySelector('input[aria-label="Mise de départ"]');
+      const input = document.querySelector(
+        'input[aria-label="Mise de départ"]',
+      );
       if (input) {
         input.focus();
         logger(CPL.LOG, "AKP: price input focused after V");
@@ -2989,9 +2991,16 @@
     if (!tag) return;
 
     // Rule 49: an auction the user called an outlier is never recorded again
-    if (isOutlierBid(window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX)?.[1])) {
+    if (
+      isOutlierBid(
+        window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX)?.[1],
+      )
+    ) {
       soldSpan.dataset.wmPriceStored = "true";
-      logger(CPL.LOG, `Sale price skipped: "${cardName}" auction flagged as an outlier`);
+      logger(
+        CPL.LOG,
+        `Sale price skipped: "${cardName}" auction flagged as an outlier`,
+      );
       return;
     }
 
@@ -4477,11 +4486,51 @@
 
       const pricesListCell = document.createElement("span");
       pricesListCell.className = "wm-bsp-dump-prices-list";
-      pricesListCell.textContent = prices
-        .map((entry) => String(entry).split("-")[0])
-        .join(",");
-      pricesListCell.textContent = `(${pricesListCell.textContent})`;
       pricesCell.appendChild(pricesListCell);
+
+      // Rule 49 (cont'd): each tagged price is a button that flags its auction as an outlier (needs Rule 49 enabled)
+      const outlierEnabled = !!readFeatureFlags()["rule-49"];
+      const renderPrices = () => {
+        // Lowest first, then only the prices retained for the reference average ("Prix retenus pour la moyenne de
+        // référence"); "..." tells there are more
+        const sorted = [...prices].sort(
+          (x, y) => parseInt(x, 10) - parseInt(y, 10),
+        );
+        const retained = sorted.slice(0, getReferencePricesCount());
+        pricesListCell.replaceChildren("(");
+        retained.forEach((entry, index) => {
+          if (index > 0) pricesListCell.append(",");
+          const price = String(entry).split("-")[0];
+          const tag = typeof entry === "string" ? entry.split("-")[1] : null;
+          if (!outlierEnabled || !tag) {
+            pricesListCell.append(price);
+            return;
+          }
+          const priceBtn = document.createElement("button");
+          priceBtn.type = "button";
+          priceBtn.className = "wm-bsp-dump-price";
+          priceBtn.textContent = price;
+          priceBtn.title = "Considérer cette enchère comme absurde";
+          priceBtn.addEventListener("click", () => {
+            if (!removeOutlierBid(tag, cardName, tag)) return;
+            prices.splice(prices.indexOf(entry), 1);
+            const newAverage = computeWeightedAveragePrice(
+              prices.map((e) => parseInt(e, 10)),
+            );
+            averageCell.textContent =
+              newAverage !== null ? `Objectif : ${Math.round(newAverage)}` : "";
+            if (prices.length === 0) {
+              clearBtn.remove();
+              entryEl.classList.add("wm-bsp-dump-entry-cleared");
+            }
+            renderPrices();
+          });
+          pricesListCell.append(priceBtn);
+        });
+        if (retained.length < prices.length) pricesListCell.append(",...");
+        pricesListCell.append(")");
+      };
+      renderPrices();
 
       clearBtn.addEventListener("click", () => {
         logger(CPL.INFO, `Prices cleared: "${cardName}"`);
@@ -4764,6 +4813,18 @@
         width: max-content;
         font-weight: 600;
         font-size: 1em;
+      }
+      .wm-bsp-dump-price {
+        padding: 0;
+        border: none;
+        background: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      .wm-bsp-dump-price:hover {
+        color: #ef4444;
+        text-decoration: line-through;
       }
       .wm-bsp-dump-prices {
         display: flex;
@@ -5367,7 +5428,12 @@
     {
       id: "rule-49",
       label:
-        "Proposer de marquer une enchère terminée comme valeur aberrante pour la retirer des prix observés",
+        "Proposer de marquer une enchère terminée comme valeur absurde pour la retirer des prix observés",
+    },
+    {
+      id: "rule-50",
+      label:
+        "Proposer de vider les prix observés d'une carte une fois l'enchère remportée",
     },
   ];
 
@@ -11631,6 +11697,10 @@
   // animate-fade-in-up > div > a[href^="/profile/"] > span.truncate, the conversation partner). There the link is
   // already a single flex row (avatar, name), so it is left as is and the description, truncated with an ellipsis,
   // just follows the name.
+  //
+  // Feature UDS (cont'd): and for the friend picker of the new trade panel on /trades (the "Choisir un ami" modal):
+  // each friend's button (span.font-medium.flex-1 holding the name) gets the description, truncated, between the
+  // name and "Échanger →".
   // ============================================================
   const USER_DESC_KEY_PREFIX = "desc-";
   const USER_DESC_MAX_LENGTH = 128;
@@ -11713,6 +11783,25 @@
       if (username && nameEl && nameEl.textContent.trim() === username) {
         syncUserDescription(nameEl, username);
       }
+    }
+
+    // The friend picker of the new trade panel ("Choisir un ami", on /trades): each friend is a button whose
+    // span.font-medium.flex-1 holds the username
+    if (path.startsWith("/trades")) {
+      document.querySelectorAll("h2").forEach((title) => {
+        if (title.textContent.trim() !== "Choisir un ami") return;
+        title
+          .closest("div.flex-col")
+          ?.querySelectorAll("div.overflow-y-auto > button > span.font-medium")
+          .forEach((nameEl) => {
+            const username = nameEl.textContent.trim();
+            syncUserDescription(nameEl, username, { wrap: false });
+            nameEl.parentElement.classList.toggle(
+              "wm-user-desc-picker",
+              !!nameEl.parentElement.querySelector(":scope > .wm-user-desc"),
+            );
+          });
+      });
     }
 
     if (path.startsWith("/friends")) {
@@ -11895,6 +11984,16 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      .wm-user-desc-picker > span.font-medium:not(.wm-user-desc) {
+        flex: 0 0 auto;
+      }
+      .wm-user-desc-picker > .wm-user-desc {
+        flex: 1 1 0;
+      }
+      .wm-user-desc-picker > span:last-child {
+        flex-shrink: 0;
+        white-space: nowrap;
       }
       .wm-user-desc-modal {
         width: min(28rem, 90vw);
@@ -13365,7 +13464,7 @@
     if (!btn) return;
     btn.disabled = !!wishlistWalk;
     btn.textContent = wishlistWalk
-      ? `Feuilletage… (${wishlistWalk.pages?.size ?? 0}/${wishlistWalk.total ?? "?"})`
+      ? `Feuilletage... (${wishlistWalk.pages?.size ?? 0}/${wishlistWalk.total ?? "?"})`
       : "Feuilleter (WMB)";
   }
 
@@ -13565,9 +13664,16 @@
   const TRADE_TOTAL_ATTRIBUTE = "data-wm-trade-total";
 
   function computeTradeTotalLabel(cardsRow) {
-    const names = Array.from(cardsRow.querySelectorAll("h3"))
+    return computeTradeTotalLabelFromNames(readCardNames(cardsRow));
+  }
+
+  function readCardNames(cardsRow) {
+    return Array.from(cardsRow.querySelectorAll("h3"))
       .map((h3) => h3.textContent.trim())
       .filter(Boolean);
+  }
+
+  function computeTradeTotalLabelFromNames(names) {
     let sum = 0;
     let known = 0;
     names.forEach((name) => {
@@ -13617,10 +13723,102 @@
     );
   }
 
-  function watchTradeTotal() {
-    updateTradeTotal();
+  // Rule 44 (cont'd): the same "(total {value})" is appended to each side of the summary bar ("Moi : 2 cartes" /
+  // "{player} : 1 carte") of the new trade modal (div.max-w-5xl, "Échanger avec {player}"; also the counter-offer
+  // one, "Contre-offre avec …"). The modal only renders the cards of the active tab ("Sélectionnées (n)" paragraph
+  // and the grid right after it), so the names of each side are remembered while its tab is shown (per modal, in
+  // tradeSidesNames); a side whose remembered cards don't match its count yet gets no total until its tab is shown.
+  const tradeSidesNames = new WeakMap();
 
-    const observer = new MutationObserver(() => updateTradeTotal());
+  function updateNewTradeTotals() {
+    if (!window.location.pathname.startsWith("/trades")) return;
+
+    document.querySelectorAll("div.max-w-5xl").forEach((modal) => {
+      const title = modal.querySelector("h2")?.textContent.trim() ?? "";
+      if (!/^(Échanger avec|Contre-offre avec)/.test(title)) return;
+
+      const bar = modal
+        .querySelector("svg.lucide-arrow-left-right")
+        ?.closest("div");
+      const tabs = bar?.nextElementSibling;
+      if (!bar || !tabs) return;
+      const sides = Array.from(bar.querySelectorAll(":scope > span"));
+      const active = Array.from(tabs.children).findIndex((tab) =>
+        tab.classList.contains("border-b-2"),
+      );
+      if (sides.length !== 2 || active < 0) return;
+
+      const remembered = tradeSidesNames.get(modal) ?? [undefined, undefined];
+      tradeSidesNames.set(modal, remembered);
+      const heading = Array.from(modal.querySelectorAll("p")).find((p) =>
+        p.textContent.trim().startsWith("Sélectionnées"),
+      );
+      remembered[active] = heading?.nextElementSibling
+        ? readCardNames(heading.nextElementSibling)
+        : [];
+      // Compact selected cards (see the stylesheet in watchTradeTotal)
+      heading?.nextElementSibling?.setAttribute("data-wm-selected-cards", "");
+
+      sides.forEach((side, index) => {
+        // React renders "Moi : {n} carte(s)" as several text nodes, so the whole textContent is read (the total
+        // is a pseudo-element, never part of it)
+        const count = parseInt(
+          side.textContent.match(/(\d+)\s+carte/)?.[1],
+          10,
+        );
+        const names = remembered[index];
+        if (!names || names.length === 0 || names.length !== count) {
+          side.removeAttribute("data-wm-new-trade-total");
+          return;
+        }
+
+        // Shown through a data attribute and a ::after (see watchTradeTotal), not an inserted element: React
+        // appends/removes the text nodes of this span ("carte" + "s") on its own and would end up after our node
+        const { label, missing } = computeTradeTotalLabelFromNames(names);
+        const text = `(total ${label})`;
+        if (side.getAttribute("data-wm-new-trade-total") === text) return;
+        side.setAttribute("data-wm-new-trade-total", text);
+        logger(
+          CPL.LOG,
+          `New trade total (side ${index}): ${label} (${names.length} card(s), ${missing} without estimate)`,
+        );
+      });
+    });
+  }
+
+  function watchTradeTotal() {
+    // Rule 44 (cont'd): in the new trade modal, the selected cards (the grid under "Sélectionnées (n)") are shrunk
+    // to their artwork, rarity and name: description, tags and stats are hidden, which saves vertical space
+    // The card's own height is set by Tailwind with important utilities (!h-auto, min-[500px]:!h-[14rem]), which sit
+    // in the "utilities" cascade layer: an unlayered "!important" loses to a layered one, hence the same layer here
+    // (the specificity then decides). Only the card face (first div) is resized, not the selection overlay after it.
+    addStyle(`
+      [data-wm-new-trade-total]::after {
+        content: attr(data-wm-new-trade-total);
+        color: #15803d;
+        margin-left: 0.5rem;
+        font-weight: 700;
+      }
+      @layer utilities {
+        [data-wm-selected-cards] > button > div:first-child {
+          width: auto !important;
+          height: 10rem !important;
+          aspect-ratio: 5 / 7 !important;
+          margin-inline: auto;
+        }
+      }
+      [data-wm-selected-cards] h3 ~ p,
+      [data-wm-selected-cards] h3 ~ div {
+        display: none;
+      }
+    `);
+    updateTradeTotal();
+    updateNewTradeTotals();
+
+    const observer = new MutationObserver(() => {
+      updateTradeTotal();
+      updateNewTradeTotals();
+    });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -13750,9 +13948,10 @@
   const OLD_EVAL_ATTRIBUTE = "data-wm-old-eval";
 
   function updateAuctionModalOldEval() {
-    const modal = Array.from(
-      document.querySelectorAll("div.card-frame"),
-    ).find((m) => m.querySelector("h2")?.textContent.trim() === "Mettre aux enchères");
+    const modal = Array.from(document.querySelectorAll("div.card-frame")).find(
+      (m) =>
+        m.querySelector("h2")?.textContent.trim() === "Mettre aux enchères",
+    );
     const summary = modal?.querySelector("div.mb-5");
     const nameEl = summary?.querySelector("p.truncate");
     if (!summary || !nameEl) return;
@@ -13842,7 +14041,10 @@
       try {
         const next = !readAvatarVertical();
         localStorage.setItem(AVATAR_VERTICAL_KEY, String(next));
-        logger(CPL.LOG, `Profile picture sized on ${next ? "height (8vh)" : "width (8vw)"}`);
+        logger(
+          CPL.LOG,
+          `Profile picture sized on ${next ? "height (8vh)" : "width (8vw)"}`,
+        );
       } catch {
         logger(CPL.ERROR, "Failed to save profile picture size mode");
       }
@@ -13901,12 +14103,13 @@
 
   // ============================================================
   // Rule 49: on a bid page that is over ("Vendue" / "Non vendue", the same check as Feature BSP's recording, loaded
-  // page included) and isn't the viewer's own auction, a "🚫 Valeur aberrante" button is docked after the watch button
+  // page included) and isn't the viewer's own auction, a "🚫 Valeur absurde" button is docked after the watch button
   // — only while Feature BSP holds an entry for this very auction ("{price}-{tag}" in "observed-{card name}", tag
   // being the bid UUID's second segment), which is also why it never shows on an auction the viewer won (not recorded).
   // After a confirm(), that entry is removed from the card's array (the key itself goes when the array ends up
   // empty) and the auction's full UUID is added to "wm-outlier-bids", the list Feature BSP checks so the next visit
-  // doesn't record the same price again. Feature BBS's best trades and Feature ETS's estimates are left alone.
+  // doesn't record the same price again (from the profile's observed prices panel, where only the tag is known, the
+  // tag alone is stored instead). Feature BBS's best trades and Feature ETS's estimates are left alone.
   // ============================================================
   const OUTLIER_KEY = "wm-outlier-bids";
 
@@ -13922,8 +14125,13 @@
     }
   }
 
+  // An entry is either an auction's full UUID (flagged from its page) or just its tag (flagged from the profile's
+  // observed prices panel, where only the tag is known)
   function isOutlierBid(bidId) {
-    return !!bidId && readOutlierBids().includes(bidId);
+    if (!bidId) return false;
+    const flagged = readOutlierBids();
+    const tag = bidId.split("-")[1];
+    return flagged.includes(bidId) || (!!tag && flagged.includes(tag));
   }
 
   function findOutlierEntry(cardName, tag) {
@@ -13934,7 +14142,11 @@
         ) ?? null
       );
     } catch (error) {
-      logger(CPL.WARN, `Outlier: stored prices of "${cardName}" unreadable`, error);
+      logger(
+        CPL.WARN,
+        `Outlier: stored prices of "${cardName}" unreadable`,
+        error,
+      );
       return null;
     }
   }
@@ -13992,7 +14204,7 @@
     btn.type = "button";
     btn.className = "wm-outlier-btn";
     btn.dataset.wmBidId = id;
-    btn.textContent = "🚫 Valeur aberrante";
+    btn.textContent = "🚫 Valeur absurde";
     btn.title =
       "Cette enchère n'est pas représentative (autre rareté, prix absurde) : la retirer des prix observés";
     btn.addEventListener("click", () => {
@@ -14000,7 +14212,7 @@
       if (!entry) return;
       if (
         !confirm(
-          `Considérer cette enchère de « ${cardName} » (${parseInt(entry, 10)} wikibidous) comme aberrante ? Son prix sera retiré des prix observés de cette carte.`,
+          `Considérer cette enchère de « ${cardName} » (${parseInt(entry, 10)} wikibidous) comme absurde ? Son prix sera retiré des prix observés de cette carte.`,
         )
       ) {
         logger(CPL.LOG, `Outlier: cancelled for "${cardName}" (${id})`);
@@ -14035,6 +14247,116 @@
     const scheduleUpdate = () => {
       clearTimeout(debounceId);
       debounceId = setTimeout(ensureOutlierButton, 300);
+    };
+    scheduleUpdate();
+
+    const observer = new MutationObserver(() => scheduleUpdate());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  // ============================================================
+  // Rule 50: on the page of an auction you just won ("Vendue" and Rule 33's isMyUsernameLeadingBid — not the
+  // owned-card label, which is also there for a card owned from elsewhere), a "🧹 Vider les prix observés" button is
+  // docked after the watch button — only while Feature BSP holds prices for that card ("observed-{card name}"). After
+  // a confirm(), that key is removed. Estimates (Feature ETS) and best trades (Feature BBS) are left alone.
+  // ============================================================
+  function ensureClearObservedButton() {
+    const existing = document.querySelector(".wm-clear-observed-btn");
+    const remove = () => existing?.remove();
+    if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname))
+      return remove();
+
+    const cardName = getBidPageCardName();
+    let count = 0;
+    if (cardName) {
+      try {
+        count = readBspEntries(cardName).length;
+      } catch (error) {
+        logger(
+          CPL.WARN,
+          `[Rule 50] Stored prices of "${cardName}" unreadable`,
+          error,
+        );
+      }
+    }
+    const eligible =
+      !document.querySelector("div.animate-spin") &&
+      findAuctionOutcomeSpan()?.textContent.trim() === "Vendue" &&
+      isMyUsernameLeadingBid() &&
+      count > 0;
+    if (!eligible) return remove();
+
+    if (existing?.dataset.wmCardName === cardName) return;
+    remove();
+
+    const anchor =
+      document.querySelector(".wm-watch-btn") ??
+      document.querySelector("button.text-sm.gap-1\\.5");
+    if (!anchor) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-clear-observed-btn";
+    btn.dataset.wmCardName = cardName;
+    btn.textContent = "🧹 Vider les prix observés";
+    btn.title = `Vous possédez désormais cette carte : retirer ses ${count} prix observés du cache`;
+    btn.addEventListener("click", () => {
+      let entries;
+      try {
+        entries = readBspEntries(cardName);
+      } catch (error) {
+        logger(
+          CPL.ERROR,
+          `[Rule 50] Stored prices of "${cardName}" unreadable`,
+          error,
+        );
+        return;
+      }
+      if (
+        !confirm(
+          `Vider les prix observés de « ${cardName} » (${entries.length} prix) ? Cette action est définitive.`,
+        )
+      ) {
+        logger(CPL.LOG, `[Rule 50] Clearing cancelled for "${cardName}"`);
+        return;
+      }
+      localStorage.removeItem(getBspObservedStorageKey(cardName));
+      logger(
+        CPL.INFO,
+        `[Rule 50] Observed prices of "${cardName}" cleared (${entries.length} entries)`,
+      );
+      btn.remove();
+    });
+    anchor.after(btn);
+  }
+
+  function watchClearObservedAfterWinButton() {
+    addStyle(`
+      .wm-clear-observed-btn {
+        font-size: 0.9rem;
+        margin-left: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        line-height: 1;
+        border: none;
+        background: #ffffff0f;
+        color: var(--color-foreground);
+        cursor: pointer;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+      .wm-clear-observed-btn:hover {
+        background: #f59e0b4d;
+      }
+    `);
+
+    let debounceId = null;
+    const scheduleUpdate = () => {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(ensureClearObservedButton, 300);
     };
     scheduleUpdate();
 
@@ -14141,6 +14463,7 @@
     run("rule-47", watchAuctionModalOldEval);
     run("rule-48", watchAvatarSizeToggle);
     run("rule-49", watchOutlierButton);
+    run("rule-50", watchClearObservedAfterWinButton);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");

@@ -100,7 +100,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Échanges en deux colonnes** : Les onglets « Reçues », « Envoyées » et « Historique » s'affichent en deux colonnes plutôt qu'une seule liste, dès l'ouverture de l'onglet
 - **Filtrer par utilisateur ou par carte** : Un champ de recherche au-dessus de l'historique filtre les échanges par nom de utilisateur ou par nom de carte présente dans l'échange
-- **Total des estimations** : Dans le détail d'un échange, un total vert « (total X) » s'ajoute après « En échange de », somme des estimations mémorisées des cartes reçues ; les estimations s'affichent aussi à côté de la rareté des cartes dans la modale de préparation d'une contre-offre
+- **Total des estimations** : Dans le détail d'un échange, un total vert « (total X) » s'ajoute après « En échange de », somme des estimations mémorisées des cartes reçues ; les estimations s'affichent aussi à côté de la rareté des cartes dans la modale de préparation d'une contre-offre ; le même « (total X) » s'affiche de chaque côté de la barre de résumé des modales d'échange (nouvel échange et contre-offre), dont les cartes sélectionnées sont compactées
 
 ### 💰 Marché & Enchères
 
@@ -114,7 +114,8 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Un indice de fiabilité accompagne le tag
-  - Sur une enchère terminée, un bouton « 🚫 Valeur aberrante » permet de retirer son prix des prix observés
+  - Sur une enchère terminée, un bouton « 🚫 Valeur absurde » permet de retirer son prix des prix observés ; sur votre profil, les prix listés (seuls les plus bas, retenus pour la moyenne de référence, suivis de « ... ») sont cliquables et se retirent de la même façon
+  - Sur une enchère que vous venez de remporter, un bouton « 🧹 Vider les prix observés » efface vos observations de prix de la carte
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
 - **Enchères surveillées** : Gardez des enchères de côté pour les retrouver depuis le marché
   - Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle posée sur le coin supérieur droit de chaque carte sur `/marketplace`) la surveille ; le bouton est désactivé une fois l'enchère terminée
@@ -132,7 +133,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 👤 Profil & Amis
 
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits
-- **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche ensuite à côté de leur pseudo
+- **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche ensuite à côté de leur pseudo, y compris lors d'un nouvel échange
 - **Photo de profil agrandie** : Sur votre profil, la photo est agrandie ; choisissez de la dimensionner selon la largeur ou la hauteur
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 - **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre
