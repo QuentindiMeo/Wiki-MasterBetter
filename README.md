@@ -60,6 +60,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
     - **Estimation en masse** : étiquette « TBD » (au choix parmi vos étiquettes), plages de valeur qui étiquettent automatiquement les cartes selon leur estimation, nombre d'essais par carte et délais d'attente de l'estimation
     - **Notifications & alertes** : seuil d'alerte de la pile de paquets, déclencheur de lueur rouge de fin d'enchère
   - **« Fonctionnalités »** : active/désactive individuellement chaque fonctionnalité du script
+- **Pages laissées tranquilles** : Le script n'agit pas sur `/battle` ni `/settings` ; ses styles et observateurs se désactivent en y arrivant et reprennent sur les autres pages (la barre de navigation reste identique)
 - **Tutoriels intégrés** : Un bouton « ❓ » juste à côté ouvre une modale avec de courtes explications pour les fonctionnalités du script
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
 - **Scroll automatique vers la dernière non lue** : Ouvrir le panneau de notifications défile directement jusqu'à la dernière notification non lue
@@ -88,7 +89,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Halo sur les cartes sans estimation** : Un interrupteur « Sans estimation » entoure d'un halo rouge clair les cartes de la page sans estimation (un « ? » compte comme une estimation)
 - **Liste d'étiquettes lisible** : Plus de place pour afficher les étiquettes, et la liste se trie par ordre décroissant dès que les compteurs sont chargés ; à l'ouverture du filtre, le clavier navigue directement dans la liste (flèches, Début/Fin, saisie des premières lettres d'un nom)
 - **Étiquettes au clavier** : Dans la modale d'une carte, Retour arrière dans le champ d'étiquette vide place le focus sur la croix de la dernière étiquette ; une fois celle-ci activée, le focus passe à l'étiquette précédente, puis revient au champ ; les flèches gauche et droite passent d'une croix à l'autre, Début et Fin vont à la première et à la dernière
-- **Collection plus compacte** : Sur `/collection`, les marges entre les blocs empilés (`space-y-3`) sont supprimées, et les listes animées sont remplacées par une colonne espacée de 0,5 rem
+- **Confirmation avant de créer une étiquette** : Créer une nouvelle étiquette depuis le champ d'une carte (clic sur « Créer » ou Entrée) demande d'abord « Créer l'étiquette « {nom} » ? » ; annuler empêche la création, ce qui évite les doublons nés d'une faute de frappe
 - **Durée d'enchère par défaut** : À l'ouverture de la modale de vente d'une carte, le bouton de durée choisi dans le panneau de configuration est sélectionné automatiquement
 - **Ancienne estimation** : Dans la modale « Mettre aux enchères », si la carte avait déjà une estimation, elle s'affiche en haut à droite du résumé (« Ancienne estimation : X »), avant d'être remplacée par la nouvelle moyenne, pour voir comment l'estimation a évolué
 - **Copier le nom d'une carte** : Un bouton 📋 à côté du nom, dans la modale de carte comme dans la modale d'enchère

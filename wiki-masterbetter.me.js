@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.51
+// @version      0.30.52
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -5435,6 +5435,10 @@
       label:
         "Proposer de vider les prix observés d'une carte une fois l'enchère remportée",
     },
+    {
+      id: "rule-51",
+      label: "Demander une confirmation avant de créer une étiquette",
+    },
   ];
 
   function readFeatureFlags() {
@@ -9972,8 +9976,26 @@
       })
       .filter((entry) => entry !== null);
 
-    if (!tagEntries.length || tagEntries.some(({ count }) => count === null))
-      return;
+    if (!tagEntries.length) return;
+
+    // A tag carried by no card never gets a "(n)" suffix, so waiting for every tag to have one would block the
+    // sort forever. While some counts are missing, wait for the list to settle, then count them as 0.
+    if (tagEntries.some(({ count }) => count === null)) {
+      if (ul.dataset.wmTagsSettled !== "true") {
+        if (!ul._wmSettleTimer) {
+          logger(CPL.LOG, "Rule 24: tags without count, waiting for settle");
+          ul._wmSettleTimer = setTimeout(() => {
+            ul._wmSettleTimer = null;
+            ul.dataset.wmTagsSettled = "true";
+            styleUserTagList();
+          }, 1500);
+        }
+        return;
+      }
+      tagEntries.forEach((entry) => {
+        if (entry.count === null) entry.count = 0;
+      });
+    }
 
     ul.dataset.wmTagsSorted = "true";
     logger(CPL.LOG, "Rule 24: tag list sorted from loaded counts");
@@ -14369,6 +14391,73 @@
   }
 
   // ============================================================
+  // Rule 51: on /collection and /pulls, creating a tag asks for a confirmation first. In a card's tag input
+  // (input[role=combobox]), typing a name that matches no tag makes the site offer a "Créer" option
+  // (li[role=option] > div > button, whose first span reads "Créer", followed by the name in a pill). It is
+  // triggered by a click on that button or by Enter while that option is the highlighted one (aria-selected). Both
+  // are intercepted in the capture phase and, unless the user accepts a confirm(), stopped before the site sees
+  // them. Only trusted events are asked about: the clicks and Enter presses synthesized by WMB itself (Feature TBD
+  // tagging a card in bulk) go through untouched. The colour picker next to the option is not the button, so
+  // picking a colour never prompts.
+  // ============================================================
+  const CREATE_TAG_PATHS = ["/collection", "/pulls"];
+
+  function isTagCreateButton(el) {
+    if (!(el instanceof HTMLButtonElement)) return false;
+    if (!el.closest("ul[role=listbox]")) return false;
+    return el.querySelector(":scope > span")?.textContent.trim() === "Créer";
+  }
+
+  function confirmTagCreation(button, event, via) {
+    const name = button
+      .querySelector(":scope > span:nth-of-type(2)")
+      ?.textContent.trim();
+    if (confirm(`Créer l'étiquette « ${name} » ?`)) {
+      logger(
+        CPL.INFO,
+        `[Rule 51] Creation of tag "${name}" confirmed (${via})`,
+      );
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    logger(CPL.LOG, `[Rule 51] Creation of tag "${name}" cancelled (${via})`);
+  }
+
+  function handleCreateTagClick(event) {
+    if (!event.isTrusted) return;
+    if (!CREATE_TAG_PATHS.some((p) => window.location.pathname.startsWith(p))) {
+      return;
+    }
+    const button =
+      event.target instanceof Element ? event.target.closest("button") : null;
+    if (!isTagCreateButton(button)) return;
+    confirmTagCreation(button, event, "click");
+  }
+
+  function handleCreateTagEnter(event) {
+    if (!event.isTrusted || event.key !== "Enter" || event.isComposing) return;
+    if (!CREATE_TAG_PATHS.some((p) => window.location.pathname.startsWith(p))) {
+      return;
+    }
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    if (input.getAttribute("role") !== "combobox") return;
+
+    const option = input
+      .closest("div.relative")
+      ?.querySelector("ul[role=listbox] li[aria-selected=true]");
+    const button = option?.querySelector("button");
+    if (!isTagCreateButton(button)) return;
+    confirmTagCreation(button, event, "Enter");
+  }
+
+  function watchTagCreationConfirmation() {
+    document.addEventListener("click", handleCreateTagClick, true);
+    document.addEventListener("keydown", handleCreateTagEnter, true);
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -14464,6 +14553,7 @@
     run("rule-48", watchAvatarSizeToggle);
     run("rule-49", watchOutlierButton);
     run("rule-50", watchClearObservedAfterWinButton);
+    run("rule-51", watchTagCreationConfirmation);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");
