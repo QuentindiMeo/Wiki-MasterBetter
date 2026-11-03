@@ -114,6 +114,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
   - Un indice de fiabilité accompagne le tag
+  - Sur une enchère terminée, un bouton « 🚫 Valeur aberrante » permet de retirer son prix des prix observés
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
 - **Enchères surveillées** : Gardez des enchères de côté pour les retrouver depuis le marché
   - Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle posée sur le coin supérieur droit de chaque carte sur `/marketplace`) la surveille ; le bouton est désactivé une fois l'enchère terminée

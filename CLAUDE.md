@@ -39,7 +39,6 @@ When updating the README, check ALL rules/features (both from the documentation 
 
 ### READMEignore
 
-- **Affichage progressif** : Une fois toutes les notifications lues, seules les premières restent affichées — les suivantes chargent en faisant défiler jusqu'en bas
 - **Fermeture au clavier** : Échap ferme la modale de notification (ou toute autre modale ouverte sur `/pulls` et `/collection`)
 - **Lancer l'enchère au clavier** : Appuyer sur Entrée dans le champ de mise de départ lance directement l'enchère
 - **Focus automatique** : L'ouverture de la modale d'une carte place le curseur dans son champ de mise

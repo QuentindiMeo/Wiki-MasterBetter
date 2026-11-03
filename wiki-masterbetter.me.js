@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.42
+// @version      0.30.44
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -1903,71 +1903,6 @@
   }
 
   // ============================================================
-  // Rule 13: when div.card-frame.shadow-xl.overflow-hidden enters the DOM and there's no span.absolute anywhere in the
-  // document, keep only the first N children of div.min-h-0.flex-1; scrolling that container to the bottom restores
-  // the remaining children
-  // ============================================================
-
-  // Holds the trimmed-off children so they can be reinserted later.
-  const MAX_TRIMMED_NOTIFICATIONS = 10;
-  const flexOneHiddenChildren = new WeakMap();
-
-  function trimNotifications() {
-    if (document.querySelector("span.absolute")) return;
-
-    const container = document.querySelector("div.min-h-0.flex-1");
-    if (!container || flexOneHiddenChildren.has(container)) return;
-
-    const hidden = Array.from(container.children).slice(
-      MAX_TRIMMED_NOTIFICATIONS,
-    );
-    if (hidden.length === 0) return;
-
-    hidden.forEach((child) => child.remove());
-    flexOneHiddenChildren.set(container, hidden);
-    bindNotificationScrollRestore(container);
-  }
-
-  function bindNotificationScrollRestore(container) {
-    if (container.dataset.wmScrollRestoreBound === "true") return;
-    container.dataset.wmScrollRestoreBound = "true";
-
-    container.addEventListener("scroll", () => {
-      const hidden = flexOneHiddenChildren.get(container);
-      if (!hidden) return;
-
-      const atBottom =
-        container.scrollTop + container.clientHeight >=
-        container.scrollHeight - 1;
-      if (!atBottom) return;
-
-      hidden.forEach((child) => container.appendChild(child));
-      flexOneHiddenChildren.delete(container);
-    });
-  }
-
-  function watchNotificationBoardArrival() {
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node.nodeType !== Node.ELEMENT_NODE) continue;
-          const isCardFrame = node.matches?.(
-            "div.card-frame.shadow-xl.overflow-hidden",
-          );
-          const containsCardFrame = node.querySelector?.(
-            "div.card-frame.shadow-xl.overflow-hidden",
-          );
-          if (isCardFrame || containsCardFrame) {
-            trimNotifications();
-            return;
-          }
-        }
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
-
-  // ============================================================
   // Rule 16: when div.card-frame.shadow-xl.overflow-hidden enters the DOM, smoothly scroll the last unread
   // notification (an element carrying ACCENT_CLASS) into view
   // ============================================================
@@ -3052,6 +2987,13 @@
 
     const tag = getBidTag();
     if (!tag) return;
+
+    // Rule 49: an auction the user called an outlier is never recorded again
+    if (isOutlierBid(window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX)?.[1])) {
+      soldSpan.dataset.wmPriceStored = "true";
+      logger(CPL.LOG, `Sale price skipped: "${cardName}" auction flagged as an outlier`);
+      return;
+    }
 
     soldSpan.dataset.wmPriceStored = "true";
 
@@ -5205,7 +5147,6 @@
       id: "feature-pnp",
       label: "Notification push quand les paquets s'accumulent",
     },
-    { id: "rule-13", label: "Limiter l'affichage à 20 notifications lues" },
     { id: "feature-tmb", label: "Regrouper les enchères par statut" },
     { id: "feature-cme", label: "Fermer les modales avec Échap" },
     {
@@ -5422,6 +5363,11 @@
       id: "rule-48",
       label:
         "Agrandir la photo de profil (/profile) avec une pastille pour la dimensionner sur la largeur ou la hauteur",
+    },
+    {
+      id: "rule-49",
+      label:
+        "Proposer de marquer une enchère terminée comme valeur aberrante pour la retirer des prix observés",
     },
   ];
 
@@ -13954,6 +13900,153 @@
   }
 
   // ============================================================
+  // Rule 49: on a bid page that is over ("Vendue" / "Non vendue", the same check as Feature BSP's recording, loaded
+  // page included) and isn't the viewer's own auction, a "🚫 Valeur aberrante" button is docked after the watch button
+  // — only while Feature BSP holds an entry for this very auction ("{price}-{tag}" in "observed-{card name}", tag
+  // being the bid UUID's second segment), which is also why it never shows on an auction the viewer won (not recorded).
+  // After a confirm(), that entry is removed from the card's array (the key itself goes when the array ends up
+  // empty) and the auction's full UUID is added to "wm-outlier-bids", the list Feature BSP checks so the next visit
+  // doesn't record the same price again. Feature BBS's best trades and Feature ETS's estimates are left alone.
+  // ============================================================
+  const OUTLIER_KEY = "wm-outlier-bids";
+
+  function readOutlierBids() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(OUTLIER_KEY) ?? "[]");
+      return Array.isArray(parsed)
+        ? parsed.filter((id) => typeof id === "string")
+        : [];
+    } catch (error) {
+      logger(CPL.WARN, `${OUTLIER_KEY} unreadable, treated as empty`, error);
+      return [];
+    }
+  }
+
+  function isOutlierBid(bidId) {
+    return !!bidId && readOutlierBids().includes(bidId);
+  }
+
+  function findOutlierEntry(cardName, tag) {
+    try {
+      return (
+        readBspEntries(cardName).find(
+          (entry) => typeof entry === "string" && entry.endsWith(`-${tag}`),
+        ) ?? null
+      );
+    } catch (error) {
+      logger(CPL.WARN, `Outlier: stored prices of "${cardName}" unreadable`, error);
+      return null;
+    }
+  }
+
+  function removeOutlierBid(bidId, cardName, tag) {
+    try {
+      const key = getBspObservedStorageKey(cardName);
+      const kept = readBspEntries(cardName).filter(
+        (entry) => !(typeof entry === "string" && entry.endsWith(`-${tag}`)),
+      );
+      if (kept.length > 0) localStorage.setItem(key, JSON.stringify(kept));
+      else localStorage.removeItem(key);
+      localStorage.setItem(
+        OUTLIER_KEY,
+        JSON.stringify([...new Set([...readOutlierBids(), bidId])]),
+      );
+      logger(
+        CPL.INFO,
+        `Outlier: auction ${bidId} of "${cardName}" removed from the observed prices (${kept.length} left)`,
+      );
+      return true;
+    } catch (error) {
+      logger(CPL.ERROR, "Outlier: failed to update the cache", error);
+      return false;
+    }
+  }
+
+  function ensureOutlierButton() {
+    const existing = document.querySelector(".wm-outlier-btn");
+    const match = window.location.pathname.match(MARKETPLACE_BID_PATH_REGEX);
+    const remove = () => existing?.remove();
+    if (!match) return remove();
+
+    const id = match[1];
+    const tag = getBidTag();
+    const cardName = getBidPageCardName();
+    const eligible =
+      !document.querySelector("div.animate-spin") &&
+      !!findAuctionOutcomeSpan() &&
+      !isMyUsername(getBidPageSellerUsername()) &&
+      !!tag &&
+      !!cardName &&
+      findOutlierEntry(cardName, tag) !== null;
+    if (!eligible) return remove();
+
+    if (existing?.dataset.wmBidId === id) return;
+    remove();
+
+    const anchor =
+      document.querySelector(".wm-watch-btn") ??
+      document.querySelector("button.text-sm.gap-1\\.5");
+    if (!anchor) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wm-outlier-btn";
+    btn.dataset.wmBidId = id;
+    btn.textContent = "🚫 Valeur aberrante";
+    btn.title =
+      "Cette enchère n'est pas représentative (autre rareté, prix absurde) : la retirer des prix observés";
+    btn.addEventListener("click", () => {
+      const entry = findOutlierEntry(cardName, tag);
+      if (!entry) return;
+      if (
+        !confirm(
+          `Considérer cette enchère de « ${cardName} » (${parseInt(entry, 10)} wikibidous) comme aberrante ? Son prix sera retiré des prix observés de cette carte.`,
+        )
+      ) {
+        logger(CPL.LOG, `Outlier: cancelled for "${cardName}" (${id})`);
+        return;
+      }
+      if (removeOutlierBid(id, cardName, tag)) btn.remove();
+    });
+    anchor.after(btn);
+  }
+
+  function watchOutlierButton() {
+    addStyle(`
+      .wm-outlier-btn {
+        font-size: 0.9rem;
+        margin-left: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        line-height: 1;
+        border: none;
+        background: #ffffff0f;
+        color: var(--color-foreground);
+        cursor: pointer;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+      .wm-outlier-btn:hover {
+        background: #ef44444d;
+      }
+    `);
+
+    // Debounced like Feature BSP's recording: a bid page mutates heavily while it hydrates
+    let debounceId = null;
+    const scheduleUpdate = () => {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(ensureOutlierButton, 300);
+    };
+    scheduleUpdate();
+
+    const observer = new MutationObserver(() => scheduleUpdate());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -13984,7 +14077,6 @@
     run("rule-11", watchPullsOpacity);
     run("feature-pnp", watchPullsCounterNotification);
     run("rule-12", watchProfileButtonColor);
-    run("rule-13", watchNotificationBoardArrival);
     run("feature-tmb", watchAuctionGroupToggle);
     run("rule-9", watchAuctionsTabArrival);
     run("feature-cme", watchPullsModalEscape);
@@ -14048,6 +14140,7 @@
     run("rule-46", watchAuctionLaunchReturnToPulls);
     run("rule-47", watchAuctionModalOldEval);
     run("rule-48", watchAvatarSizeToggle);
+    run("rule-49", watchOutlierButton);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");
