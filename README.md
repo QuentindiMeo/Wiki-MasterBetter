@@ -139,7 +139,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Photo de profil agrandie** : Sur votre profil, la photo est agrandie ; choisissez de la dimensionner selon la largeur ou la hauteur
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 - **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre
-- **Mes plus grosses ventes et achats** : Vos 100 plus grosses ventes et vos 100 plus gros achats sont mémorisés, et la modale en affiche 40 par défaut (réglable ; changer ce réglage ne supprime rien) (depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché) ; deux boutons sur votre profil les listent dans une modale, la première mise en avant par une lueur dorée, un ✕ retire une entrée du cache
+- **Mes plus grosses ventes et achats** : Vos 100 plus grosses ventes et vos 100 plus gros achats sont mémorisés, et la modale en affiche 40 par défaut (réglable) (données récupérées depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché)
 - **Un bouton Exporter/Importer** permet de télécharger le cache du script (prix de vente, estimations, joueurs suivis et descriptions de joueurs) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil ; l'import est strictement additif : il ne supprime ni n'écrase jamais rien d'utile dans votre cache actuel
 
 ### 🏆 Succès

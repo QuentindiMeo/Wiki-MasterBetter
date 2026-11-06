@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.54
+// @version      0.30.56
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -3094,11 +3094,10 @@
         )?.textContent;
         return isMyUsername(sellerText?.trim().match(/^Vendu par (\S+)/)?.[1]);
       },
-      // Deal score of a sale: its premium over the eval (price / eval - 1, so 1.75 for "+175%"), see computeDealScore
-      // (NaN without an eval)
+      // Deal score of a sale: the money made above the eval (price - eval), see computeDealScore (NaN without an eval)
       score: (cardName, amount) => {
         const target = getCardEvalValueByName(cardName);
-        return target ? computeDealScore(amount / target - 1, target) : NaN;
+        return target ? computeDealScore(amount - target, amount, target) : NaN;
       },
       cutoffHint:
         "Écart du prix de vente par rapport à la valeur estimée sur le marché : ",
@@ -3113,11 +3112,10 @@
       cardLabel: "Achetée pour",
       isOnBidPage: () => isMyUsernameLeadingBid(),
       isOnCard: () => true,
-      // Deal score of a buy: its discount from the eval (1 - price / eval, so 0.75 for "-75%"), see
-      // computeDealScore (NaN without an eval)
+      // Deal score of a buy: the money saved under the eval (eval - price), see computeDealScore (NaN without an eval)
       score: (cardName, amount) => {
         const target = getCardEvalValueByName(cardName);
-        return target ? computeDealScore(1 - amount / target, target) : NaN;
+        return target ? computeDealScore(target - amount, amount, target) : NaN;
       },
       cutoffHint:
         "Écart du prix d'achat par rapport à la valeur estimée sur le marché : ",
@@ -3128,17 +3126,92 @@
     },
   };
 
-  // How good a deal is, for the "Trier par bonne affaire" switch and the entries' data-score: the edge (how far the
-  // price is on the right side of the eval, as a fraction) weighted by ln(1 + eval) to the 4th power, so an edge
-  // only scores high when it's both big and on a card that matters. The power is what keeps a small card's huge
-  // percentage from outscoring a pricier card's smaller one, and 4 is the lowest round value that holds the
-  // calibration cases at least 2x apart:
-  //   sell 971 at +175% (eval 353) = 1.75 * 5.9^4 ≈ 2076   vs   sell 250 at +216% (eval 79) = 2.16 * 4.4^4 ≈ 797
-  //   buy 605 at -64% (eval 1680) = 0.64 * 7.4^4 ≈ 1951    vs   buy 13 at -93% (eval 186) = 0.93 * 5.2^4 ≈ 696
-  // A negative edge (overpriced buy, underpriced sale) scores negative.
-  const DEAL_SCORE_LOG_POWER = 4;
-  function computeDealScore(edge, target) {
-    return edge * Math.log(1 + target) ** DEAL_SCORE_LOG_POWER;
+  // How good a deal is, for the "Trier par bonne affaire" switch and the entries' data-score: the money gained against
+  // the eval (delta = eval - price for a buy, price - eval for a sale; negative when on the wrong side) weighted by the
+  // price paid to a power b, so a big trade outranks a smaller one even when the smaller one has the better percentage
+  // or a slightly larger delta:
+  //   score = delta * g(delta / eval) * (price / DEAL_SCORE_PRICE_REF) ^ b
+  // b is not guessed: it is calibrated (see calibrateDealScorePower) so that each preference below holds, "better
+  // scores TIMES x worse". An `atLeast` preference is only checked (it must score at least TIMES x), the others are
+  // fitted (least squares on ln b = ... , each one linear in b):
+  //   ln(delta_b g_b / (delta_w g_w)) + b * ln(price_b / price_w) = ln(TIMES)
+  //   buy 1000 at -43% (eval 1754) vs buy 405 at -69% (eval 1306): 1.5x (fitted; the bigger buy must clearly win)
+  //   sell 971 at +175% (eval 353) vs sell 250 at +216% (eval 79): at least 2x (checked)
+  //   buy 605 at -64% (eval 1680) vs buy 13 at -93% (eval 186): at least 2x (checked)
+  // g is a smoothstep gating small positive edges (delta / eval): it is 0 at the eval and 1 from DEAL_SCORE_RAMP (10%)
+  // on, so a barely better-than-eval trade on a pricey card doesn't outscore a clearly good one. It is flat at both
+  // ends and the score stays continuous at an edge of 0; negative edges are not gated and score negative.
+  const DEAL_SCORE_PREFERENCES = [
+    { better: { price: 1000, target: 1754, side: "buy" }, worse: { price: 405, target: 1306, side: "buy" }, times: 1.5 },
+    { better: { price: 971, target: 353, side: "sell" }, worse: { price: 250, target: 79, side: "sell" }, times: 2, atLeast: true },
+    { better: { price: 605, target: 1680, side: "buy" }, worse: { price: 13, target: 186, side: "buy" }, times: 2, atLeast: true },
+  ];
+  const DEAL_SCORE_RAMP = 0.1;
+  const DEAL_SCORE_PRICE_REF = 100;
+  const DEAL_SCORE_FALLBACK_POWER = 0.5;
+
+  function dealDelta({ price, target, side }) {
+    return side === "sell" ? price - target : target - price;
+  }
+
+  function dealRampFactor(edge) {
+    if (!(edge < DEAL_SCORE_RAMP)) return 1;
+    if (edge <= 0) return 1;
+    const s = edge / DEAL_SCORE_RAMP;
+    return s * s * (3 - 2 * s);
+  }
+
+  // delta * ramp, the part of the score that doesn't depend on b
+  function dealGain(trade) {
+    const delta = dealDelta(trade);
+    return delta * dealRampFactor(delta / trade.target);
+  }
+
+  function calibrateDealScorePower(preferences) {
+    let num = 0;
+    let den = 0;
+    const fitted = preferences.filter((pref) => !pref.atLeast);
+    for (const { better, worse, times } of fitted) {
+      const x = Math.log(better.price / worse.price);
+      const y = Math.log(times) - Math.log(dealGain(better) / dealGain(worse));
+      num += x * y;
+      den += x * x;
+    }
+    const power = den ? num / den : NaN;
+    if (!(power > 0)) {
+      throw new Error(`incoherent deal score calibration (power=${power})`);
+    }
+    // Report the ratio each preference actually gets: a warning when a fitted one is missed by more than about 10%, or
+    // when an "at least" one is not reached.
+    for (const { better, worse, times, atLeast } of preferences) {
+      const got = (dealGain(better) / dealGain(worse)) * (better.price / worse.price) ** power;
+      const missed = atLeast ? got < times : Math.abs(Math.log(got / times)) > 0.1;
+      logger(
+        missed ? CPL.WARN : CPL.LOG,
+        `[BBS] Deal score preference: wanted ${atLeast ? "at least " : ""}x${times}, got x${got.toFixed(2)}`,
+      );
+    }
+    return power;
+  }
+
+  let dealScorePower;
+  try {
+    dealScorePower = calibrateDealScorePower(DEAL_SCORE_PREFERENCES);
+    logger(CPL.LOG, `[BBS] Deal score calibrated: price power b = ${dealScorePower.toFixed(3)}, ramp = ${DEAL_SCORE_RAMP}`);
+  } catch (error) {
+    dealScorePower = DEAL_SCORE_FALLBACK_POWER;
+    logger(CPL.WARN, `[BBS] Deal score calibration failed, power falls back to ${DEAL_SCORE_FALLBACK_POWER}`, error);
+  }
+
+  // delta: the money gained against the eval (sign included); amount: the price paid; target: the card's eval
+  function computeDealScore(delta, amount, target) {
+    if (![delta, amount, target].every(Number.isFinite) || amount <= 0 || target <= 0) {
+      logger(CPL.DEBUG, `[BBS] Deal score skipped (delta=${delta}, price=${amount}, eval=${target})`);
+      return NaN;
+    }
+    return (
+      delta * dealRampFactor(delta / target) * (amount / DEAL_SCORE_PRICE_REF) ** dealScorePower
+    );
   }
 
   function readBestTrades(kind) {
@@ -3227,6 +3300,7 @@
 
     if (changed)
       localStorage.setItem(BEST_TRADE_KINDS[kind].key, JSON.stringify(trades));
+    return changed;
   }
 
   function addBestTrade(kind, cardName, amount, tag) {
@@ -10534,13 +10608,15 @@
   // gets its own span, docked to the top edge of the entry, whose tooltip is badgeHint followed by the text. With a sortToggle ({ label, compare, storageKey }), a switch in
   // the header re-orders the entries with `compare` instead of the given order (re-showcasing whichever comes
   // first); the choice is remembered in localStorage under storageKey, and an entry cleared before a re-order stays
-  // grayed out.
+  // grayed out. With a refresh ({ icon, label, hint, run }), a button in the header calls `run` and swaps in the entries it
+  // returns (a forced recalculation).
   function buildTopListModal({
     title: titleText,
     emptyText,
     loadingText,
     entries: initialEntries,
     sortToggle,
+    refresh,
   }) {
     let entries = initialEntries;
     let loading = false;
@@ -10574,6 +10650,21 @@
     loadingEl.hidden = true;
     header.append(loadingEl);
 
+    let refreshBtn = null;
+    if (refresh) {
+      refreshBtn = document.createElement("button");
+      refreshBtn.type = "button";
+      refreshBtn.className = "wm-top-evals-sort wm-top-evals-refresh";
+      const refreshIcon = document.createElement("span");
+      refreshIcon.className = "wm-top-evals-refresh-icon";
+      refreshIcon.textContent = refresh.icon;
+      refreshIcon.addEventListener("animationend", () =>
+        refreshIcon.classList.remove("wm-spinning"),
+      );
+      refreshBtn.append(refreshIcon, refresh.label);
+      refreshBtn.title = refresh.hint ?? refresh.label;
+      header.append(refreshBtn);
+    }
     let sortBtn = null;
     if (sortToggle) {
       sortBtn = document.createElement("button");
@@ -10690,6 +10781,12 @@
         render();
       });
     }
+
+    refreshBtn?.addEventListener("click", () => {
+      entries = refresh.run();
+      render();
+      refreshBtn.firstElementChild.classList.add("wm-spinning");
+    });
 
     modal.append(header, grid);
     overlay.appendChild(modal);
@@ -11041,27 +11138,62 @@
         border-radius: 0.5rem;
         transition: opacity 0.2s ease;
       }
+      /* Header buttons (sort switch, recalculation): same pill look, the first one pushes the group to the far end */
       .wm-top-evals-sort {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
         margin-left: auto;
-        margin-right: 0.75rem;
-        padding: 0.2rem 0.6rem;
-        border: 1px solid rgba(255, 255, 255, 0.25);
+        margin-right: 0.5rem;
+        padding: 0.3rem 0.8rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
         border-radius: 999px;
-        background: transparent;
+        background: rgba(255, 255, 255, 0.06);
         color: var(--color-foreground);
         font-size: 0.75rem;
+        font-weight: 500;
+        line-height: 1.2;
+        white-space: nowrap;
         cursor: pointer;
-        opacity: 0.7;
-        transition: opacity 0.2s ease, background-color 0.2s ease;
+        opacity: 0.8;
+        transition: opacity 0.2s ease, background-color 0.2s ease,
+          border-color 0.2s ease, transform 0.1s ease;
+      }
+      .wm-top-evals-sort ~ .wm-top-evals-sort {
+        margin-left: 0;
+      }
+      .wm-top-evals-sort:has(+ .wm-settings-close) {
+        margin-right: 0.75rem;
       }
       .wm-top-evals-sort:hover {
         opacity: 1;
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.4);
+      }
+      .wm-top-evals-sort:active {
+        transform: scale(0.96);
+      }
+      .wm-top-evals-sort:focus-visible {
+        outline: 2px solid #ffd700;
+        outline-offset: 2px;
       }
       .wm-top-evals-sort[aria-pressed="true"] {
         opacity: 1;
         border-color: #ffd700;
         color: #ffd700;
         background: rgba(255, 215, 0, 0.12);
+      }
+      .wm-top-evals-sort[aria-pressed="true"]:hover {
+        background: rgba(255, 215, 0, 0.2);
+      }
+      .wm-top-evals-refresh-icon {
+        display: inline-block;
+      }
+      .wm-top-evals-refresh-icon.wm-spinning {
+        animation: wm-top-evals-spin 0.6s ease-in-out;
+      }
+      @keyframes wm-top-evals-spin {
+        to { transform: rotate(360deg); }
       }
       .wm-top-evals-badge {
         position: absolute;
@@ -11175,9 +11307,14 @@
   // refreshed (refreshBestTradeCutoffs) as the modal opens. An entry's "✕" removes that trade from the cache (its stored "{amount}-{tag}" value
   // being unique to that trade).
   // ============================================================
-  function buildBestTradesModal(kind) {
+  function buildBestTradeEntries(kind, { force = false } = {}) {
     const config = BEST_TRADE_KINDS[kind];
-    refreshBestTradeCutoffs(kind);
+    const changed = refreshBestTradeCutoffs(kind);
+    if (force)
+      logger(
+        CPL.LOG,
+        `[BBS] Best ${kind} recalculated on demand (${changed ? "cache updated" : "nothing changed"})`,
+      );
     // The cache holds up to TOP_LIMIT_MAX trades; the configured size only decides how many of the biggest are shown
     const trades = sortBestTradesByAmount(
       readBestTrades(kind).filter(
@@ -11185,9 +11322,42 @@
       ),
     ).slice(0, getTopLimit());
 
+    return trades.map((entry) => {
+      const cardName = Object.keys(entry)[0];
+      const raw = String(entry[cardName]);
+      const { amount, cutoff } = parseBestTradeValue(raw);
+      return {
+        cardName,
+        valueText: (amount || 0).toLocaleString("fr-FR"),
+        badgeText: cutoff ? formatBestTradeCutoff(cutoff) : undefined,
+        badgeHint: config.cutoffHint,
+        score: config.score(cardName, amount),
+        onClear: () => {
+          localStorage.setItem(
+            config.key,
+            JSON.stringify(
+              readBestTrades(kind).filter(
+                (e) => !(e && String(e[cardName]) === raw),
+              ),
+            ),
+          );
+        },
+      };
+    });
+  }
+
+  function buildBestTradesModal(kind) {
+    const config = BEST_TRADE_KINDS[kind];
+
     return buildTopListModal({
       title: config.modalTitle(),
       emptyText: config.emptyText,
+      refresh: {
+        icon: "🔄",
+        label: "Recalculer",
+        hint: "Recalcule les écarts et les scores de tous les achats/ventes à partir des estimations actuelles",
+        run: () => buildBestTradeEntries(kind, { force: true }),
+      },
       sortToggle: {
         label: "Trier par bonne affaire",
         // New key: the old one remembered a switch that sorted by something else
@@ -11201,29 +11371,7 @@
           return b.score - a.score;
         },
       },
-      entries: trades.map((entry) => {
-        const cardName = Object.keys(entry)[0];
-        const raw = String(entry[cardName]);
-        const { amount, cutoff } = parseBestTradeValue(raw);
-        const amountText = (amount || 0).toLocaleString("fr-FR");
-        return {
-          cardName,
-          valueText: amountText,
-          badgeText: cutoff ? formatBestTradeCutoff(cutoff) : undefined,
-          badgeHint: config.cutoffHint,
-          score: config.score(cardName, amount),
-          onClear: () => {
-            localStorage.setItem(
-              config.key,
-              JSON.stringify(
-                readBestTrades(kind).filter(
-                  (e) => !(e && String(e[cardName]) === raw),
-                ),
-              ),
-            );
-          },
-        };
-      }),
+      entries: buildBestTradeEntries(kind),
     });
   }
 
