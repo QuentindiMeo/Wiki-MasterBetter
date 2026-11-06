@@ -117,7 +117,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Un indice de fiabilité accompagne le tag
   - Sur une enchère terminée, un bouton « 🚫 Valeur absurde » permet de retirer son prix des prix observés ; sur votre profil, les prix listés (seuls les plus bas, retenus pour la moyenne de référence, suivis de « ... ») sont cliquables et se retirent de la même façon
   - Sur une enchère que vous venez de remporter, un bouton « 🧹 Vider les prix observés » efface vos observations de prix de la carte
-  - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur déplie/replie
+  - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur permet de déplier/replier
 - **Enchères surveillées** : Gardez des enchères de côté pour les retrouver depuis le marché
   - Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle posée sur le coin supérieur droit de chaque carte sur `/marketplace`) la surveille ; le bouton est désactivé une fois l'enchère terminée
   - Un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, celles en cours d'abord ; un bouton « Ouvrir les enchères terminées » ouvre d'un coup toutes celles qui sont finies
@@ -135,6 +135,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 - **Grille d'amis en 3 colonnes** : La liste d'amis est réorganisée en grille compacte, avec des boutons d'action réduits
 - **Description des joueurs** : Un bouton « Description » sur le profil des autres joueurs permet de noter en quelques mots (max. 128 caractères) ; la description s'affiche ensuite à côté de leur pseudo, y compris lors d'un nouvel échange
+- **Vitrine repliable** : Sur les profils, la section « Vitrine » est dépliée par défaut ; un interrupteur permet de la replier
 - **Photo de profil agrandie** : Sur votre profil, la photo est agrandie ; choisissez de la dimensionner selon la largeur ou la hauteur
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 - **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre

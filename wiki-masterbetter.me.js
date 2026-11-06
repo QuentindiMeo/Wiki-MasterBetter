@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.52
+// @version      0.30.54
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -1478,23 +1478,26 @@
   }
 
   // ============================================================
-  // Rule 12: on /profile/*, give buttons inside div.-mt-0\.5 a color of #ccc, but only while they're not hovered; while
-  // hovered, they get a muted green (background and text) instead of the site's red hover.
+  // Rule 12: on /profile/*, give the buttons of the pill holding "Signaler" (see findProfileReportButton) a color of
+  // #ccc, but only while they're not hovered; while hovered, they get a muted green (background and text) instead of
+  // the site's red hover.
   //
-  // Rule 12 (cont'd): on /profile (the user's own profile page), give div.mt-2 a max-width of 50rem, and keep its
-  // tags' text from being clipped at the bottom (span.truncate inherits the pill's leading-none line-height).
+  // Rule 12 (cont'd): it used to cap the tag list's width and keep the tags' text from being clipped on your own
+  // profile (div.mt-2). The site's profile redesign made both useless (compact, self-wrapping tag chips), so that part
+  // was removed.
   // ============================================================
-  function updateProfileButtonColor() {
-    const onProfile = window.location.pathname.startsWith("/profile/");
-    document.querySelectorAll("div.-mt-0\\.5 button").forEach((btn) => {
-      btn.classList.toggle("wm-profile-btn", onProfile);
-    });
+  // The "Signaler" button of another user's profile. The site's redesign moved it from div.-mt-0.5 into a dark pill
+  // docked at the top-right of the profile banner; the pill (its parent) is where Features FOL and UDS add their own
+  // buttons.
+  function findProfileReportButton() {
+    return document.querySelector('main button[title^="Signaler"]');
   }
 
-  function updateOwnProfileTagListWidth() {
-    const onOwnProfile = window.location.pathname === "/profile";
-    document.querySelectorAll("div.mt-2").forEach((div) => {
-      div.classList.toggle("wm-own-profile-tag-list", onOwnProfile);
+  function updateProfileButtonColor() {
+    const onProfile = window.location.pathname.startsWith("/profile/");
+    const pill = findProfileReportButton()?.parentElement;
+    pill?.querySelectorAll("button").forEach((btn) => {
+      btn.classList.toggle("wm-profile-btn", onProfile);
     });
   }
 
@@ -1510,25 +1513,12 @@
         background-color: rgba(52, 211, 153, 0.1) !important;
         color: rgba(52, 211, 153, 0.85) !important;
       }
-
-      .wm-own-profile-tag-list {
-        max-width: 50rem;
-      }
-
-      /* Each tag's text span is overflow-hidden (truncate) with the pill's leading-none line-height, which clips
-         descenders (Q, G, g, y...). Padding gives the glyphs room; the negative margin keeps the pill's size. */
-      .wm-own-profile-tag-list span.truncate {
-        padding-block: 0.2em;
-        margin-block: -0.2em;
-      }
     `);
 
     updateProfileButtonColor();
-    updateOwnProfileTagListWidth();
 
     const observer = new MutationObserver(() => {
       updateProfileButtonColor();
-      updateOwnProfileTagListWidth();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
@@ -4372,8 +4362,28 @@
     input.click();
   }
 
-  // The block is folded by default: only its title shows, with a switch at its right end that unfolds it (state
-  // not remembered between visits).
+  // The block is folded by default: only its title shows, with a switch at its right end that unfolds it. The
+  // state is remembered between visits (cache key BSP_DUMP_UNFOLDED_KEY, not part of the export).
+  const BSP_DUMP_UNFOLDED_KEY = "wm-bsp-dump-unfolded";
+  const VITRINE_UNFOLDED_KEY = "wm-vitrine-unfolded";
+
+  function readUnfolded(key, fallback = false) {
+    try {
+      const stored = localStorage.getItem(key);
+      return stored === null ? fallback : stored === "true";
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeUnfolded(key, unfolded) {
+    try {
+      localStorage.setItem(key, String(unfolded));
+    } catch (error) {
+      logger(CPL.WARN, `Fold state not saved (${key})`, error);
+    }
+  }
+
   function renderStoredBidPricesGrid() {
     if (window.location.pathname !== "/profile") return;
 
@@ -4401,7 +4411,8 @@
     title.appendChild(titlePrecision);
 
     // Folded by default; the switch (aria-pressed = unfolded) shows/hides everything but the title
-    dump.classList.add("wm-bsp-dump-folded");
+    const initiallyUnfolded = readUnfolded(BSP_DUMP_UNFOLDED_KEY);
+    dump.classList.toggle("wm-bsp-dump-folded", !initiallyUnfolded);
     const foldSwitchContainer = document.createElement("span");
     foldSwitchContainer.className = "wm-bsp-dump-switch-container";
     const foldSwitchLabel = document.createElement("span");
@@ -4412,14 +4423,19 @@
     foldSwitch.type = "button";
     foldSwitch.className = "wm-bsp-dump-switch";
     foldSwitch.setAttribute("role", "switch");
-    foldSwitch.setAttribute("aria-checked", "false");
-    foldSwitch.setAttribute("aria-pressed", "false");
+    foldSwitch.setAttribute("aria-checked", String(initiallyUnfolded));
+    foldSwitch.setAttribute("aria-pressed", String(initiallyUnfolded));
     foldSwitch.title = "Déplier / replier la liste des prix observés";
     foldSwitch.addEventListener("click", () => {
       const unfolded = foldSwitch.getAttribute("aria-checked") !== "true";
       foldSwitch.setAttribute("aria-checked", String(unfolded));
       foldSwitch.setAttribute("aria-pressed", String(unfolded));
       dump.classList.toggle("wm-bsp-dump-folded", !unfolded);
+      writeUnfolded(BSP_DUMP_UNFOLDED_KEY, unfolded);
+      logger(
+        CPL.LOG,
+        `[BSP] Observed prices block ${unfolded ? "unfolded" : "folded"}`,
+      );
     });
     foldSwitchContainer.appendChild(foldSwitch);
     title.appendChild(foldSwitchContainer);
@@ -5438,6 +5454,15 @@
     {
       id: "rule-51",
       label: "Demander une confirmation avant de créer une étiquette",
+    },
+    {
+      id: "rule-52",
+      label: "Rendre la vitrine des profils repliable",
+    },
+    {
+      id: "rule-53",
+      label:
+        "Ajouter une marge verticale à la liste défilante de l'éditeur de bannière du profil",
     },
   ];
 
@@ -11250,9 +11275,9 @@
 
   // ============================================================
   // Feature FOL: on another user's profile (/profile/{username}), a "follow" eye button is added to the top-right
-  // row (div.-mt-0.5) holding the "Signaler" button, right before it, styled after that button (eye icon + "Suivre"
-  // / "Suivi" label). That row is there on every other user's profile, friend or not, unlike the message / trade
-  // buttons. Clicking it adds the user to — or removes them from — the followed list kept in localStorage under FOLLOWED_USERS_KEY (a
+  // pill holding the "Signaler" button (see findProfileReportButton), right before it, styled after that button (eye
+  // icon + "Suivre" / "Suivi" label). That pill is there on every other user's profile, friend or not, unlike the
+  // message / trade buttons. Clicking it adds the user to — or removes them from — the followed list kept in localStorage under FOLLOWED_USERS_KEY (a
   // JSON array of usernames), and the button turns red while the user is followed. On a bid page
   // (/marketplace/{UUID}), a red eye icon (span.wm-follow-eye) is then appended at the end of every followed user's
   // name span, inside it (so it can't wrap away from the name: the span is made nowrap and the eye starts with a word
@@ -11309,9 +11334,7 @@
     const username = getViewedProfileUsername();
     if (!username) return;
 
-    const reportBtn = document.querySelector(
-      'div.-mt-0\\.5 button[title^="Signaler"]',
-    );
+    const reportBtn = findProfileReportButton();
     const row = reportBtn?.parentElement;
     if (!reportBtn || !row) return;
 
@@ -11702,15 +11725,15 @@
 
   // ============================================================
   // Feature UDS: a short, personal description for other players, to remember what they are after, etc. On another
-  // user's profile (/profile/{username}), a "Description" button (pencil icon) is added to the top-right row
-  // (div.-mt-0.5), right before Feature FOL's follow button (or the "Signaler" one when that feature is off) and
+  // user's profile (/profile/{username}), a "Description" button (pencil icon) is added to the top-right pill
+  // (the one holding "Signaler"), right before Feature FOL's follow button (or the "Signaler" one when that feature is off) and
   // styled after "Signaler". It opens a modal with a textarea holding the description, saved with the "Enregistrer"
   // button or Enter (an empty text deletes it); Escape, a click outside or the "✕" close the modal. The description
   // is kept in localStorage under "desc-{username}", must be max. 128 characters (the textarea's max length is
   // 127, a live counter is shown) and is single-line (line breaks are turned into spaces).
   //
   // Feature UDS (cont'd): the description is displayed, muted and not truncated, right after the username: on that
-  // profile (div.flex-1.min-w-0 > h1.truncate) and on /friends (each friend's a[href^="/profile/"] > div.min-w-0 >
+  // profile (the username h1.truncate of the header) and on /friends (each friend's a[href^="/profile/"] > div.min-w-0 >
   // p.truncate). It is a span.wm-user-desc inserted as a sibling of the name element (the site's framework owns the
   // name's content); the name's parent becomes a wrapping flex row (wm-user-desc-host) so both sit on one line,
   // wrapping the description below the name when it doesn't fit.
@@ -11801,9 +11824,10 @@
 
     if (path.startsWith("/profile/")) {
       const username = getViewedProfileUsername();
-      const nameEl = document.querySelector("div.flex-1.min-w-0 > h1.truncate");
+      // The header's name row is already a wrapping flex row (name, title badge...), so it is left as is
+      const nameEl = document.querySelector("main h1.truncate");
       if (username && nameEl && nameEl.textContent.trim() === username) {
-        syncUserDescription(nameEl, username);
+        syncUserDescription(nameEl, username, { wrap: false });
       }
     }
 
@@ -11944,9 +11968,7 @@
     const username = getViewedProfileUsername();
     if (!username) return;
 
-    const reportBtn = document.querySelector(
-      'div.-mt-0\\.5 button[title^="Signaler"]',
-    );
+    const reportBtn = findProfileReportButton();
     const row = reportBtn?.parentElement;
     if (!reportBtn || !row) return;
 
@@ -14093,7 +14115,7 @@
         position: absolute;
         top: 0;
         left: 4vw;
-        transform: translate(-50%, -50%);
+        transform: translate(-50%, -67%);
         z-index: 5;
         display: flex;
         align-items: center;
@@ -14458,6 +14480,139 @@
   }
 
   // ============================================================
+  // Rule 52: on /profile and /profile/{username}, the "Vitrine" section (div.card-frame whose first child holds the
+  // h2 "Vitrine" and whose second child holds the showcases) is foldable, like Feature BSP's block: unfolded by
+  // default, a switch at the right end of its title row folds it (state remembered between visits, cache key
+  // VITRINE_UNFOLDED_KEY, shared by all profiles). Folding only hides the second child, so the title stays.
+  // ============================================================
+  function insertVitrineFoldSwitch() {
+    if (!window.location.pathname.startsWith("/profile")) return;
+
+    const title = Array.from(document.querySelectorAll("main h2")).find(
+      (h2) => h2.textContent.trim() === "Vitrine",
+    );
+    const header = title?.parentElement;
+    const section = header?.parentElement;
+    if (
+      !header ||
+      !section ||
+      header.querySelector(":scope > .wm-vitrine-switch")
+    )
+      return;
+    if (header.nextElementSibling === null) return;
+
+    const initiallyUnfolded = readUnfolded(VITRINE_UNFOLDED_KEY, true);
+    section.classList.toggle("wm-vitrine-folded", !initiallyUnfolded);
+
+    const label = document.createElement("span");
+    label.className = "wm-vitrine-switch-label";
+    label.textContent = "Déplier / replier";
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "wm-vitrine-switch";
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-checked", String(initiallyUnfolded));
+    toggle.title = "Déplier / replier la vitrine";
+    toggle.addEventListener("click", () => {
+      const unfolded = toggle.getAttribute("aria-checked") !== "true";
+      toggle.setAttribute("aria-checked", String(unfolded));
+      section.classList.toggle("wm-vitrine-folded", !unfolded);
+      writeUnfolded(VITRINE_UNFOLDED_KEY, unfolded);
+      logger(CPL.LOG, `[Rule 52] Vitrine ${unfolded ? "unfolded" : "folded"}`);
+    });
+
+    const wrap = document.createElement("span");
+    wrap.className = "wm-vitrine-switch wm-vitrine-switch-container";
+    wrap.append(label, toggle);
+    header.classList.add("wm-vitrine-header");
+    header.appendChild(wrap);
+    logger(CPL.LOG, "[Rule 52] Vitrine fold switch added");
+  }
+
+  function watchVitrineFold() {
+    addStyle(`
+      .wm-vitrine-header {
+        display: flex;
+        align-items: center;
+      }
+      .wm-vitrine-folded > .wm-vitrine-header + * {
+        display: none;
+      }
+      .wm-vitrine-switch-container {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .wm-vitrine-switch-label {
+        font-size: small;
+        font-weight: normal;
+      }
+      .wm-vitrine-switch {
+        position: relative;
+        flex-shrink: 0;
+      }
+      button.wm-vitrine-switch {
+        width: 2.25rem;
+        height: 1.25rem;
+        border: none;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.2);
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      button.wm-vitrine-switch::after {
+        content: "";
+        position: absolute;
+        top: 0.15rem;
+        left: 0.15rem;
+        width: 0.95rem;
+        height: 0.95rem;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.2s ease;
+      }
+      button.wm-vitrine-switch[aria-checked="true"] {
+        background: var(--color-accent);
+      }
+      button.wm-vitrine-switch[aria-checked="true"]::after {
+        transform: translateX(1rem);
+      }
+    `);
+
+    insertVitrineFoldSwitch();
+
+    const observer = new MutationObserver(() => insertVitrineFoldSwitch());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 53: on /profile, each div.flex-wrap.max-h-36 gets the site's own py-2 class (vertical padding), so its
+  // content doesn't touch the edges of the scrolling area. That list only exists while your own profile banner is
+  // being edited (the "Personnaliser" panel's scrolling list of 40+ chips).
+  // ============================================================
+  function addPaddingToWrappedLists() {
+    if (window.location.pathname !== "/profile") return;
+
+    document
+      .querySelectorAll("div.flex-wrap.max-h-36:not(.py-2)")
+      .forEach((list) => {
+        list.classList.add("py-2");
+        traceOnce(
+          "[Rule 53] py-2 added to the banner editor's div.flex-wrap.max-h-36",
+        );
+      });
+  }
+
+  function watchWrappedListsPadding() {
+    addPaddingToWrappedLists();
+
+    const observer = new MutationObserver(() => addPaddingToWrappedLists());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -14554,6 +14709,8 @@
     run("rule-49", watchOutlierButton);
     run("rule-50", watchClearObservedAfterWinButton);
     run("rule-51", watchTagCreationConfirmation);
+    run("rule-52", watchVitrineFold);
+    run("rule-53", watchWrappedListsPadding);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");
