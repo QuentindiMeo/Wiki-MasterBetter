@@ -4458,10 +4458,23 @@
     }
   }
 
+  // The grid of buttons ("Ma Collection", "Mes plus grosses ventes", ...) of /profile that Feature BSP's dump and
+  // Feature FOL's list are anchored on. It is the first div.grid *outside* any div.card-frame: the showcases of the
+  // "Vitrine" (Rule 52's section, a div.card-frame) hold div.grid of their own (a showcase laid out as a grid, such as
+  // ICONIQUE's), which come first in the document, so a plain document.querySelector("div.grid") picked one of them
+  // and the blocks were inserted into the middle of that showcase.
+  function findProfileActionsGrid() {
+    return (
+      Array.from(document.querySelectorAll("div.grid")).find(
+        (grid) => !grid.closest("div.card-frame"),
+      ) ?? null
+    );
+  }
+
   function renderStoredBidPricesGrid() {
     if (window.location.pathname !== "/profile") return;
 
-    const grid = document.querySelector("div.grid");
+    const grid = findProfileActionsGrid();
     if (
       !grid ||
       grid.nextElementSibling?.classList.contains("wm-bsp-dump-actions")
@@ -9396,12 +9409,26 @@
     return getCardEvalValueByName(cardName);
   }
 
-  // Sorts the page's cards by eval value, unknowns always last; returns false when there is no grid
+  // The direction "Ordonner par prix" is currently set to: null until its first click, then true (descending) or false
+  // (ascending). Once set it is a standing order, not a one-shot: the site re-renders the grid whenever the search, the
+  // tag filter or the page changes, which drops our ordering, so insertEvaluateUnratedButton re-applies it each time
+  // the page changes (see applyCollectionSortOrder).
+  let collectionSortDescending = null;
+
+  function getCollectionSortLabel() {
+    if (collectionSortDescending === null) return "Ordonner par prix";
+    return `Ordonner par prix ${collectionSortDescending ? "▼" : "▲"}`;
+  }
+
+  // Sorts the page's cards by eval value, unknowns always last (in their own order); returns false when there is no
+  // grid, true otherwise. The grid is only touched when its order actually changes: moving nodes mutates the DOM,
+  // which would otherwise wake the observers up again for nothing, in a loop.
   function sortCollectionByPrice(descending) {
     const grid = document.querySelector("div.gap-3.justify-center");
     if (!grid) return false;
 
-    const sorted = Array.from(grid.children)
+    const current = Array.from(grid.children);
+    const sorted = current
       .map((card, index) => ({ card, index, value: getCardEvalValue(card) }))
       .sort((a, b) => {
         if (a.value === null && b.value === null) return a.index - b.index;
@@ -9411,8 +9438,20 @@
       })
       .map((entry) => entry.card);
 
+    if (sorted.every((card, i) => card === current[i])) return true;
+
     grid.append(...sorted);
+    logger(
+      CPL.DEBUG,
+      `Collection re-ordered by price, ${descending ? "descending" : "ascending"} (${sorted.length} cards)`,
+    );
     return true;
+  }
+
+  // Keeps the grid in the order "Ordonner par prix" was last set to, whatever made the site re-render it
+  function applyCollectionSortOrder() {
+    if (collectionSortDescending === null) return;
+    sortCollectionByPrice(collectionSortDescending);
   }
 
   // Reads the number of pages left to go off the pagination indicator's whole text ("Page 1 / 92" -> 92 - 1 = 91);
@@ -9480,7 +9519,7 @@
       sortBtn.className = baseClass
         ? `${baseClass} wm-eval-sort`
         : "wm-eval-sort";
-      sortBtn.textContent = "Ordonner par prix";
+      sortBtn.textContent = getCollectionSortLabel();
       sortBtn.title =
         "Ordonner les cartes de cette page par prix décroissant/croissant";
 
@@ -9509,16 +9548,17 @@
         });
       });
 
-      // Each click flips the direction: descending first, then ascending, and so on
-      let sortDescending = true;
+      // Each click flips the direction: descending first, then ascending, and so on; the chosen direction then
+      // stays in force (applyCollectionSortOrder) when the search, the tag filter or the page changes
       sortBtn.addEventListener("click", () => {
-        if (!sortCollectionByPrice(sortDescending)) return;
+        const descending = collectionSortDescending === null ? true : !collectionSortDescending;
+        if (!sortCollectionByPrice(descending)) return;
+        collectionSortDescending = descending;
         logger(
           CPL.LOG,
-          `Collection sorted by price, ${sortDescending ? "descending" : "ascending"}`,
+          `Collection sorted by price, ${descending ? "descending" : "ascending"}`,
         );
-        sortBtn.textContent = `Ordonner par prix ${sortDescending ? "▼" : "▲"}`;
-        sortDescending = !sortDescending;
+        sortBtn.textContent = getCollectionSortLabel();
       });
 
       massBtn.addEventListener("click", () => {
@@ -9539,6 +9579,13 @@
     updateMassButtonLabel(
       filterBar.querySelector(":scope > .wm-eval-dock > .wm-eval-mass"),
     );
+
+    // The sort button's label and the grid's order follow the standing "Ordonner par prix" state, even when the site
+    // re-rendered the grid (search, tag filter, page change) or the button itself
+    const sortBtnEl = filterBar.querySelector(":scope > .wm-eval-dock > .wm-eval-sort");
+    if (sortBtnEl && sortBtnEl.textContent !== getCollectionSortLabel())
+      sortBtnEl.textContent = getCollectionSortLabel();
+    applyCollectionSortOrder();
 
     // The site's own rarity filter buttons (button.px-3.py-1.transition-colors) can be (re)inserted after ours —
     // e.g. a new rarity tier showing up appends its filter button at the end of filterBar, past our controls.
@@ -11573,7 +11620,7 @@
   function renderFollowedUsersList() {
     if (window.location.pathname !== "/profile") return;
 
-    const grid = document.querySelector("div.grid");
+    const grid = findProfileActionsGrid();
     if (!grid) return;
 
     const anchor = document.querySelector(".wm-bsp-dump") ?? grid;
