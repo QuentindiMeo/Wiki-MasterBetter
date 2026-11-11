@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.56
+// @version      0.30.63
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -10,6 +10,7 @@
 // @grant        GM_setValue
 // @grant        GM_notification
 // @grant        GM_openInTab
+// @grant        unsafeWindow
 // ==/UserScript==
 //! Regarde Naïm, c'est comme ça qu'on vibe-claude.
 //* Merci @Petipoirou67 pour ses feedbacks et son support (pour son courage et sa persévérance, wébé !)
@@ -1946,19 +1947,6 @@
     return findMarketplaceTabButton("Mes enchères");
   }
 
-  // Hides leftover ungrouped nodes React inserted before the group headings
-  // arrived (only relevant when grouping is auto-applied from stored state).
-  function hideAuctionLeftoversBeforeGrouping(wrap) {
-    const firstHeading = wrap.querySelector(":scope > h2.wm-group-heading");
-    if (!firstHeading) return;
-
-    let sibling = firstHeading.previousElementSibling;
-    while (sibling) {
-      sibling.style.display = "none";
-      sibling = sibling.previousElementSibling;
-    }
-  }
-
   function applyAuctionGrouping(wrap, grouped) {
     wrap
       .querySelectorAll(
@@ -3142,9 +3130,23 @@
   // on, so a barely better-than-eval trade on a pricey card doesn't outscore a clearly good one. It is flat at both
   // ends and the score stays continuous at an edge of 0; negative edges are not gated and score negative.
   const DEAL_SCORE_PREFERENCES = [
-    { better: { price: 1000, target: 1754, side: "buy" }, worse: { price: 405, target: 1306, side: "buy" }, times: 1.5 },
-    { better: { price: 971, target: 353, side: "sell" }, worse: { price: 250, target: 79, side: "sell" }, times: 2, atLeast: true },
-    { better: { price: 605, target: 1680, side: "buy" }, worse: { price: 13, target: 186, side: "buy" }, times: 2, atLeast: true },
+    {
+      better: { price: 1000, target: 1754, side: "buy" },
+      worse: { price: 405, target: 1306, side: "buy" },
+      times: 1.5,
+    },
+    {
+      better: { price: 971, target: 353, side: "sell" },
+      worse: { price: 250, target: 79, side: "sell" },
+      times: 2,
+      atLeast: true,
+    },
+    {
+      better: { price: 605, target: 1680, side: "buy" },
+      worse: { price: 13, target: 186, side: "buy" },
+      times: 2,
+      atLeast: true,
+    },
   ];
   const DEAL_SCORE_RAMP = 0.1;
   const DEAL_SCORE_PRICE_REF = 100;
@@ -3184,8 +3186,12 @@
     // Report the ratio each preference actually gets: a warning when a fitted one is missed by more than about 10%, or
     // when an "at least" one is not reached.
     for (const { better, worse, times, atLeast } of preferences) {
-      const got = (dealGain(better) / dealGain(worse)) * (better.price / worse.price) ** power;
-      const missed = atLeast ? got < times : Math.abs(Math.log(got / times)) > 0.1;
+      const got =
+        (dealGain(better) / dealGain(worse)) *
+        (better.price / worse.price) ** power;
+      const missed = atLeast
+        ? got < times
+        : Math.abs(Math.log(got / times)) > 0.1;
       logger(
         missed ? CPL.WARN : CPL.LOG,
         `[BBS] Deal score preference: wanted ${atLeast ? "at least " : ""}x${times}, got x${got.toFixed(2)}`,
@@ -3197,20 +3203,36 @@
   let dealScorePower;
   try {
     dealScorePower = calibrateDealScorePower(DEAL_SCORE_PREFERENCES);
-    logger(CPL.LOG, `[BBS] Deal score calibrated: price power b = ${dealScorePower.toFixed(3)}, ramp = ${DEAL_SCORE_RAMP}`);
+    logger(
+      CPL.LOG,
+      `[BBS] Deal score calibrated: price power b = ${dealScorePower.toFixed(3)}, ramp = ${DEAL_SCORE_RAMP}`,
+    );
   } catch (error) {
     dealScorePower = DEAL_SCORE_FALLBACK_POWER;
-    logger(CPL.WARN, `[BBS] Deal score calibration failed, power falls back to ${DEAL_SCORE_FALLBACK_POWER}`, error);
+    logger(
+      CPL.WARN,
+      `[BBS] Deal score calibration failed, power falls back to ${DEAL_SCORE_FALLBACK_POWER}`,
+      error,
+    );
   }
 
   // delta: the money gained against the eval (sign included); amount: the price paid; target: the card's eval
   function computeDealScore(delta, amount, target) {
-    if (![delta, amount, target].every(Number.isFinite) || amount <= 0 || target <= 0) {
-      logger(CPL.DEBUG, `[BBS] Deal score skipped (delta=${delta}, price=${amount}, eval=${target})`);
+    if (
+      ![delta, amount, target].every(Number.isFinite) ||
+      amount <= 0 ||
+      target <= 0
+    ) {
+      logger(
+        CPL.DEBUG,
+        `[BBS] Deal score skipped (delta=${delta}, price=${amount}, eval=${target})`,
+      );
       return NaN;
     }
     return (
-      delta * dealRampFactor(delta / target) * (amount / DEAL_SCORE_PRICE_REF) ** dealScorePower
+      delta *
+      dealRampFactor(delta / target) *
+      (amount / DEAL_SCORE_PRICE_REF) ** dealScorePower
     );
   }
 
@@ -3424,7 +3446,7 @@
   }
 
   // ============================================================
-  // Feature BSP (cont'd): on a bid page, flag the card name (h1.flex-1, given "display: contents") as "EXCELLENT" when
+  // Feature BSP (cont'd): on a bid page, flag the price (the badge group sits right before span.text-2xl, in the "Mise actuelle" row) as "EXCELLENT" when
   // the current price (input.min-w-0) is below 80% of the weighted average of that card's stored sold prices
   // (computeWeightedAveragePrice: out of N prices, the lowest weighs N, the second-lowest N-1, ... the highest
   // weighs 1, so a single high outlier pulls the reference up less than a plain average would), "agréable" when
@@ -3446,6 +3468,9 @@
   // not the "observed-" BSP average: recordSoldBidPrice never logs the seller's own sales there (see its own
   // comment), so that cache is essentially always empty for a card you just sold. With no eval price cached
   // either, it falls back to the same "NEW ENTRY" (white) tag, worded for a sale instead.
+  //
+  // Feature BSP (cont'd) — sale target price: the seller's own sale tag also appends the ETS eval price it was
+  // graded against, as "(obj. {value})", like the buyer's own win below.
   //
   // Feature BSP (cont'd) — buyer's own win: when the auction just sold ("Vendue") and the viewer is the winning
   // bidder (isMyUsernameLeadingBid — not the owned-card label, span.bg-emerald-600/90, which says nothing about
@@ -3513,21 +3538,27 @@
     return "excessive";
   }
 
-  // The buy/sale status badge and the reliability tag are grouped into a single wrapper div (nameEl's actual
-  // next sibling) so they move and get cleaned up together, rather than tracking each as its own sibling.
-  function findBadgeGroup(nameEl) {
-    return nameEl.nextElementSibling?.classList.contains("wm-badge-group")
-      ? nameEl.nextElementSibling
+  // The buy/sale status badge and the reliability tag are grouped into a single wrapper div so they move and get
+  // cleaned up together, rather than tracking each as its own sibling. The group sits right before the bid card's
+  // price (span.text-2xl, in the "Mise actuelle" row) and is its previous sibling; the price element is the anchor.
+  function findBadgePriceEl() {
+    return document.querySelector("span.text-2xl");
+  }
+
+  function findBadgeGroup(priceEl) {
+    return priceEl?.previousElementSibling?.classList.contains("wm-badge-group")
+      ? priceEl.previousElementSibling
       : null;
   }
 
-  function getOrCreateBadgeGroup(nameEl) {
+  function getOrCreateBadgeGroup(priceEl) {
     return (
-      findBadgeGroup(nameEl) ??
+      findBadgeGroup(priceEl) ??
       (() => {
         const group = document.createElement("div");
         group.className = "wm-badge-group";
-        nameEl.after(group);
+        priceEl.before(group);
+        logger(CPL.DEBUG, "[BSP] Badge group placed next to the price");
         return group;
       })()
     );
@@ -3582,9 +3613,10 @@
     if (document.querySelector("div.animate-spin")) return;
 
     const nameEl = document.querySelector("h1.flex-1");
-    if (!nameEl) return;
+    const priceEl = findBadgePriceEl();
+    if (!nameEl || !priceEl) return;
 
-    let group = findBadgeGroup(nameEl);
+    let group = findBadgeGroup(priceEl);
     const existing = findBadgeIn(group);
 
     // A cancelled auction ("Annulée") isn't a real outcome to price against — no sale, no legitimate final bid —
@@ -3651,7 +3683,7 @@
         stored[0].endsWith(`-${currentTag}`);
 
       if (isFreshCacheEntry) {
-        group = getOrCreateBadgeGroup(nameEl);
+        group = getOrCreateBadgeGroup(priceEl);
         setBadge(group, existing, "wm-new-entry", "désormais observé");
         removeReliabilityTag(group);
         traceOnce(`[BSP] "${cardName}" is the first observed price: ${price}`);
@@ -3665,7 +3697,7 @@
 
     if (referenceValue === null) {
       if (isMySoldAuction) {
-        group = getOrCreateBadgeGroup(nameEl);
+        group = getOrCreateBadgeGroup(priceEl);
         setBadge(group, existing, "wm-new-entry", "vente non comparable");
         removeReliabilityTag(group);
         traceOnce(
@@ -3698,10 +3730,10 @@
     let label = isMySoldAuction
       ? SALE_STATUS_LABELS[status]
       : BUY_STATUS_LABELS[status];
-    if (isMyWonAuction || isReliable) {
+    if (isMySoldAuction || isMyWonAuction || isReliable) {
       label += ` (obj. ${Math.round(referenceValue)})`;
     }
-    group = getOrCreateBadgeGroup(nameEl);
+    group = getOrCreateBadgeGroup(priceEl);
     setBadge(group, existing, `wm-${status}`, label);
     traceOnce(
       `[BSP] "${cardName}": ${price} vs reference ${Math.round(referenceValue)} (${isMySoldAuction ? "my sale, estimate" : `${observedEntryCount} observed price(s)`}) -> ${status}${isReliable ? ", reliable" : ""}`,
@@ -3723,11 +3755,17 @@
       h1.flex-1 {
         display: contents;
       }
+      /* The link(s) beside the card's name (the external-link icon): scoped to the name's own row so that no other
+         a.shrink-0 of the site is touched */
+      div:has(> h1.flex-1) > a.shrink-0 {
+        display: contents;
+      }
       .wm-badge-group {
         position: relative;
         display: inline-flex;
         align-items: center;
-        margin-left: 0.5rem;
+        margin-left: auto;
+        margin-right: 0.75rem;
       }
       .wm-legendary,
       .wm-extraordinary,
@@ -3786,7 +3824,8 @@
       .wm-unreliable,
       .wm-reliable {
         position: absolute;
-        bottom: 1.5rem;
+        top: calc(100% + 0.15rem);
+        right: 0;
         width: max-content;
         font-size: 0.7rem;
         color: rgba(255, 255, 255, 0.5);
@@ -4076,41 +4115,6 @@
     });
 
     return entries;
-  }
-
-  // Renames every remaining untagged legacy key (a plain card name
-  // holding a tagged-price-array value) to its "observed-" prefixed
-  // form. Returns how many keys were migrated.
-  function migrateUntaggedBspKeys() {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key) keys.push(key);
-    }
-
-    let migratedCount = 0;
-
-    keys.forEach((key) => {
-      if (key.startsWith(BSP_KEY_PREFIX)) return;
-
-      const raw = localStorage.getItem(key);
-      if (raw === null) return;
-
-      let value;
-      try {
-        value = JSON.parse(raw);
-      } catch {
-        return;
-      }
-
-      if (!isValidBspPriceArray(value)) return;
-
-      localStorage.setItem(getBspObservedStorageKey(key), raw);
-      localStorage.removeItem(key);
-      migratedCount++;
-    });
-
-    return migratedCount;
   }
 
   // Feature BSP/ETS (cont'd): an import/export pill next to "Vider le cache" carries every "observed-" (Feature
@@ -5444,10 +5448,6 @@
       label: "Mémorisation de vos plus grosses ventes et achats",
     },
     {
-      id: "rule-36",
-      label: "Aller directement à une page de la collection",
-    },
-    {
       id: "feature-fol",
       label: "Suivre des joueurs (œil rouge sur les pages d'enchère)",
     },
@@ -5516,7 +5516,8 @@
     },
     {
       id: "rule-46",
-      label: "Revenir sur /pulls après avoir lancé une enchère depuis /pulls",
+      label:
+        "Fermer les fenêtres après avoir lancé une enchère depuis /pulls ou /collection",
     },
     {
       id: "rule-47",
@@ -5550,6 +5551,16 @@
       id: "rule-53",
       label:
         "Ajouter une marge verticale à la liste défilante de l'éditeur de bannière du profil",
+    },
+    {
+      id: "rule-54",
+      label:
+        "Afficher la date d'obtention dans la fenêtre d'une carte (/collection)",
+    },
+    {
+      id: "rule-55",
+      label:
+        "Replier la liste d'étiquettes d'une carte au clic dans sa zone d'étiquettes",
     },
   ];
 
@@ -9551,7 +9562,8 @@
       // Each click flips the direction: descending first, then ascending, and so on; the chosen direction then
       // stays in force (applyCollectionSortOrder) when the search, the tag filter or the page changes
       sortBtn.addEventListener("click", () => {
-        const descending = collectionSortDescending === null ? true : !collectionSortDescending;
+        const descending =
+          collectionSortDescending === null ? true : !collectionSortDescending;
         if (!sortCollectionByPrice(descending)) return;
         collectionSortDescending = descending;
         logger(
@@ -9582,7 +9594,9 @@
 
     // The sort button's label and the grid's order follow the standing "Ordonner par prix" state, even when the site
     // re-rendered the grid (search, tag filter, page change) or the button itself
-    const sortBtnEl = filterBar.querySelector(":scope > .wm-eval-dock > .wm-eval-sort");
+    const sortBtnEl = filterBar.querySelector(
+      ":scope > .wm-eval-dock > .wm-eval-sort",
+    );
     if (sortBtnEl && sortBtnEl.textContent !== getCollectionSortLabel())
       sortBtnEl.textContent = getCollectionSortLabel();
     applyCollectionSortOrder();
@@ -9710,7 +9724,8 @@
 
   // ============================================================
   // Rule 21: on /collection and /pulls, when the card modal (div.card-frame.p-6) opens, hide
-  // p.leading-snug.text-[10px] (the legal mentions paragraph). Hidden via "display: none" rather than removed:
+  // "div.mt-auto p.leading-snug" (the legal mentions paragraph; the former p.leading-snug.text-[10px] selector now
+  // matched the card face's own description first, which the site renders with the same classes). Hidden via "display: none" rather than removed:
   // React still owns and re-renders this node, so actually detaching it (Node.remove()) races React's own
   // reconciliation and can throw "removeChild: the node to be removed is not a child of this node" the moment
   // React tries to update/unmount it too — the same class of race already called out in Feature TMB. Also, with
@@ -9725,22 +9740,27 @@
       return;
 
     const modal = document.querySelector("div.card-frame.p-6");
-    if (!modal || modal.dataset.wmLegalHidden === "true") return;
+    if (!modal) return;
 
+    // Looked for on every mutation rather than once after a delay: the paragraph may render later than the modal
+    // itself (tab switch, card navigation), and the check is idempotent
+    // div.mt-auto is only there once this rule has tagged the paragraph's parent itself (see below), so the paragraph
+    // is identified by its content, with the former selector as a fallback
+    const legalMentions =
+      Array.from(modal.querySelectorAll("p.leading-snug")).find((p) =>
+        p.textContent.trim().startsWith("Texte de l'article"),
+      ) ?? modal.querySelector("div.mt-auto p.leading-snug");
+    if (!legalMentions || legalMentions.style.display === "none") return;
+
+    legalMentions.style.display = "none";
     modal.dataset.wmLegalHidden = "true";
+    logger(CPL.LOG, "Rule 21: legal mentions hidden");
 
-    setTimeout(() => {
-      const legalMentions = modal.querySelector(
-        "p.leading-snug.text-\\[10px\\]",
-      );
-      if (legalMentions) legalMentions.style.display = "none";
-
-      const link = modal.querySelector("a.inline-flex");
-      if (link) {
-        link.classList.add("m-0", "mt-5");
-        link.parentElement?.classList.add("mt-auto");
-      }
-    }, 250);
+    const link = modal.querySelector("a.inline-flex");
+    if (link) {
+      link.classList.add("m-0", "mt-5");
+      link.parentElement?.classList.add("mt-auto");
+    }
   }
 
   function watchCardModalLegalMentions() {
@@ -10579,24 +10599,6 @@
   const TOP_EVALS_CACHE_KEY = "wm-top-evals-cache";
   const TOP_EVALS_CHUNK_SIZE = 1500;
 
-  function collectTopEvals() {
-    const names = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(EVAL_KEY_PREFIX))
-        names.push(key.slice(EVAL_KEY_PREFIX.length));
-    }
-
-    return names
-      .map((cardName) => ({
-        cardName,
-        value: getCardEvalValueByName(cardName),
-      }))
-      .filter((entry) => entry.value !== null)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, TOP_LIMIT_MAX);
-  }
-
   function readTopEvalsCache() {
     try {
       const parsed = JSON.parse(localStorage.getItem(TOP_EVALS_CACHE_KEY));
@@ -10620,7 +10622,7 @@
     }
   }
 
-  // Same result as collectTopEvals, but without holding the page up: the entries are read in chunks, with a pause
+  // Computes the top estimates without holding the page up: the entries are read in chunks, with a pause
   // between them, keeping only the best ones so far: always TOP_LIMIT_MAX of them (the buffer), the configured size
   // only trims what is shown
   async function computeTopEvalsAsync() {
@@ -10965,156 +10967,6 @@
     });
 
     heading.appendChild(btn);
-  }
-
-  // ============================================================
-  // Rule 36: on /collection, once the catalog has finished loading (no div.animate-spin, and the page indicator
-  // COLLECTION_PAGE_INDICATOR_SELECTOR reads "{current} / {max}"), that indicator becomes clickable. Clicking it
-  // hides it and shows a number <input> (1..max) in its place; Enter jumps to that page, Escape or losing focus
-  // puts the indicator back untouched. The indicator is hidden rather than removed since React owns it. The jump
-  // is performed with the indicator's two sibling buttons (previous - indicator - next): the matching one is
-  // clicked once per page to cross, waiting for the indicator to change between clicks.
-  // ============================================================
-  let collectionPageJumpRunning = false;
-
-  function readCollectionPageIndicator(span) {
-    const match = span.textContent.match(/(\d+)\s*\/\s*(\d+)/);
-    return match ? { current: +match[1], max: +match[2] } : null;
-  }
-
-  function findCollectionPageIndicator() {
-    return (
-      Array.from(
-        document.querySelectorAll(COLLECTION_PAGE_INDICATOR_SELECTOR),
-      ).find((span) => readCollectionPageIndicator(span)) ?? null
-    );
-  }
-
-  function isCollectionPageLoaded() {
-    return (
-      window.location.pathname.startsWith("/collection") &&
-      !document.querySelector("div.animate-spin") &&
-      findCollectionPageIndicator() !== null
-    );
-  }
-
-  async function jumpToCollectionPage(target) {
-    if (collectionPageJumpRunning) return;
-    collectionPageJumpRunning = true;
-
-    try {
-      for (;;) {
-        const span = findCollectionPageIndicator();
-        const state = span && readCollectionPageIndicator(span);
-        if (!state || state.current === target) return;
-
-        const btn =
-          target > state.current
-            ? span.nextElementSibling
-            : span.previousElementSibling;
-        if (!(btn instanceof HTMLButtonElement) || btn.disabled) return;
-
-        btn.click();
-
-        let changed = false;
-        for (let waited = 0; waited < 15000 && !changed; waited += 50) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          const now = findCollectionPageIndicator();
-          const nowState = now && readCollectionPageIndicator(now);
-          changed = nowState !== null && nowState.current !== state.current;
-        }
-        if (!changed) return;
-      }
-    } finally {
-      collectionPageJumpRunning = false;
-    }
-  }
-
-  function openCollectionPageInput(span) {
-    if (span.nextElementSibling?.classList.contains("wm-page-jump-input"))
-      return;
-
-    const state = readCollectionPageIndicator(span);
-    const input = document.createElement("input");
-    input.type = "number";
-    input.min = "1";
-    input.max = String(state.max);
-    input.value = String(state.current);
-    input.className = "wm-page-jump-input";
-    input.title =
-      "Cliquer pour définir manuellement une page à laquelle vous rendre";
-    input.setAttribute("aria-label", "Aller à la page");
-
-    let closed = false;
-    const close = () => {
-      if (closed) return;
-      closed = true;
-      input.remove();
-      span.style.display = "";
-    };
-
-    input.addEventListener("keydown", (event) => {
-      event.stopPropagation();
-      if (event.key === "Escape") {
-        close();
-      } else if (event.key === "Enter") {
-        event.preventDefault();
-        const target = Math.min(
-          state.max,
-          Math.max(1, parseInt(input.value, 10) || state.current),
-        );
-        close();
-        jumpToCollectionPage(target);
-      }
-    });
-    input.addEventListener("blur", close);
-
-    span.style.display = "none";
-    span.after(input);
-    input.focus();
-    input.select();
-  }
-
-  function updateCollectionPageIndicatorClickable() {
-    const span = findCollectionPageIndicator();
-    if (!span) return;
-    span.classList.toggle("wm-page-jump", isCollectionPageLoaded());
-  }
-
-  function watchCollectionPageJump() {
-    addStyle(`
-      .wm-page-jump {
-        cursor: pointer;
-        transition: scale 0.1s ease;
-      }
-      .wm-page-jump:hover {
-        scale: 1.05;
-      }
-      .wm-page-jump-input {
-        width: 4.5rem;
-        padding: 0.1rem 0.4rem;
-        border: 1px solid currentColor;
-        border-radius: 0.4rem;
-        background: transparent;
-        color: inherit;
-        text-align: center;
-      }
-    `);
-
-    document.addEventListener("click", (event) => {
-      const span = event.target.closest?.(".wm-page-jump");
-      if (span && isCollectionPageLoaded()) openCollectionPageInput(span);
-    });
-
-    updateCollectionPageIndicatorClickable();
-    const observer = new MutationObserver(() =>
-      updateCollectionPageIndicatorClickable(),
-    );
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
   }
 
   // Injected once, whichever of Rule 35 / Feature BBS's /profile button (both rely on it) is enabled first
@@ -12367,6 +12219,10 @@
   // popup blockers leave alone, with window.open as a fallback). Each opened auction is then unwatched by the
   // auto-unwatch of ended auctions. Disabled while none has expired.
   //
+  // Feature WAT (cont'd): the popover is collapsed by default: of the others (not over: running, or end unknown) and of the
+  // over auctions (end known and past), listed in that order and separated by an hr, only the first WATCH_POPOVER_GROUP_SIZE (10) of each are listed, the 10th of a truncated group fading out
+  // on its bottom side. When either group has more, a "Tout afficher (n)" pill at the bottom unfolds both groups.
+  //
   // Feature WAT (cont'd): bidding on an auction watches it automatically. On a bid page, once it has finished loading
   // (same readiness checks as the auto-unwatch above) and is still running (the "time left" span is there), the
   // auction is watched as soon as your pseudo (Feature CFG's "Votre pseudo WikiMasters") is the current leader (Rule 33's isMyUsernameLeadingBid) or appears in
@@ -12621,6 +12477,8 @@
     document.querySelector(".wm-watch-popover")?.remove();
   }
 
+  const WATCH_POPOVER_GROUP_SIZE = 8;
+
   function renderWatchPopover(popover) {
     popover.textContent = "";
 
@@ -12653,44 +12511,84 @@
     });
     popover.appendChild(openExpiredBtn);
 
-    watched.forEach(({ entry, id, name, endEpoch }) => {
-      const row = document.createElement("div");
-      row.className = "wm-watch-row";
+    // Collapsed by default: only the first WATCH_POPOVER_GROUP_SIZE of the others (not over) and of the over auctions are listed
+    // (the last one of a truncated group fades out), until "Tout afficher" unfolds both groups
+    const isExpanded = popover.dataset.wmExpanded === "true";
+    const isOver = (w) => w.endEpoch !== null && w.endEpoch <= Date.now();
+    const groups = [watched.filter((w) => !isOver(w)), watched.filter(isOver)];
+    const hasHiddenRows = groups.some(
+      (group) => group.length > WATCH_POPOVER_GROUP_SIZE,
+    );
+    const visibleGroups = groups.map((group) =>
+      isExpanded ? group : group.slice(0, WATCH_POPOVER_GROUP_SIZE),
+    );
 
-      const link = document.createElement("a");
-      link.className = "wm-watch-link";
-      link.href = `/marketplace/${id}`;
-      link.textContent = name;
-      link.title = name;
-      link.addEventListener("click", () =>
-        logger(CPL.INFO, `Watched auction opened: "${name}" (${id})`),
-      );
+    visibleGroups.forEach((group, groupIndex) => {
+      // The two groups are told apart by a rule, only when both have rows
+      if (groupIndex === 1 && group.length > 0 && visibleGroups[0].length > 0) {
+        const separator = document.createElement("hr");
+        separator.className = "wm-watch-separator";
+        popover.appendChild(separator);
+      }
 
-      const age = document.createElement("span");
-      age.className = "wm-watch-age";
-      age.textContent =
-        endEpoch !== null ? formatWatchEnd(endEpoch) : "fin inconnue";
-      age.title =
-        endEpoch !== null
-          ? `Fin : ${new Date(endEpoch).toLocaleString()}`
-          : "Fin inconnue : elle sera enregistrée à la prochaine visite de l'enchère";
+      group.forEach(({ entry, id, name, endEpoch }, index) => {
+        const row = document.createElement("div");
+        row.className = "wm-watch-row";
+        if (
+          !isExpanded &&
+          index === WATCH_POPOVER_GROUP_SIZE - 1 &&
+          groups[groupIndex].length > WATCH_POPOVER_GROUP_SIZE
+        )
+          row.classList.add("wm-watch-row-faded");
 
-      const removeBtn = document.createElement("button");
-      removeBtn.type = "button";
-      removeBtn.className = "wm-watch-remove";
-      removeBtn.setAttribute("aria-label", `Ne plus surveiller ${name}`);
-      removeBtn.textContent = "✕";
-      removeBtn.addEventListener("click", () => {
-        const kept = readSavedEntries().filter((saved) => saved !== entry);
-        if (!writeSavedEntries(kept)) return;
-        logger(CPL.INFO, `Auction unwatched: "${name}" (${id})`);
-        renderWatchPopover(popover);
-        updateWatchListButtonCount();
+        const link = document.createElement("a");
+        link.className = "wm-watch-link";
+        link.href = `/marketplace/${id}`;
+        link.textContent = name;
+        link.title = name;
+        link.addEventListener("click", () =>
+          logger(CPL.INFO, `Watched auction opened: "${name}" (${id})`),
+        );
+
+        const age = document.createElement("span");
+        age.className = "wm-watch-age";
+        age.textContent =
+          endEpoch !== null ? formatWatchEnd(endEpoch) : "fin inconnue";
+        age.title =
+          endEpoch !== null
+            ? `Fin : ${new Date(endEpoch).toLocaleString()}`
+            : "Fin inconnue : elle sera enregistrée à la prochaine visite de l'enchère";
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "wm-watch-remove";
+        removeBtn.setAttribute("aria-label", `Ne plus surveiller ${name}`);
+        removeBtn.textContent = "✕";
+        removeBtn.addEventListener("click", () => {
+          const kept = readSavedEntries().filter((saved) => saved !== entry);
+          if (!writeSavedEntries(kept)) return;
+          logger(CPL.INFO, `Auction unwatched: "${name}" (${id})`);
+          renderWatchPopover(popover);
+          updateWatchListButtonCount();
+        });
+
+        row.append(link, age, removeBtn);
+        popover.appendChild(row);
       });
-
-      row.append(link, age, removeBtn);
-      popover.appendChild(row);
     });
+
+    if (hasHiddenRows && !isExpanded) {
+      const showAllBtn = document.createElement("button");
+      showAllBtn.type = "button";
+      showAllBtn.className = "wm-watch-open-expired wm-watch-show-all";
+      showAllBtn.textContent = `Tout afficher (${watched.length})`;
+      showAllBtn.addEventListener("click", () => {
+        popover.dataset.wmExpanded = "true";
+        logger(CPL.LOG, "Watched auctions popover unfolded");
+        renderWatchPopover(popover);
+      });
+      popover.appendChild(showAllBtn);
+    }
   }
 
   function updateWatchListButtonCount() {
@@ -13143,6 +13041,20 @@
       .wm-watch-open-expired:disabled {
         opacity: 0.4;
         cursor: not-allowed;
+      }
+      .wm-watch-separator {
+        width: 100%;
+        margin: 0.25rem 0;
+        border: none;
+        border-top: 1px solid var(--color-border);
+      }
+      .wm-watch-row-faded {
+        -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 85%);
+        mask-image: linear-gradient(to bottom, #000 0%, transparent 85%);
+        pointer-events: none;
+      }
+      .wm-watch-row-faded > * {
+        pointer-events: auto;
       }
       .wm-watch-empty {
         margin: 0;
@@ -14100,63 +14012,85 @@
   }
 
   // ============================================================
-  // Rule 46: when the user launches an auction from /pulls (a click on the sell modal's "Lancer l'enchère" button,
-  // which Feature LBD's Enter key also goes through) the site redirects to the new auction's page; this pulls them
-  // straight back to /pulls so they can keep opening their packs. The click only arms the rule (capture phase, so
-  // it is seen even if the site stops the event): within PULLS_RETURN_WINDOW_MS, the first time the path becomes
-  // /marketplace/{UUID}, history.back() is called (the redirect is a pushState, so the previous entry is /pulls);
-  // if the page is still not /pulls shortly after, it falls back to a regular navigation. Launching from anywhere
-  // else than /pulls is left alone.
+  // Rule 46: when the user launches an auction from /pulls or /collection (a click on the sell modal's "Lancer l'enchère" button,
+  // which Feature LBD's Enter key also goes through), the site no longer redirects to the new auction's page: it
+  // stays on /pulls and shows a confirmation dialog, "Enchère lancée" (an h2 inside a div.card-frame). Once that
+  // dialog shows, after AUCTION_CONFIRM_ESCAPE_DELAY_MS, Escape is pressed twice (AUCTION_CONFIRM_ESCAPE_GAP_MS apart): the first closes the confirmation,
+  // the second the card's modal behind it, so the user is back on their packs (or collection) and can carry on. The click
+  // only arms the rule (capture phase, so it is seen even if the site stops the event); within
+  // AUCTION_CONFIRM_WINDOW_MS the dialog is looked for every AUCTION_CONFIRM_POLL_MS. Launching from anywhere else
+  // than /pulls and /collection is left alone.
   // ============================================================
-  const PULLS_RETURN_WINDOW_MS = 15000;
-  const PULLS_RETURN_POLL_MS = 50;
-  const PULLS_RETURN_FALLBACK_MS = 600;
-  let pullsReturnTimer = null;
+  const AUCTION_CONFIRM_WINDOW_MS = 15000;
+  const AUCTION_CONFIRM_POLL_MS = 50;
+  const AUCTION_CONFIRM_ESCAPE_DELAY_MS = 250;
+  const AUCTION_CONFIRM_ESCAPE_GAP_MS = 150;
+  const AUCTION_CONFIRM_TITLE = "Enchère lancée";
+  let auctionConfirmTimer = null;
 
-  function disarmPullsReturn() {
-    if (pullsReturnTimer === null) return;
-    clearInterval(pullsReturnTimer);
-    pullsReturnTimer = null;
+  function disarmAuctionConfirmClose() {
+    if (auctionConfirmTimer === null) return;
+    clearInterval(auctionConfirmTimer);
+    auctionConfirmTimer = null;
   }
 
-  function armPullsReturn() {
-    disarmPullsReturn();
+  function isAuctionConfirmShown() {
+    return Array.from(document.querySelectorAll("div.card-frame h2")).some(
+      (h2) => h2.textContent.trim() === AUCTION_CONFIRM_TITLE,
+    );
+  }
+
+  function pressEscape() {
+    const target = document.activeElement ?? document.body;
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        code: "Escape",
+        keyCode: 27,
+        which: 27,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  function armAuctionConfirmClose() {
+    disarmAuctionConfirmClose();
     const armedAt = Date.now();
     logger(
       CPL.INFO,
-      "Rule 46: auction launched from /pulls, waiting for the redirect",
+      `Rule 46: auction launched from ${window.location.pathname}, waiting for its confirmation dialog`,
     );
 
-    pullsReturnTimer = setInterval(() => {
-      if (Date.now() - armedAt > PULLS_RETURN_WINDOW_MS) {
-        logger(CPL.LOG, "Rule 46: no redirect seen, disarmed");
-        disarmPullsReturn();
+    auctionConfirmTimer = setInterval(() => {
+      if (Date.now() - armedAt > AUCTION_CONFIRM_WINDOW_MS) {
+        logger(CPL.LOG, "Rule 46: no confirmation dialog seen, disarmed");
+        disarmAuctionConfirmClose();
         return;
       }
-      if (!MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) return;
+      if (!isAuctionConfirmShown()) return;
 
-      disarmPullsReturn();
+      disarmAuctionConfirmClose();
       logger(
         CPL.INFO,
-        `Rule 46: redirected to ${window.location.pathname}, going back to /pulls`,
+        `Rule 46: auction listed, Escape pressed twice in ${AUCTION_CONFIRM_ESCAPE_DELAY_MS} ms`,
       );
-      window.history.back();
       setTimeout(() => {
-        if (window.location.pathname.startsWith("/pulls")) return;
-        logger(
-          CPL.WARN,
-          "Rule 46: history.back() did not return to /pulls, navigating",
-        );
-        window.location.assign("/pulls");
-      }, PULLS_RETURN_FALLBACK_MS);
-    }, PULLS_RETURN_POLL_MS);
+        pressEscape();
+        setTimeout(pressEscape, AUCTION_CONFIRM_ESCAPE_GAP_MS);
+      }, AUCTION_CONFIRM_ESCAPE_DELAY_MS);
+    }, AUCTION_CONFIRM_POLL_MS);
   }
 
   function watchAuctionLaunchReturnToPulls() {
     document.addEventListener(
       "click",
       (event) => {
-        if (!window.location.pathname.startsWith("/pulls")) return;
+        if (
+          !window.location.pathname.startsWith("/pulls") &&
+          !window.location.pathname.startsWith("/collection")
+        )
+          return;
 
         const button =
           event.target instanceof Element
@@ -14170,7 +14104,7 @@
         )
           return;
 
-        armPullsReturn();
+        armAuctionConfirmClose();
       },
       true,
     );
@@ -14808,6 +14742,154 @@
   }
 
   // ============================================================
+  // Rule 54: on /collection, the card modal (div.card-frame.p-6) shows when the card was obtained, as
+  // "Obtenue le : {date}", right under its "Exemplaires" line. The date comes from the site's own collection API
+  // (GET /api/my-collection?...: {collection: [{card: {wikipedia_title}, obtained_at}]}), whose responses are read as
+  // the page loads them: fetch is wrapped in the page's own window (unsafeWindow) for the pages requested from now
+  // on, and the /api/my-collection requests already made before the script started are replayed from the Performance
+  // API's resource entries (same URL, so same page of the same sort/filter). Dates are kept in memory by card name
+  // (wikipedia_title, which the modal's h3 shows).
+  // ============================================================
+  const OBTAINED_AT_ID = "wm-obtained-at"; // one card modal at a time, so the id stays unique
+  const COLLECTION_API_PATH = "/api/my-collection";
+  const obtainedAtByCardName = new Map();
+
+  function recordObtainedDates(payload) {
+    const rows = Array.isArray(payload?.collection) ? payload.collection : [];
+    let added = 0;
+    rows.forEach((row) => {
+      const name = row?.card?.wikipedia_title;
+      if (!name || !row.obtained_at) return;
+      if (obtainedAtByCardName.get(name) === row.obtained_at) return;
+      obtainedAtByCardName.set(name, row.obtained_at);
+      added++;
+    });
+    if (added > 0)
+      logger(
+        CPL.LOG,
+        `Rule 54: ${added} obtained date(s) read (${obtainedAtByCardName.size} known)`,
+      );
+    // A modal opened before its date arrived gets it now
+    showCardObtainedDate();
+  }
+
+  function isCollectionApiUrl(url) {
+    try {
+      return (
+        new URL(url, window.location.origin).pathname === COLLECTION_API_PATH
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function hookCollectionFetch() {
+    const pageWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const originalFetch = pageWindow.fetch;
+    pageWindow.fetch = function (input, ...rest) {
+      const promise = originalFetch.call(this, input, ...rest);
+      const url =
+        typeof input === "string" ? input : (input?.url ?? String(input));
+      if (isCollectionApiUrl(url)) {
+        promise
+          .then((response) => response.clone().json())
+          .then(recordObtainedDates)
+          .catch((error) =>
+            logger(CPL.WARN, "Rule 54: collection response unreadable", error),
+          );
+      }
+      return promise;
+    };
+
+    // Requests made before the script started: replayed (the response is cached by the browser or cheap to fetch)
+    performance
+      .getEntriesByType("resource")
+      .filter((entry) => isCollectionApiUrl(entry.name))
+      .forEach((entry) => {
+        logger(CPL.LOG, `Rule 54: replaying ${entry.name}`);
+        originalFetch
+          .call(pageWindow, entry.name, { credentials: "same-origin" })
+          .then((response) => response.json())
+          .then(recordObtainedDates)
+          .catch((error) => logger(CPL.WARN, "Rule 54: replay failed", error));
+      });
+  }
+
+  function formatObtainedDate(iso) {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime())
+      ? null
+      : date.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" });
+  }
+
+  function showCardObtainedDate() {
+    if (!window.location.pathname.startsWith("/collection")) return;
+    const modal = document.querySelector("div.card-frame.p-6");
+    const cardName = modal?.querySelector("h3")?.textContent.trim();
+    if (!modal || !cardName) return;
+
+    const existing = modal.querySelector(`#${OBTAINED_AT_ID}`);
+    if (existing?.dataset.wmCard === cardName) return;
+    existing?.remove();
+
+    const copies = Array.from(modal.querySelectorAll("p")).find((p) =>
+      p.textContent.trim().startsWith("Exemplaires"),
+    );
+    const iso = obtainedAtByCardName.get(cardName);
+    const text = iso && formatObtainedDate(iso);
+    if (!copies || !text) return;
+
+    const line = copies.cloneNode(false);
+    line.id = OBTAINED_AT_ID;
+    line.dataset.wmCard = cardName;
+    line.textContent = `Obtenue le : ${text}`;
+    copies.after(line);
+    logger(CPL.LOG, `Rule 54: "${cardName}" obtained ${iso}`);
+  }
+
+  function watchCardObtainedDate() {
+    hookCollectionFetch();
+    showCardObtainedDate();
+
+    const observer = new MutationObserver(() => showCardObtainedDate());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
+  // Rule 55: in the card modal (div.card-frame.p-6), the tag list under the "Ajouter une étiquette…" field folds when
+  // the user presses the mouse outside the tags' block (div.space-y-2), but a press inside that block (the "ÉTIQUETTES"
+  // label, the gaps between the chips...) only blurs the field: the list stays open. When the press lands in that
+  // block but outside the field's own wrapper (div.relative: the field and its list), the same outside press the
+  // site listens for is replayed on the modal itself, so the list folds. Chips' "×" buttons and the list are left
+  // alone (they are real actions).
+  // ============================================================
+  function watchTagListFoldOnTagsAreaClick() {
+    document.addEventListener(
+      "mousedown",
+      (event) => {
+        if (!(event.target instanceof Element) || !event.isTrusted) return;
+
+        const modal = event.target.closest("div.card-frame.p-6");
+        const area = event.target.closest("div.space-y-2");
+        if (!modal || !area || !modal.contains(area)) return;
+        if (!area.querySelector("ul.absolute")) return;
+        // div.relative is looked for inside the tags' block only: the modal itself is a div.relative too
+        if (event.target.closest("button")) return;
+        if (area.querySelector(":scope > div.relative")?.contains(event.target))
+          return;
+
+        modal.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        logger(
+          CPL.LOG,
+          "Rule 55: tag list folded after a click in the tags area",
+        );
+      },
+      true,
+    );
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -14881,7 +14963,6 @@
     run("rule-33", watchOwnBidButtonColor);
     run("rule-34", watchTagFilterListKeyboardNav);
     run("rule-35", watchTopEvalsButton);
-    run("rule-36", watchCollectionPageJump);
     run("feature-bbs", watchBestTradeRecording);
     run("feature-bbs", watchBestTradesButtons);
     run("feature-fol", watchFollowedUsers);
@@ -14906,6 +14987,8 @@
     run("rule-51", watchTagCreationConfirmation);
     run("rule-52", watchVitrineFold);
     run("rule-53", watchWrappedListsPadding);
+    run("rule-54", watchCardObtainedDate);
+    run("rule-55", watchTagListFoldOnTagsAreaClick);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");

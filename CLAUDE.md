@@ -60,3 +60,6 @@ All code and docs must be written in American English. Exceptions: business word
 - **Rechargement automatique en cas d'échec** : Si la page affiche un message rouge « a échoué », elle se recharge d'elle-même peu après ; de même, sur n'importe quelle page, si un titre « This page couldn't load » apparaît (avec au plus 3 rechargements par minute, pour ne pas boucler sur une page durablement cassée)
 - **Boutons de favoris masqués en masse** : Sur `/collection`, la barre d'actions de la sélection n'affiche plus « ajouter/retirer des favoris », ne laissant que l'étiquetage et la défausse
 - **Collection plus compacte** : Sur `/collection`, les marges entre les blocs empilés (`space-y-3`) sont supprimées, et les listes animées sont remplacées par une colonne espacée de 0,5 rem
+- **Liste d'étiquettes qui se replie** : Dans la modale de carte, un clic dans la zone des étiquettes (hors champ et pastilles) replie la liste au lieu de seulement lui retirer le focus
+- La liste n'affiche d'abord que les 10 premières enchères en cours puis, après un séparateur, les 10 premières des terminées (la dixième de chaque groupe s'estompe vers le bas) ; un bouton « Tout afficher » déplie les deux groupes
+- Le tag s'affiche à côté du prix (dans la ligne « Mise actuelle ») plutôt qu'après le nom de la carte

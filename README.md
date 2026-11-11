@@ -71,7 +71,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 ### 🎁 Paquets
 
 - **Paquets pilotables au clavier** : Les flèches naviguent entre les cartes tirées (gauche-droite, haut-bas pour aller au début/à la fin), Espace ouvre/ferme le paquet, E ouvre la modale de carte, V ouvre la modale de vente, W ouvre la page Wikipédia de la carte
-- **Retour aux paquets après une enchère** : Lancer une enchère depuis `/pulls` vous ramène directement sur `/pulls` au lieu de vous laisser sur la page de l'enchère
+- **Fenêtres fermées après une enchère** : Lancer une enchère depuis `/pulls` (ou `/collection`) ferme d'elle-même la confirmation « Enchère lancée » puis la modale de la carte (double Échap), pour continuer à ouvrir vos paquets sans interruption
 - **Notifications de pile** : Une notification push prévient quand les paquets s'accumulent (réglable) ; un interrupteur 🔔/🔕 permet de l'activer (désactivée par défaut)
 
 ### 📦 Collection
@@ -79,7 +79,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Actions rapides** : Un bouton pour ouvrir directement la modale d'enchère sur chaque carte
 - **Tout sélectionner sauf étiquetées** : Sélectionne en un clic toutes les cartes non étiquetées de votre écran de collection
 - **Estimations mémorisées** : Les estimations du marché dans la modale de vente sont mémorisées et affichées à côté de la rareté dans votre collection ("💩" sous un seuil réglable)
-- **Évaluation en masse** : Deux boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation, réévaluer toute la page ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours ; les cartes marquées comme favorites, ou qui ne peuvent pas être mises aux enchères (déjà en vente, en échange…), sont ignorées, tout comme une carte qui n'obtient toujours pas d'estimation après le nombre d'essais choisi (3 par défaut, réglable dans la configuration), pour ne pas bloquer toute l'évaluation
+- **Évaluation en masse** : Deux boutons permettent d'agir sur les cartes de la page via la modale d'estimation — évaluer les seules cartes sans estimation, réévaluer toute la page ; un bouton « Arrêter la reconnaissance » permet d'interrompre une évaluation en cours ; les cartes marquées comme favorites, ou qui ne peuvent pas être mises aux enchères (déjà en vente, en échange...), sont ignorées, tout comme une carte qui n'obtient toujours pas d'estimation après le nombre d'essais choisi (3 par défaut, réglable dans la configuration), pour ne pas bloquer toute l'évaluation
 - **Estimation en masse sur une collection** : Le bouton rouge « Estimer tout » répète l'évaluation des cartes sans estimation sur chaque page de la collection, en changeant de page automatiquement ; à la fin (ou à l'arrêt), une fenêtre de bilan résume la durée, les cartes estimées, inconnues ou ignorées et la valeur totale estimée
   - ⚠️ Pour ces deux évaluations en masse, gardez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan, le navigateur ralentit les temporisations dont elles dépendent, ce qui les rend peu fiables
   - ⚠️ À cause de la façon dont les serveurs de WM fonctionnent, il est possible que cette estimation soit interrompue par une erreur serveur disant qu'il n'a trouvé aucune carte ou que l'affichage a pris trop de temps — c'est de la faute du site, on n'y peut rien.
@@ -93,7 +93,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Durée d'enchère par défaut** : À l'ouverture de la modale de vente d'une carte, le bouton de durée choisi dans le panneau de configuration est sélectionné automatiquement
 - **Ancienne estimation** : Dans la modale « Mettre aux enchères », si la carte avait déjà une estimation, elle s'affiche en haut à droite du résumé (« Ancienne estimation : X »), avant d'être remplacée par la nouvelle moyenne, pour voir comment l'estimation a évolué
 - **Copier le nom d'une carte** : Un bouton 📋 à côté du nom, dans la modale de carte comme dans la modale d'enchère
-- **Aller directement à une page** : Une fois le catalogue chargé, cliquer sur l'indicateur « Page X / Y » le remplace par un champ numérique ; Entrée mène à la page saisie en enchaînant les boutons précédent/suivant du site, Échap annule
+- **Date d'obtention** : La modale d'une carte affiche « Obtenue le : ... » sous le nombre d'exemplaires
 - **Effacer la recherche** : Un bouton ✕ dans le champ de recherche de la collection vide son contenu
 - **Modale d'étiquetage en masse retravaillée** : La modale d'application/retrait d'étiquette est plus large et affiche ses étiquettes en grille au lieu d'une colonne étroite ; la modale de retrait trie les filtres par ordre décroissant
 
@@ -114,7 +114,6 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées (réglable), puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par rapport à ceux que vous avez observés
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
-  - Un indice de fiabilité accompagne le tag
   - Sur une enchère terminée, un bouton « 🚫 Valeur absurde » permet de retirer son prix des prix observés ; sur votre profil, les prix listés (seuls les plus bas, retenus pour la moyenne de référence, suivis de « ... ») sont cliquables et se retirent de la même façon
   - Sur une enchère que vous venez de remporter, un bouton « 🧹 Vider les prix observés » efface vos observations de prix de la carte
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur permet de déplier/replier
