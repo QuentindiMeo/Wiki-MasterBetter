@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.63
+// @version      0.30.64
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -3824,7 +3824,7 @@
       .wm-unreliable,
       .wm-reliable {
         position: absolute;
-        top: calc(100% + 0.15rem);
+        top: 100%;
         right: 0;
         width: max-content;
         font-size: 0.7rem;
@@ -9156,8 +9156,8 @@
   // which just inherit the site's own filter-button look) — walks every page of the collection in turn, running
   // the same "evaluate unrated cards" pass as the "Estimer les inconnues" button on each one. A single
   // stop button/state is shared across the whole run (evaluateCollectionCards's sharedState parameter, above)
-  // rather than spawning a new one per page. Between pages, the pagination control's second child button
-  // (div.gap-2.py-3 — the first is "previous page") is clicked once it stops being disabled: it can briefly stay
+  // rather than spawning a new one per page. Between pages, the pagination control's "Suivant" button
+  // (div.gap-2.py-3 — its last child, after "previous page" and the "Page n / max" indicator) is clicked once it stops being disabled: it can briefly stay
   // disabled right after our own last Escape keypress closes a card's modal, so this is polled rather than clicked
   // immediately; staying disabled for the whole poll window instead means there simply is no next page, which ends
   // the run normally rather than erroring. After clicking, the run waits for the grid's first card to actually
@@ -9190,7 +9190,18 @@
     const container = document.querySelector("div.gap-2.py-3");
     if (!container) return null;
 
-    return Array.from(container.querySelectorAll(":scope > button"))[1] ?? null;
+    // The container holds "previous", the "Page n / max" indicator (itself a button, opening a "go to page" prompt)
+    // and "next": the next button is the last one, never the second
+    const buttons = Array.from(container.querySelectorAll(":scope > button"));
+    const next =
+      buttons.find((btn) => /suivant/i.test(btn.textContent)) ??
+      buttons[buttons.length - 1] ??
+      null;
+    if (!next || /\d+\s*\/\s*\d+/.test(next.textContent)) {
+      logger(CPL.WARN, "Next page button not found");
+      return null;
+    }
+    return next;
   }
 
   function getFirstCollectionCardName() {
@@ -14664,6 +14675,7 @@
       .wm-vitrine-header {
         display: flex;
         align-items: center;
+        padding-block: 1.25rem !important;
       }
       .wm-vitrine-folded > .wm-vitrine-header + * {
         display: none;
