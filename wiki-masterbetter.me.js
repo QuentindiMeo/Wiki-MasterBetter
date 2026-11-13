@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.30.64
+// @version      0.31.1
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -4073,8 +4073,8 @@
 
   // ============================================================
   // Feature BSP (cont'd): on the user's own profile (/profile), dump every card's stored sold prices into a grid,
-  // inserted as a sibling right after div.grid; each entry gets a "✕" button to clear its stored data. Next to
-  // "Vider le cache", an import/export pill copies/restores every "observed-"/"eval-" localStorage entry as JSON.
+  // inserted as a sibling right after div.grid; each entry gets a "✕" button to clear its stored data. The
+  // import/export pill now lives in Feature DZN's tab.
   // Entries are sorted by descending "Objectif" (weighted average price); entries with no computable average sort last.
   // ============================================================
   function collectStoredBidPrices() {
@@ -4117,14 +4117,15 @@
     return entries;
   }
 
-  // Feature BSP/ETS (cont'd): an import/export pill next to "Vider le cache" carries every "observed-" (Feature
+  // Feature BSP/ETS (cont'd): an import/export pill (settings, "Zone de danger" tab) carries every "observed-" (Feature
   // BSP) and "eval-" (Feature ETS) localStorage entry as a downloadable "key,value" CSV file, so that cache can be
   // moved to another browser/device. Values are carried as their raw stored strings (not re-parsed), since Feature
   // BSP's entries are JSON-encoded arrays while Feature ETS's are plain strings; both are CSV-quoted as needed.
   // Feature FOL's followed-users list and Feature UDS's player descriptions are carried too.
   const TAGGED_CACHE_PREFIXES = [BSP_KEY_PREFIX, "eval-"];
-  const JSON_TO_CSV_COST_RATIO = 1.8; //? JSON costs ~1.8 times what CSV does for this cache's data
 
+  // Your own data and settings (Feature CFG's config, the feature flags, Feature BBS's best trades, Feature WAT's
+  // watched auctions, your tag names, wishlist names and flagged outliers) are carried as well, see getUserDataMergers.
   // Feature FOL's followed-users list (FOLLOWED_USERS_KEY, declared further down, hence the function) travels with
   // that cache too; on import it's merged into the local list rather than replacing it. Feature UDS's "desc-{username}"
   // entries (USER_DESC_KEY_PREFIX, also declared further down) travel with it as well; on import, a description is
@@ -4137,12 +4138,43 @@
     );
   }
 
-  function collectTaggedCacheEntries() {
+  // The user's own data and settings travel in the export file too (but are not "cache": "Vider tout le cache" of the
+  // settings' danger zone leaves them alone). Each one has a merge function (see the import below).
+  function getUserDataMergers() {
+    return {
+      [CONFIG_KEY]: (localRaw, importedRaw) =>
+        mergeImportedObject(localRaw, importedRaw, () => true),
+      [FEATURE_FLAGS_KEY]: (localRaw, importedRaw) =>
+        mergeImportedObject(
+          localRaw,
+          importedRaw,
+          (value) => typeof value === "boolean",
+        ),
+      [WATCHED_KEY]: (localRaw, importedRaw) =>
+        mergeImportedStringList(localRaw, importedRaw, (entry) =>
+          entry.match(WATCHED_ENTRY_REGEX)?.[1].toLowerCase(),
+        ),
+      [KNOWN_TAGS_KEY]: (localRaw, importedRaw) =>
+        mergeImportedStringList(localRaw, importedRaw, (name) => name.trim()),
+      [WISHLIST_NAMES_KEY]: (localRaw, importedRaw) =>
+        mergeImportedStringList(localRaw, importedRaw, (name) => name.trim()),
+      [OUTLIER_KEY]: (localRaw, importedRaw) =>
+        mergeImportedStringList(localRaw, importedRaw, (id) => id.trim()),
+      [BEST_TRADE_KINDS.sells.key]: (localRaw, importedRaw) =>
+        mergeImportedBestTrades(localRaw, importedRaw),
+      [BEST_TRADE_KINDS.buys.key]: (localRaw, importedRaw) =>
+        mergeImportedBestTrades(localRaw, importedRaw),
+    };
+  }
+
+  function collectTaggedCacheEntries({ withUserData = false } = {}) {
     const entries = {};
+    const userDataKeys = withUserData ? Object.keys(getUserDataMergers()) : [];
 
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !isTaggedCacheKey(key)) continue;
+      if (!key) continue;
+      if (!isTaggedCacheKey(key) && !userDataKeys.includes(key)) continue;
 
       const raw = localStorage.getItem(key);
       if (raw !== null) entries[key] = raw;
@@ -4213,7 +4245,7 @@
   }
 
   function exportTaggedCacheEntries() {
-    const entries = collectTaggedCacheEntries();
+    const entries = collectTaggedCacheEntries({ withUserData: true });
     const count = Object.keys(entries).length;
     const csv = buildTaggedCacheCsv(entries);
 
@@ -4323,6 +4355,101 @@
     return result === localRaw ? null : result;
   }
 
+  // User data merges (same contract as the cache ones: the value to store, or null to leave the local entry alone;
+  // `valid` tells whether the imported row is usable, null results included):
+  //  - "wm-config" / "wm-feature-flags" (objects): only the ids you have no stored value for are taken, so a setting
+  //    you changed in this browser always stays.
+  //  - "wm-saved", "wm-tags", "wm-wishlist-names", "wm-outlier-bids" (string lists): union, deduplicated by identity
+  //    (a watched auction by its UUID); the local copy of an entry is kept, and imported entries are appended.
+  //  - "wm-observed-best-sells" / "-buys" (Feature BBS): union by tag, back in amount order, cut to TOP_LIMIT_MAX.
+  function parseJsonOrNull(raw) {
+    if (raw === null) return null;
+    return safeJsonParse(raw);
+  }
+
+  function mergeImportedObject(localRaw, importedRaw, isValidValue) {
+    const imported = safeJsonParse(importedRaw);
+    if (!imported || typeof imported !== "object" || Array.isArray(imported))
+      return { valid: false, next: null };
+
+    const parsedLocal = parseJsonOrNull(localRaw);
+    const local =
+      parsedLocal &&
+      typeof parsedLocal === "object" &&
+      !Array.isArray(parsedLocal)
+        ? parsedLocal
+        : {};
+    const merged = { ...local };
+    Object.entries(imported).forEach(([id, value]) => {
+      if (id in merged || !isValidValue(value)) return;
+      merged[id] = value;
+    });
+
+    const result = JSON.stringify(merged);
+    return {
+      valid: true,
+      next: result === JSON.stringify(local) ? null : result,
+    };
+  }
+
+  function mergeImportedStringList(localRaw, importedRaw, identityOf) {
+    const imported = safeJsonParse(importedRaw);
+    if (!Array.isArray(imported)) return { valid: false, next: null };
+
+    const parsedLocal = parseJsonOrNull(localRaw);
+    const local = Array.isArray(parsedLocal)
+      ? parsedLocal.filter((entry) => typeof entry === "string")
+      : [];
+    const merged = [...local];
+    const seen = new Set(local.map(identityOf));
+    imported.forEach((entry) => {
+      if (typeof entry !== "string") return;
+      const identity = identityOf(entry);
+      if (!identity || seen.has(identity)) return;
+      seen.add(identity);
+      merged.push(entry);
+    });
+
+    return {
+      valid: true,
+      next: merged.length === local.length ? null : JSON.stringify(merged),
+    };
+  }
+
+  function bestTradeTagOf(entry) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      return null;
+    const values = Object.values(entry);
+    if (values.length !== 1 || typeof values[0] !== "string") return null;
+    return parseBestTradeValue(values[0]).tag ?? null;
+  }
+
+  function mergeImportedBestTrades(localRaw, importedRaw) {
+    const imported = safeJsonParse(importedRaw);
+    if (!Array.isArray(imported)) return { valid: false, next: null };
+
+    const parsedLocal = parseJsonOrNull(localRaw);
+    const local = Array.isArray(parsedLocal)
+      ? parsedLocal.filter((entry) => bestTradeTagOf(entry))
+      : [];
+    const seenTags = new Set(local.map(bestTradeTagOf));
+    const merged = [...local];
+    imported.forEach((entry) => {
+      const tag = bestTradeTagOf(entry);
+      if (!tag || seenTags.has(tag)) return;
+      seenTags.add(tag);
+      merged.push(entry);
+    });
+
+    // Nothing new: the local list stays as is (an already full list would otherwise trim itself)
+    if (merged.length === local.length) return { valid: true, next: null };
+
+    const result = JSON.stringify(
+      sortBestTradesByAmount(merged).slice(0, TOP_LIMIT_MAX),
+    );
+    return { valid: true, next: result === localRaw ? null : result };
+  }
+
   function safeJsonParse(raw) {
     try {
       return JSON.parse(raw);
@@ -4351,7 +4478,26 @@
 
         rows.forEach(([key, value]) => {
           if (typeof key !== "string" || typeof value !== "string") return;
-          if (!isTaggedCacheKey(key)) return;
+          const userDataMerger = getUserDataMergers()[key];
+          if (!userDataMerger && !isTaggedCacheKey(key)) return;
+
+          if (userDataMerger) {
+            const { valid, next } = userDataMerger(
+              localStorage.getItem(key),
+              value,
+            );
+            if (!valid) {
+              logger(CPL.WARN, `Cache import: ${key} row skipped (invalid)`);
+              return;
+            }
+            validCount++;
+            if (next === null) return;
+
+            localStorage.setItem(key, next);
+            importedCount++;
+            logger(CPL.LOG, `Cache import: ${key} merged`);
+            return;
+          }
 
           if (key === FOLLOWED_USERS_KEY) {
             try {
@@ -4479,14 +4625,10 @@
     if (window.location.pathname !== "/profile") return;
 
     const grid = findProfileActionsGrid();
-    if (
-      !grid ||
-      grid.nextElementSibling?.classList.contains("wm-bsp-dump-actions")
-    )
+    if (!grid || grid.nextElementSibling?.classList.contains("wm-bsp-dump"))
       return;
 
-    // Rendered even with nothing observed yet: the actions row (export, import — the way to fill a fresh browser —
-    // and cache clearing) must stay reachable, and Feature FOL anchors its list on the dump
+    // Rendered even with nothing observed yet: Feature FOL anchors its list on the dump
     const entries = collectStoredBidPrices();
 
     const dump = document.createElement("div");
@@ -4662,79 +4804,7 @@
     }
     logger(CPL.LOG, `Profile cache block rendered (${rows.length} card(s))`);
 
-    const actionsRow = document.createElement("div");
-    actionsRow.className = "wm-bsp-dump-actions";
-
-    // The whole cache, i.e. everything the export carries (prices, estimates, followed players, descriptions). Stored
-    // in localStorage it is JSON in UTF-16 (2 bytes per character of every key and raw value); the figure shown is
-    // what it weighs as the CSV it is exported to and imported from, which a study found 1.8 times lighter
-    const totalCacheSizeBytes =
-      Object.entries(collectTaggedCacheEntries()).reduce(
-        (sum, [key, raw]) => sum + (key.length + raw.length) * 2,
-        0,
-      ) / JSON_TO_CSV_COST_RATIO;
-    const totalCacheSizeKb = (totalCacheSizeBytes / 1024).toFixed(1);
-
-    const clearCacheBtn = document.createElement("button");
-    clearCacheBtn.type = "button";
-    clearCacheBtn.className = "wm-bsp-dump-clear-cache";
-    clearCacheBtn.textContent = `Vider le cache de WMB (~${totalCacheSizeKb} Ko)`;
-    actionsRow.appendChild(clearCacheBtn);
-
-    clearCacheBtn.addEventListener("click", () => {
-      // Feature ETS's estimates ("eval-{card name}") go too; the keys are snapshotted as removing shifts the indices
-      const evalKeys = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key?.startsWith(EVAL_KEY_PREFIX)) evalKeys.push(key);
-      }
-
-      if (
-        !confirm(
-          `Vider le cache : supprimer les prix de vente observés de ${rows.length} carte(s) et ${evalKeys.length} estimation(s) ? Cette action est définitive.`,
-        )
-      ) {
-        logger(CPL.LOG, "Cache clearing cancelled");
-        return;
-      }
-      logger(
-        CPL.INFO,
-        `Cache cleared (${rows.length} card(s) of prices, ${evalKeys.length} estimate(s))`,
-      );
-      evalKeys.forEach((key) => localStorage.removeItem(key));
-      localStorage.removeItem(TOP_EVALS_CACHE_KEY);
-      rows.forEach(({ cardName, entryEl, clearBtn }) => {
-        localStorage.removeItem(getBspObservedStorageKey(cardName));
-        clearBtn.remove();
-        entryEl.classList.add("wm-bsp-dump-entry-cleared");
-      });
-    });
-
-    const importExportPill = document.createElement("div");
-    importExportPill.className = "wm-bsp-dump-import-export";
-
-    const exportBtn = document.createElement("button");
-    exportBtn.type = "button";
-    exportBtn.className = "wm-bsp-dump-import-export-btn";
-    exportBtn.textContent = "Exporter";
-    exportBtn.addEventListener("click", exportTaggedCacheEntries);
-
-    const importBtn = document.createElement("button");
-    importBtn.type = "button";
-    importBtn.className = "wm-bsp-dump-import-export-btn";
-    importBtn.textContent = "Importer";
-    importBtn.addEventListener("click", importTaggedCacheEntries);
-
-    importExportPill.append(exportBtn, importBtn);
-    actionsRow.appendChild(importExportPill);
-
-    const importHint = document.createElement("span");
-    importHint.className = "wm-bsp-dump-import-hint";
-    importHint.textContent =
-      "N.B. : l'import ajoute des informations sans supprimer l'existant.";
-    actionsRow.appendChild(importHint);
-
-    grid.after(actionsRow, dump);
+    grid.after(dump);
   }
 
   function watchStoredBidPricesGrid() {
@@ -4809,70 +4879,6 @@
         font-size: 0.8rem;
         font-weight: 400;
         opacity: 0.6;
-      }
-      .wm-bsp-dump-actions {
-        display: flex;
-        gap: 0.5rem;
-        margin-top: 1rem;
-        margin-bottom: 0.25rem;
-      }
-      .wm-bsp-dump-update-cache,
-      .wm-bsp-dump-clear-cache {
-        padding: 0.35rem 0.75rem;
-        border-radius: 0.5rem;
-        background: transparent;
-        font-weight: 600;
-        font-size: 0.75rem;
-        letter-spacing: 0.05em;
-        cursor: pointer;
-        opacity: 0.7;
-        transition: opacity 0.2s ease, background-color 0.2s ease;
-      }
-      .wm-bsp-dump-update-cache {
-        border: 1px solid var(--color-accent);
-        color: var(--color-accent);
-      }
-      .wm-bsp-dump-update-cache:hover {
-        opacity: 1;
-        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-      }
-      .wm-bsp-dump-clear-cache {
-        border: 1px solid #ef2222;
-        color: #ef2222;
-      }
-      .wm-bsp-dump-clear-cache:hover {
-        opacity: 1;
-        background: rgba(239, 34, 34, 0.1);
-      }
-      .wm-bsp-dump-import-export {
-        display: flex;
-        border: 1px solid var(--color-accent);
-        border-radius: 999px;
-        overflow: hidden;
-      }
-      .wm-bsp-dump-import-hint {
-        align-self: center;
-        font-size: 0.75rem;
-        opacity: 0.5;
-      }
-      .wm-bsp-dump-import-export-btn {
-        padding: 0.35rem 0.75rem;
-        border: none;
-        background: transparent;
-        color: var(--color-accent);
-        font-weight: 600;
-        font-size: 0.75rem;
-        letter-spacing: 0.05em;
-        cursor: pointer;
-        opacity: 0.7;
-        transition: opacity 0.2s ease, background-color 0.2s ease;
-      }
-      .wm-bsp-dump-import-export-btn:first-child {
-        border-right: 1px solid var(--color-accent);
-      }
-      .wm-bsp-dump-import-export-btn:hover {
-        opacity: 1;
-        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
       }
       .wm-bsp-dump-entry {
         display: flex;
@@ -6514,6 +6520,323 @@
     );
   }
 
+  // Feature DZN: the settings modal's "Zone de danger" tab. It lists every kind of value WMB keeps in the browser
+  // (DANGER_CACHE_TYPES) with how many entries and how much (stored JSON, UTF-16) it holds, and a button to delete
+  // that whole kind after a confirmation. Feature ETS's estimates also get a threshold: "Supprimer les estimations
+  // inférieures à X" deletes the real estimates strictly under X (an unknown "?" is no value, so it is only removed
+  // when the "Inclure les estimations inconnues" checkbox is ticked, or by the whole-kind deletion). "Vider tout le cache" (moved here from the profile's block) deletes the sale prices and
+  // the estimates, plus the "Top" buffer derived from them; followed players, descriptions and best trades are kept.
+  // Nothing is ever deleted without a confirm(), and the page should be reloaded afterwards, since what is on
+  // screen was read before. Everything that reads a const declared further down (the *_KEY ones) must stay behind a
+  // function: this array is built at load time, when those consts are not initialized yet.
+  const DANGER_CACHE_TYPES = [
+    {
+      id: "observed",
+      label: "Prix de vente observés",
+      hint: () => "observed-{carte}",
+      keys: () => listStorageKeys((key) => key.startsWith(BSP_KEY_PREFIX)),
+    },
+    {
+      id: "eval",
+      label: "Estimations de cartes",
+      hint: () => "eval-{carte}",
+      keys: () => listStorageKeys((key) => key.startsWith(EVAL_KEY_PREFIX)),
+      alsoRemoves: () => [TOP_EVALS_CACHE_KEY],
+    },
+    {
+      id: "best-sells",
+      label: "Plus grosses ventes",
+      hint: () => BEST_TRADE_KINDS.sells.key,
+      keys: () => [BEST_TRADE_KINDS.sells.key],
+    },
+    {
+      id: "best-buys",
+      label: "Plus gros achats",
+      hint: () => BEST_TRADE_KINDS.buys.key,
+      keys: () => [BEST_TRADE_KINDS.buys.key],
+    },
+    {
+      id: "followed",
+      label: "Joueurs suivis",
+      hint: () => FOLLOWED_USERS_KEY,
+      keys: () => [FOLLOWED_USERS_KEY],
+    },
+    {
+      id: "descriptions",
+      label: "Descriptions de joueurs",
+      hint: () => "desc-{pseudo}",
+      keys: () =>
+        listStorageKeys((key) => key.startsWith(USER_DESC_KEY_PREFIX)),
+    },
+  ];
+
+  function listStorageKeys(predicate) {
+    // Snapshot first: removing an entry shifts the indices of a live localStorage.key(i) loop
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && predicate(key)) keys.push(key);
+    }
+    return keys;
+  }
+
+  function describeStoredKeys(keys) {
+    let count = 0;
+    let bytes = 0;
+    keys.forEach((key) => {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return;
+      count++;
+      bytes += (key.length + raw.length) * 2;
+    });
+    return { count, kb: (bytes / 1024).toFixed(1) };
+  }
+
+  function parseDangerThreshold(text) {
+    const num = parseFloat(String(text).replace(/\s/g, "").replace(",", "."));
+    return Number.isFinite(num) && num > 0 ? num : null;
+  }
+
+  function listEvalKeysUnder(threshold, includeUnknown = false) {
+    return listStorageKeys((key) => {
+      if (!key.startsWith(EVAL_KEY_PREFIX)) return false;
+      const value = parseEvalForMerge(localStorage.getItem(key) ?? "");
+      if (value === UNKNOWN_EVAL_VALUE) return includeUnknown;
+      return typeof value === "number" && value < threshold;
+    });
+  }
+
+  function buildDangerPanel() {
+    const panel = document.createElement("div");
+    panel.className = "wm-settings-danger";
+
+    const intro = document.createElement("p");
+    intro.className = "wm-danger-intro";
+    intro.textContent =
+      "Suppressions définitives des valeurs que WMB garde dans votre navigateur. Rechargez la page ensuite pour que l'affichage suive.";
+    panel.appendChild(intro);
+
+    const backup = document.createElement("div");
+    backup.className = "wm-danger-backup";
+    const backupTitle = document.createElement("strong");
+    backupTitle.className = "wm-danger-backup-title";
+    backupTitle.textContent = "Sauvegarde";
+    const pill = document.createElement("div");
+    pill.className = "wm-danger-import-export";
+    [
+      ["Exporter", exportTaggedCacheEntries],
+      ["Importer", importTaggedCacheEntries],
+    ].forEach(([text, onClick]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "wm-danger-import-export-btn";
+      btn.textContent = text;
+      btn.addEventListener("click", onClick);
+      pill.appendChild(btn);
+    });
+    const backupHint = document.createElement("span");
+    backupHint.className = "wm-danger-import-hint";
+    backupHint.textContent =
+      "N.B. : l'import ajoute des informations sans supprimer l'existant.";
+    backup.append(backupTitle, pill, backupHint);
+    panel.appendChild(backup);
+
+    const status = document.createElement("p");
+    status.className = "wm-danger-status";
+    status.setAttribute("role", "status");
+
+    const refreshers = [];
+    const refreshAll = () => refreshers.forEach((refresh) => refresh());
+    const report = (text) => {
+      status.textContent = text;
+    };
+
+    const makeButton = (text, onClick) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "wm-danger-btn";
+      btn.textContent = text;
+      btn.addEventListener("click", onClick);
+      return btn;
+    };
+
+    const removeKeys = (keys) => {
+      keys.forEach((key) => localStorage.removeItem(key));
+    };
+
+    DANGER_CACHE_TYPES.forEach((type) => {
+      const row = document.createElement("div");
+      row.className = "wm-danger-row";
+
+      const label = document.createElement("div");
+      label.className = "wm-danger-label";
+      const name = document.createElement("strong");
+      name.textContent = type.label;
+      const detail = document.createElement("span");
+      detail.className = "wm-danger-detail";
+      label.append(name, detail);
+
+      const removeBtn = makeButton("Supprimer", () => {
+        const keys = type.keys();
+        if (keys.length === 0) return;
+        if (
+          !confirm(
+            `Supprimer définitivement « ${type.label} » (${describeStoredKeys(keys).count} entrée(s)) ? Cette action est irréversible.`,
+          )
+        ) {
+          logger(CPL.LOG, `Danger zone: removal of ${type.id} cancelled`);
+          return;
+        }
+        removeKeys([...keys, ...(type.alsoRemoves?.() ?? [])]);
+        logger(
+          CPL.INFO,
+          `Danger zone: ${type.id} removed (${keys.length} key(s))`,
+        );
+        report(`« ${type.label} » supprimé(es) : ${keys.length} entrée(s).`);
+        refreshAll();
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "wm-danger-actions";
+      actions.appendChild(removeBtn);
+      row.append(label, actions);
+
+      if (type.id === "eval") {
+        const thresholdRow = document.createElement("div");
+        thresholdRow.className = "wm-danger-threshold";
+        const thresholdLabel = document.createElement("span");
+        thresholdLabel.textContent = "Supprimer les estimations inférieures à";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.inputMode = "numeric";
+        input.className = "wm-danger-input";
+        input.placeholder = "ex. 150";
+        input.setAttribute("aria-label", "Seuil des estimations à supprimer");
+        const unknownLabel = document.createElement("label");
+        unknownLabel.className = "wm-danger-checkbox";
+        const unknownCheckbox = document.createElement("input");
+        unknownCheckbox.type = "checkbox";
+        unknownLabel.append(
+          unknownCheckbox,
+          document.createTextNode("Inclure les estimations inconnues (« ? »)"),
+        );
+        const thresholdBtn = makeButton("Supprimer", () => {
+          const threshold = parseDangerThreshold(input.value);
+          if (threshold === null) {
+            input.classList.add("wm-danger-input-invalid");
+            return;
+          }
+          input.classList.remove("wm-danger-input-invalid");
+
+          const includeUnknown = unknownCheckbox.checked;
+          const keys = listEvalKeysUnder(threshold, includeUnknown);
+          const unknownNote = includeUnknown ? " (et inconnues)" : "";
+          if (keys.length === 0) {
+            report(
+              `Aucune estimation inférieure à ${threshold}${unknownNote}.`,
+            );
+            return;
+          }
+          if (
+            !confirm(
+              `Supprimer définitivement ${keys.length} estimation(s) inférieure(s) à ${threshold}${unknownNote} ? ${
+                includeUnknown
+                  ? "Les estimations inconnues (« ? ») sont incluses."
+                  : "Les estimations inconnues (« ? ») sont conservées."
+              }`,
+            )
+          ) {
+            logger(CPL.LOG, "Danger zone: eval threshold removal cancelled");
+            return;
+          }
+          removeKeys([...keys, TOP_EVALS_CACHE_KEY]);
+          logger(
+            CPL.INFO,
+            `Danger zone: ${keys.length} eval(s) under ${threshold} removed (unknown "?" ${includeUnknown ? "included" : "kept"})`,
+          );
+          report(
+            `${keys.length} estimation(s) inférieure(s) à ${threshold}${unknownNote} supprimée(s).`,
+          );
+          refreshAll();
+        });
+        input.addEventListener("input", () =>
+          input.classList.remove("wm-danger-input-invalid"),
+        );
+        input.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          thresholdBtn.click();
+        });
+        thresholdRow.append(thresholdLabel, input, unknownLabel, thresholdBtn);
+        row.appendChild(thresholdRow);
+      }
+
+      refreshers.push(() => {
+        const { count, kb } = describeStoredKeys(type.keys());
+        detail.textContent = `${type.hint()} — ${count} entrée(s), ~${kb} Ko`;
+        removeBtn.disabled = count === 0;
+      });
+      panel.appendChild(row);
+    });
+
+    const wholeRow = document.createElement("div");
+    wholeRow.className = "wm-danger-row wm-danger-row-whole";
+    const wholeLabel = document.createElement("div");
+    wholeLabel.className = "wm-danger-label";
+    const wholeName = document.createElement("strong");
+    wholeName.textContent = "Vider tout le cache de WMB";
+    const wholeDetail = document.createElement("span");
+    wholeDetail.className = "wm-danger-detail";
+    wholeLabel.append(wholeName, wholeDetail);
+
+    const wholeKeys = () => [
+      ...DANGER_CACHE_TYPES.filter(
+        (type) => type.id === "observed" || type.id === "eval",
+      ).flatMap((type) => type.keys()),
+      TOP_EVALS_CACHE_KEY,
+    ];
+    const wholeBtn = makeButton("Vider le cache", () => {
+      const observed = listStorageKeys((key) => key.startsWith(BSP_KEY_PREFIX));
+      const evals = listStorageKeys((key) => key.startsWith(EVAL_KEY_PREFIX));
+      if (
+        !confirm(
+          `Vider le cache : supprimer les prix de vente observés de ${observed.length} carte(s) et ${evals.length} estimation(s) ? Cette action est définitive.`,
+        )
+      ) {
+        logger(CPL.LOG, "Cache clearing cancelled");
+        return;
+      }
+      removeKeys(wholeKeys());
+      logger(
+        CPL.INFO,
+        `Cache cleared (${observed.length} card(s) of prices, ${evals.length} estimate(s))`,
+      );
+      report(
+        `Cache vidé : ${observed.length} carte(s) de prix et ${evals.length} estimation(s).`,
+      );
+      refreshAll();
+    });
+    const wholeActions = document.createElement("div");
+    wholeActions.className = "wm-danger-actions";
+    wholeActions.appendChild(wholeBtn);
+    wholeRow.append(wholeLabel, wholeActions);
+    refreshers.push(() => {
+      const { count, kb } = describeStoredKeys(wholeKeys());
+      wholeDetail.textContent = `prix observés + estimations — ${count} entrée(s), ~${kb} Ko (joueurs suivis, descriptions et meilleurs échanges conservés)`;
+      wholeBtn.disabled = count === 0;
+    });
+
+    const reloadBtn = makeButton("Recharger la page", () => {
+      logger(CPL.INFO, "Manual reload from the danger zone");
+      window.location.reload();
+    });
+    reloadBtn.classList.add("wm-danger-btn-neutral");
+
+    panel.append(wholeRow, status, reloadBtn);
+    refreshAll();
+    return panel;
+  }
+
   function buildFeatureConfigModal(flags) {
     const overlay = document.createElement("div");
     overlay.className = "wm-settings-overlay";
@@ -6668,12 +6991,18 @@
     configPanel.className = "wm-settings-panel";
     configPanel.appendChild(buildConfigPanel());
 
+    const dangerPanel = document.createElement("div");
+    dangerPanel.className = "wm-settings-panel";
+    dangerPanel.hidden = true;
+    dangerPanel.appendChild(buildDangerPanel());
+
     const tabs = document.createElement("div");
     tabs.className = "wm-settings-tabs";
     tabs.setAttribute("role", "tablist");
     [
       { name: "Configuration", panel: configPanel },
       { name: "Fonctionnalités", panel: featuresPanel },
+      { name: "Zone de danger", panel: dangerPanel },
     ].forEach(({ name, panel }, index, all) => {
       const tab = document.createElement("button");
       tab.type = "button";
@@ -6699,7 +7028,7 @@
       tabs.appendChild(tab);
     });
 
-    modal.append(header, tabs, configPanel, featuresPanel);
+    modal.append(header, tabs, configPanel, featuresPanel, dangerPanel);
     overlay.appendChild(modal);
 
     const onKeydown = (event) => {
@@ -6957,6 +7286,141 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 1rem 1.5rem;
         overflow-y: auto;
+      }
+      .wm-settings-danger {
+        min-width: 50rem;
+        max-width: 90vw;
+        max-height: 75vh;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        overflow-y: auto;
+        padding-right: 0.25rem;
+      }
+      @media (max-width: 800px) {
+        .wm-settings-danger { min-width: 0; }
+      }
+      .wm-danger-intro, .wm-danger-status {
+        margin: 0;
+        font-size: 0.8rem;
+        opacity: 0.75;
+      }
+      .wm-danger-status:empty { display: none; }
+      .wm-danger-backup {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 1rem;
+        padding: 0.6rem 0.8rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 0.6rem;
+      }
+      .wm-danger-backup-title {
+        font-size: 0.85rem;
+      }
+      .wm-danger-import-export {
+        display: flex;
+        border: 1px solid var(--color-accent);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .wm-danger-import-export-btn {
+        padding: 0.35rem 0.75rem;
+        border: none;
+        background: transparent;
+        color: var(--color-accent);
+        font-weight: 600;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-danger-import-export-btn:first-child {
+        border-right: 1px solid var(--color-accent);
+      }
+      .wm-danger-import-export-btn:hover {
+        opacity: 1;
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+      }
+      .wm-danger-import-hint {
+        font-size: 0.75rem;
+        opacity: 0.5;
+      }
+      .wm-danger-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem 1rem;
+        padding: 0.6rem 0.8rem;
+        border: 1px solid rgba(239, 34, 34, 0.45);
+        border-radius: 0.6rem;
+      }
+      .wm-danger-row-whole {
+        background: rgba(239, 34, 34, 0.08);
+      }
+      .wm-danger-label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        font-size: 0.85rem;
+        min-width: 0;
+      }
+      .wm-danger-detail {
+        font-size: 0.72rem;
+        opacity: 0.65;
+      }
+      .wm-danger-threshold {
+        flex-basis: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+      }
+      .wm-danger-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        cursor: pointer;
+      }
+      .wm-danger-input {
+        width: 7rem;
+        padding: 0.3rem 0.8rem;
+        border: 1px solid #ef2222;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--color-foreground);
+        font-size: 0.85rem;
+      }
+      .wm-danger-input-invalid {
+        outline: 2px solid #ef2222;
+      }
+      .wm-danger-btn {
+        padding: 0.35rem 0.75rem;
+        border: 1px solid #ef2222;
+        border-radius: 0.5rem;
+        background: transparent;
+        color: #ef2222;
+        font-weight: 600;
+        font-size: 0.75rem;
+        cursor: pointer;
+        opacity: 0.8;
+        transition: opacity 0.2s ease, background-color 0.2s ease;
+      }
+      .wm-danger-btn:hover:not(:disabled) {
+        opacity: 1;
+        background: rgba(239, 34, 34, 0.12);
+      }
+      .wm-danger-btn:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+      .wm-danger-btn-neutral {
+        align-self: flex-start;
+        border-color: var(--color-accent);
+        color: var(--color-accent);
       }
       .wm-config-group-title {
         grid-column: 1 / -1;
@@ -7343,7 +7807,7 @@
   // An entry flagged `cache: true` relies on data kept in the browser that the export/import of Feature BSP carries
   // (sale prices, estimates, followed players, player descriptions); it gets a 💾 badge in the top right corner
   const TUTORIAL_CACHE_BADGE_TITLE =
-    "Cette fonctionnalité s'appuie sur des données mémorisées dans votre navigateur : elles s'exportent et s'importent depuis votre profil (à côté de « Vider le cache »).";
+    "Cette fonctionnalité s'appuie sur des données mémorisées dans votre navigateur : elles s'exportent et s'importent depuis la « Zone de danger » des réglages (⚙️).";
   const TUTORIAL_ENTRIES = [
     {
       title: "Estimer toute votre collection d'un coup",
@@ -7458,7 +7922,7 @@
     const hint = document.createElement("p");
     hint.className = "wm-settings-hint";
     hint.textContent =
-      "Un petit guide pour les fonctionnalités les moins évidentes du script. (rédigé par Claude)\nLe 💾 signale celles qui reposent sur des données mémorisées, exportables et importables depuis votre profil.";
+      "Un petit guide pour les fonctionnalités les moins évidentes du script. (rédigé par Claude)\nLe 💾 signale celles qui reposent sur des données mémorisées, exportables et importables depuis la « Zone de danger » des réglages (⚙️).";
 
     const search = document.createElement("input");
     search.type = "search";
@@ -10599,7 +11063,7 @@
   // buffer at once, while the list is recomputed in chunks (yielding to the page between them) and a small
   // "Actualisation..." shows in the header; once finished, the buffer is replaced with the new result and the modal is
   // redrawn if it differs (an entry cleared meanwhile stays out). Without a buffer the modal opens on "Calcul en
-  // cours...". The buffer is derived data: it isn't part of the export, and "Vider le cache" removes it.
+  // cours...". The buffer is derived data: it isn't part of the export, and the danger zone's cache removals (Feature DZN) delete it.
   // ============================================================
   // The configured size of the Top lists (Rule 35's estimates, Feature BBS's best trades), read when each acts
   function getTopLimit() {
@@ -13314,8 +13778,8 @@
   // "#" is read (without that "#" and without the trailing " (count)", via TAG_COUNT_REGEX) and the names are
   // stored as a JSON array in localStorage under "wm-tags", in the site's order. The list shows every tag you have, so
   // the stored array is replaced by what is read (a deleted tag disappears); it is only written when it changed.
-  // The "Étiquette « TBD »" setting of Feature CFG offers these names. Not part of the export: it is rebuilt by
-  // opening the list.
+  // The "Étiquette « TBD »" setting of Feature CFG offers these names. Part of the export (merged on import by
+  // union); it is also rebuilt by opening the list.
   // ============================================================
   const KNOWN_TAGS_KEY = "wm-tags";
 

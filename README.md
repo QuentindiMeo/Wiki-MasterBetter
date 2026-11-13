@@ -50,9 +50,9 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 
 ### 🔔 Barre de navigation & Notifications
 
-- **Barre de navigation repliable** : Compacte par défaut (seulement des icônes) et statique, elle ne réagit pas au survol : le bouton 📌 en bas de la barre la déplie ou la recompacte, et votre choix est retenu ; compacte, au survol, chaque lien affiche son nom dans une infobulle stylisée à droite de la barre
+- **Barre de navigation repliable** : Compacte par défaut (seulement des icônes) et statique, elle ne réagit pas au survol : le bouton 📌 en bas de la barre la déplie ou la re-compacte, et votre choix est retenu ; compacte, au survol, chaque lien affiche son nom dans une infobulle stylisée à droite de la barre
 - **Indicateur de fonctionnement** : Une mention « ✓ WMB v{version} » sous le logo du site confirme que le script tourne, et indique sa version
-- **Panneau de configuration** : Un bouton à roue crantée, à côté de celui d'épinglage, ouvre une modale à deux onglets ; les choix sont sauvegardés dans votre cache de navigateur dès que vous les faites, sans recharger la page
+- **Panneau de configuration** : Un bouton à roue crantée, à côté de celui d'épinglage, ouvre une modale à trois onglets ; les choix sont sauvegardés dans votre cache de navigateur dès que vous les faites, sans recharger la page
   - **« Configuration »** : des réglages rangés par thème, chacun expliqué dans une infobulle
     - **Enchères & marché** : durée d'enchère par défaut, délai de suppression automatique des enchères surveillées, onglet du marché ouvert à l'arrivée, opacité des cartes estompées par « ▲ Estomper »
     - **Prix de vente observés** : nombre de prix gardés par carte et nombre de prix retenus pour la moyenne de référence
@@ -60,6 +60,8 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
     - **Estimation en masse** : étiquette « TBD » (au choix parmi vos étiquettes), plages de valeur qui étiquettent automatiquement les cartes selon leur estimation, nombre d'essais par carte et délais d'attente de l'estimation
     - **Notifications & alertes** : seuil d'alerte de la pile de paquets, déclencheur de lueur rouge de fin d'enchère
   - **« Fonctionnalités »** : active/désactive individuellement chaque fonctionnalité du script
+  - **« Zone de danger »** : supprime ce que le script garde dans votre navigateur en indiquant leur nombre et leur taille ; « Vider tout le cache de WMB » s'y trouve aussi, ainsi que la gestion de sauvegarde (export/import de données)
+    - **Export/Import complet** : un export télécharge en fichier CSV le cache du script (prix de vente, estimations, joueurs suivis et descriptions) ainsi que vos données et réglages (configuration, interrupteurs de fonctionnalités, plus grosses ventes et achats, enchères surveillées, noms d'étiquettes, noms de la liste de souhaits, enchères signalées « absurdes »), puis l'import les recharge sur un autre navigateur ou appareil ; l'import est strictement additif : il ne supprime ni n'écrase jamais rien d'utile (un réglage déjà modifié ici est conservé, les listes sont fusionnées sans doublon)
 - **Pages laissées tranquilles** : Le script n'agit pas sur `/battle` ni `/settings` ; ses styles et observateurs se désactivent en y arrivant et reprennent sur les autres pages (la barre de navigation reste identique)
 - **Tutoriels intégrés** : Un bouton « ❓ » juste à côté ouvre une modale avec de courtes explications pour les fonctionnalités du script
 - **Liste de notifications agrandie** : Plus de place pour parcourir les notifications
@@ -139,7 +141,6 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Accès rapide aux profils depuis la liste de souhaits** : Sur la collection globale, cliquer sur le nom d'un ami propriétaire d'une carte ouvre son profil
 - **Suivre des joueurs** : Un bouton « Suivre » en forme d'œil sur le profil des joueurs. Un petit œil rouge s'affiche alors à côté de son pseudo sur les pages d'enchère, qu'il soit vendeur ou enchérisseur ; la liste des joueurs suivis s'affiche sur votre profil, avec un ✕ pour ne plus suivre
 - **Mes plus grosses ventes et achats** : Vos 100 plus grosses ventes et vos 100 plus gros achats sont mémorisés, et la modale en affiche 40 par défaut (réglable) (données récupérées depuis les pages d'enchère et les onglets « Historique » et « Gagnées » du marché)
-- **Un bouton Exporter/Importer** permet de télécharger le cache du script (prix de vente, estimations, joueurs suivis et descriptions de joueurs) en fichier CSV, puis de le recharger sur un autre navigateur ou appareil ; l'import est strictement additif : il ne supprime ni n'écrase jamais rien d'utile dans votre cache actuel
 
 ### 🏆 Succès
 
