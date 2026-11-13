@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.1
+// @version      0.31.3
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -3949,8 +3949,10 @@
       const status = computeBuyStatus(price, reference, stored.length);
       const arrow = price < reference * TOLERABLE_THRESHOLD_RATIO ? "▼" : "▲";
       // Rule 40 dims the cards flagged here (the ones whose arrow points up)
-      if (arrow === "▲") card.dataset.wmMpaUp = "true";
+      if (arrow === "▲")
+        card.dataset.wmMpaUp = status === "tolerable" ? "tolerable" : "true";
       else delete card.dataset.wmMpaUp;
+      logger(CPL.DEBUG, `[MPA] "${cardName}" graded ${status}, arrow ${arrow}`);
       const title = `${BUY_STATUS_LABELS[status]} (obj. ${Math.round(reference)})${unreliable ? " — indice peu fiable" : ""}`;
       const className = `${MPA_ARROW_CLASS} wm-mpa-${status}${unreliable ? " wm-mpa-unreliable" : ""}`;
 
@@ -9899,7 +9901,11 @@
   // (ascending). Once set it is a standing order, not a one-shot: the site re-renders the grid whenever the search, the
   // tag filter or the page changes, which drops our ordering, so insertEvaluateUnratedButton re-applies it each time
   // the page changes (see applyCollectionSortOrder).
+  // Three-state cycle: descending, ascending, then none (the site's own order is put back, the label is the initial one).
+  // The site's order is remembered per card the first time a sort sees it, so "none" can restore it.
   let collectionSortDescending = null;
+  const collectionSiteOrder = new WeakMap();
+  let collectionSiteOrderCounter = 0;
 
   function getCollectionSortLabel() {
     if (collectionSortDescending === null) return "Ordonner par prix";
@@ -9914,6 +9920,30 @@
     if (!grid) return false;
 
     const current = Array.from(grid.children);
+    if (descending === null) {
+      // No sort: back to the order the site gave the cards (cards never seen by a sort stay last, in place)
+      const restored = current
+        .map((card, index) => ({
+          card,
+          index,
+          rank: collectionSiteOrder.get(card) ?? Infinity,
+        }))
+        .sort((a, b) =>
+          a.rank === b.rank ? a.index - b.index : a.rank - b.rank,
+        )
+        .map((entry) => entry.card);
+      if (restored.every((card, i) => card === current[i])) return true;
+      grid.append(...restored);
+      logger(
+        CPL.DEBUG,
+        `Collection back to the site's order (${restored.length} cards)`,
+      );
+      return true;
+    }
+    current.forEach((card) => {
+      if (!collectionSiteOrder.has(card))
+        collectionSiteOrder.set(card, collectionSiteOrderCounter++);
+    });
     const sorted = current
       .map((card, index) => ({ card, index, value: getCardEvalValue(card) }))
       .sort((a, b) => {
@@ -10034,16 +10064,20 @@
         });
       });
 
-      // Each click flips the direction: descending first, then ascending, and so on; the chosen direction then
+      // Each click goes to the next state: descending, ascending, none, and so on; the chosen direction then
       // stays in force (applyCollectionSortOrder) when the search, the tag filter or the page changes
       sortBtn.addEventListener("click", () => {
         const descending =
-          collectionSortDescending === null ? true : !collectionSortDescending;
+          collectionSortDescending === null
+            ? true
+            : collectionSortDescending
+              ? false
+              : null;
         if (!sortCollectionByPrice(descending)) return;
         collectionSortDescending = descending;
         logger(
           CPL.LOG,
-          `Collection sorted by price, ${descending ? "descending" : "ascending"}`,
+          `Collection sorted by price: ${descending === null ? "none" : descending ? "descending" : "ascending"}`,
         );
         sortBtn.textContent = getCollectionSortLabel();
       });
@@ -12986,11 +13020,12 @@
     });
     popover.appendChild(openExpiredBtn);
 
-    // Collapsed by default: only the first WATCH_POPOVER_GROUP_SIZE of the others (not over) and of the over auctions are listed
+    // Collapsed by default: only the first WATCH_POPOVER_GROUP_SIZE of the over auctions and of the others (not over) are listed
     // (the last one of a truncated group fades out), until "Tout afficher" unfolds both groups
     const isExpanded = popover.dataset.wmExpanded === "true";
     const isOver = (w) => w.endEpoch !== null && w.endEpoch <= Date.now();
-    const groups = [watched.filter((w) => !isOver(w)), watched.filter(isOver)];
+    // The over auctions come first, right under the button that opens them
+    const groups = [watched.filter(isOver), watched.filter((w) => !isOver(w))];
     const hasHiddenRows = groups.some(
       (group) => group.length > WATCH_POPOVER_GROUP_SIZE,
     );
@@ -13603,7 +13638,7 @@
   // is also kept as the row's last child: the "Réinitialiser" button the site appends once a filter is picked is moved
   // back in front of it (see keepDimUpDockLast). While it is on, the cards whose price arrow points
   // up (▲, Feature MPA: the price is at or above the reference, i.e. not a bargain) are dimmed (to the opacity of the "Opacité des cartes estompées" setting of Feature CFG, 20 % by default). MPA
-  // flags such cards with data-wm-mpa-up; the dimming itself is driven by a body attribute
+  // flags such cards with data-wm-mpa-up (value "tolerable" for the amber ones, whose fade is halved: 20 % becomes 60 %); the dimming itself is driven by a body attribute
   // (data-wm-dim-up, only set while the switch is on AND "Parcourir" is the active tab), so flipping the switch or
   // changing tab needs no re-scan. The state is persisted in localStorage under "wm-dim-up-cards". The switch is
   // removed from the page when leaving the tab.
@@ -13616,6 +13651,11 @@
     document.body.style.setProperty(
       "--wm-dim-up-opacity",
       String(percent / 100),
+    );
+    // The amber ("tolérable") cards are dimmed half as much: the fade is halved, not the opacity
+    document.body.style.setProperty(
+      "--wm-dim-up-opacity-tolerable",
+      String(1 - (1 - percent / 100) / 1.5),
     );
     const title = `Estomper à ${percent} % les cartes dont la flèche pointe vers le haut`;
     const btn = document.querySelector(".wm-dim-up-switch");
@@ -13757,6 +13797,9 @@
       }
       body[data-wm-dim-up] div[id^="marketplace-auction-"][data-wm-mpa-up="true"] {
         opacity: var(--wm-dim-up-opacity, 0.2);
+      }
+      body[data-wm-dim-up] div[id^="marketplace-auction-"][data-wm-mpa-up="tolerable"] {
+        opacity: var(--wm-dim-up-opacity-tolerable, 0.6);
       }
     `);
 

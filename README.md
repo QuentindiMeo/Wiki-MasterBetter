@@ -85,7 +85,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Estimation en masse sur une collection** : Le bouton rouge « Estimer tout » répète l'évaluation des cartes sans estimation sur chaque page de la collection, en changeant de page automatiquement ; à la fin (ou à l'arrêt), une fenêtre de bilan résume la durée, les cartes estimées, inconnues ou ignorées et la valeur totale estimée
   - ⚠️ Pour ces deux évaluations en masse, gardez l'onglet actif et la fenêtre non réduite pendant toute la durée : en arrière-plan, le navigateur ralentit les temporisations dont elles dépendent, ce qui les rend peu fiables
   - ⚠️ À cause de la façon dont les serveurs de WM fonctionnent, il est possible que cette estimation soit interrompue par une erreur serveur disant qu'il n'a trouvé aucune carte ou que l'affichage a pris trop de temps — c'est de la faute du site, on n'y peut rien.
-- **Tri par prix** : Un bouton permet de trier les cartes de la page par prix croissant ou décroissant
+- **Tri par prix** : Un bouton permet de trier les cartes de la page par prix décroissant, croissant, et sans tri
 - **Top de vos plus grosses cartes** : Un bouton « Top 40 » (réglable) à droite du titre ouvre en fondu une modale listant les plus grosses estimations mémorisées en trois colonnes ; un ✕ supprime une estimation du cache
 - **Étiquetage pendant l'estimation en masse (désactivé par défaut)** : Les évaluations en masse étiquettent les cartes sans valeur déclarée sur le marché — à condition qu'elles n'aient encore aucune étiquette —, parfaitement configurable depuis les paramètres
 - **Halo sur les cartes sans estimation** : Un interrupteur « Sans estimation » entoure d'un halo rouge clair les cartes de la page sans estimation (un « ? » compte comme une estimation)
@@ -121,12 +121,12 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - Les prix enregistrés sont listés dans une grille sur votre propre profil, qu'un interrupteur permet de déplier/replier
 - **Enchères surveillées** : Gardez des enchères de côté pour les retrouver depuis le marché
   - Un bouton « 📌 Surveiller » sur la page d'une enchère (et une petite épingle posée sur le coin supérieur droit de chaque carte sur `/marketplace`) la surveille ; le bouton est désactivé une fois l'enchère terminée
-  - Un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, celles en cours d'abord ; un bouton « Ouvrir les enchères terminées » ouvre d'un coup toutes celles qui sont finies
+  - Un bouton « 📌 Surveillées » sur `/marketplace` ouvre une liste de ces enchères, les terminées d'abord, puis celles en cours ; un bouton « Ouvrir les enchères terminées » ouvre d'un coup toutes celles qui sont finies
   - Nettoyage automatique : une enchère terminée est retirée de la liste quand vous la visitez, et celles terminées depuis longtemps (réglable) sont retirées à chaque visite de votre profil
 - **Flèches de prix sur le marché** : Sur `/marketplace`, dans les onglets « Parcourir » et « Mes enchères », une flèche colorée s'affiche à côté du prix des cartes dont vous avez déjà observé le prix, avec les mêmes seuils et couleurs que les étiquettes des pages d'enchère, en comparant le prix affiché — majoré de 10 % (le coût d'une nouvelle enchère) uniquement sur les cartes où vous êtes « Surenchéri » — : ▼ sous la valeur de référence, ▲ au-dessus ; un survol donne le détail
   - Sur l'onglet « Parcourir », un interrupteur « Cacher indésirables » masque les cartes qui ne sont pas dans votre liste de souhaits ; leurs noms sont mémorisés quand vous cliquez sur « Feuilleter (WMB) » sur /global-collection en mode liste de souhaits : le bouton parcourt pour vous toutes les pages
     - Une fois cette liste mémorisée, ajouter ou retirer une carte de votre liste de souhaits depuis sa modale sur /global-collection la met à jour automatiquement
-  - Sur l'onglet « Parcourir », un interrupteur « ▲ Estomper », calé à droite de la rangée des filtres de rareté, atténue de moitié les cartes dont la flèche pointe vers le haut (prix pas intéressant) ; son état est mémorisé
+  - Sur l'onglet « Parcourir », un interrupteur « ▲ Estomper », calé à droite de la rangée des filtres de rareté, atténue de moitié les cartes dont la flèche pointe vers le haut (prix pas intéressant), deux fois moins pour celles à flèche ambre (« tolérable »)
 
 ### 📦 Catalogue
 
