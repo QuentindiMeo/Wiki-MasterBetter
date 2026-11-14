@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.3
+// @version      0.31.5
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -4969,6 +4969,15 @@
   // ============================================================
   const UNKNOWN_EVAL_VALUE = "?";
 
+  // Feature ETS (cont'd): the "Mémoriser les estimations inconnues" setting of Feature CFG (off by default). While it's
+  // off, a "?" is never written to localStorage: the card name goes in this in-memory set for the page's lifetime
+  // instead, which is all a bulk evaluation (Feature EBC/TBD) needs to know the card's estimate came back unknown.
+  const sessionUnknownEvals = new Set();
+
+  function shouldCacheUnknownEvals() {
+    return getConfigValue(CACHE_UNKNOWN_EVALS_CONFIG_ID);
+  }
+
   function findAverageValueEl(root = document) {
     for (const label of root.querySelectorAll("span.uppercase")) {
       if (label.textContent.trim() !== "Moyenne") continue;
@@ -5004,6 +5013,17 @@
     }
 
     if (!cardName || !value) return;
+
+    if (value === UNKNOWN_EVAL_VALUE && !shouldCacheUnknownEvals()) {
+      if (!sessionUnknownEvals.has(cardName)) {
+        sessionUnknownEvals.add(cardName);
+        logger(
+          CPL.LOG,
+          `Unknown estimate not cached (setting off): "${cardName}"`,
+        );
+      }
+      return;
+    }
 
     const key = `eval-${cardName}`;
     const existingValue = localStorage.getItem(key);
@@ -5570,6 +5590,10 @@
       label:
         "Replier la liste d'étiquettes d'une carte au clic dans sa zone d'étiquettes",
     },
+    {
+      id: "rule-56",
+      label: "Afficher la catégorie de la carte sur la page d'une enchère",
+    },
   ];
 
   function readFeatureFlags() {
@@ -5663,6 +5687,7 @@
   const TBD_TAG_CONFIG_ID = "tbd-tag";
   const TBD_TAG_DEFAULT = "TBD";
   const VALUE_RANGES_CONFIG_ID = "tbd-value-ranges";
+  const CACHE_UNKNOWN_EVALS_CONFIG_ID = "cache-unknown-evals";
   const CONFIG_RANGES_MAX = 30;
   const CONFIG_TEXT_MAX_LENGTH = 64;
 
@@ -5745,6 +5770,15 @@
       step: 1,
       defaultValue: "10",
       hint: "En dessous de cette estimation, la carte affiche '💩'",
+    },
+    {
+      id: CACHE_UNKNOWN_EVALS_CONFIG_ID,
+      group: "estimates",
+      label: "Mémoriser les estimations inconnues (« ? »)",
+      options: ["Non", "Oui"],
+      defaultValue: "Non",
+      values: { Non: false, Oui: true },
+      hint: "Désactivé par défaut : une carte sans estimation (« ? ») n'est pas gardée en mémoire. Activé, elle l'est et affiche « ? » sur sa rareté.",
     },
     {
       id: MAX_STORED_PRICES_CONFIG_ID,
@@ -9191,7 +9225,10 @@
           resolve(false);
           return;
         }
-        if (localStorage.getItem(`eval-${cardName}`) !== null) {
+        if (
+          localStorage.getItem(`eval-${cardName}`) !== null ||
+          sessionUnknownEvals.has(cardName)
+        ) {
           resolve(true);
           return;
         }
@@ -9508,6 +9545,7 @@
       const key = `eval-${cardName}`;
       const previousValue = localStorage.getItem(key);
       localStorage.removeItem(key);
+      sessionUnknownEvals.delete(cardName);
 
       button.textContent = `Évaluation... (${i + 1}/${cards.length})`;
       quickActionBtn.click();
@@ -9568,7 +9606,10 @@
       }
 
       if (recorded && readFeatureFlags()["feature-tbd"]) {
-        if (localStorage.getItem(key) === UNKNOWN_EVAL_VALUE) {
+        if (
+          localStorage.getItem(key) === UNKNOWN_EVAL_VALUE ||
+          sessionUnknownEvals.has(cardName)
+        ) {
           await tagCardAsToBeDetermined();
           stats.tagged++;
         } else {
@@ -15376,6 +15417,108 @@
   }
 
   // ============================================================
+  // Rule 56: on an auction page (/marketplace/{UUID}), the card's category (e.g. "footballeur français") is shown
+  // right after the card's name row (div.space-y-4 div.items-start), above the seller line (p.text-sm.mt-1). It comes from the site's own auction API
+  // (GET /api/marketplace/{UUID}: {auction: {card: {category}}, bids}), read like Rule 54 reads the collection: fetch
+  // is wrapped in the page's window, and the request already made before the script started is replayed from the
+  // Performance API. Categories are kept in memory by auction UUID.
+  // ============================================================
+  const CATEGORY_LINE_ID = "wm-card-category";
+  const AUCTION_API_REGEX = /^\/api\/marketplace\/([0-9a-f-]{8,})\/?$/i;
+  const categoryByAuctionId = new Map();
+
+  function auctionApiId(url) {
+    try {
+      return (
+        new URL(url, window.location.origin).pathname.match(
+          AUCTION_API_REGEX,
+        )?.[1] ?? null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function recordAuctionCategory(id, payload) {
+    const category = payload?.auction?.card?.category;
+    if (!category || categoryByAuctionId.get(id) === category) return;
+    categoryByAuctionId.set(id, category);
+    logger(CPL.LOG, `Rule 56: category of ${id} read: "${category}"`);
+    showAuctionCategory();
+  }
+
+  function hookAuctionFetch() {
+    const pageWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const originalFetch = pageWindow.fetch;
+    const read = (id, response) =>
+      response
+        .json()
+        .then((payload) => recordAuctionCategory(id, payload))
+        .catch((error) =>
+          logger(CPL.WARN, "Rule 56: auction response unreadable", error),
+        );
+
+    pageWindow.fetch = function (input, ...rest) {
+      const promise = originalFetch.call(this, input, ...rest);
+      const url =
+        typeof input === "string" ? input : (input?.url ?? String(input));
+      const id = auctionApiId(url);
+      if (id)
+        promise.then((response) => read(id, response.clone())).catch(() => {});
+      return promise;
+    };
+
+    performance.getEntriesByType("resource").forEach((entry) => {
+      const id = auctionApiId(entry.name);
+      if (!id) return;
+      logger(CPL.LOG, `Rule 56: replaying ${entry.name}`);
+      originalFetch
+        .call(pageWindow, entry.name, { credentials: "same-origin" })
+        .then((response) => read(id, response))
+        .catch((error) => logger(CPL.WARN, "Rule 56: replay failed", error));
+    });
+  }
+
+  function showAuctionCategory() {
+    const existing = document.getElementById(CATEGORY_LINE_ID);
+    const id = window.location.pathname.match(BID_PAGE_REGEX)
+      ? window.location.pathname.split("/")[2]
+      : null;
+    const category = id && categoryByAuctionId.get(id);
+    const nameRow = document.querySelector("div.space-y-4 div.items-start");
+    const seller = document.querySelector("p.text-sm.mt-1");
+    if (!category || !nameRow || !seller) {
+      existing?.remove();
+      return;
+    }
+    if (
+      existing &&
+      existing.dataset.wmAuction === id &&
+      existing.previousElementSibling === nameRow
+    )
+      return;
+    existing?.remove();
+
+    const line = seller.cloneNode(false);
+    line.id = CATEGORY_LINE_ID;
+    line.className = line.className.replace(/50/g, "75");
+    line.dataset.wmAuction = id;
+    line.textContent = category;
+    nameRow.after(line);
+    logger(CPL.LOG, `Rule 56: "${category}" shown for auction ${id}`);
+  }
+
+  function watchAuctionCategory() {
+    addStyle(`#${CATEGORY_LINE_ID} { margin: 0; }`);
+    hookAuctionFetch();
+    showAuctionCategory();
+
+    const observer = new MutationObserver(() => showAuctionCategory());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ============================================================
   // Rule 55: in the card modal (div.card-frame.p-6), the tag list under the "Ajouter une étiquette…" field folds when
   // the user presses the mouse outside the tags' block (div.space-y-2), but a press inside that block (the "ÉTIQUETTES"
   // label, the gaps between the chips...) only blurs the field: the list stays open. When the press lands in that
@@ -15508,6 +15651,7 @@
     run("rule-53", watchWrappedListsPadding);
     run("rule-54", watchCardObtainedDate);
     run("rule-55", watchTagListFoldOnTagsAreaClick);
+    run("rule-56", watchAuctionCategory);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");

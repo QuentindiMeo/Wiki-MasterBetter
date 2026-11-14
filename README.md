@@ -56,7 +56,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
   - **« Configuration »** : des réglages rangés par thème, chacun expliqué dans une infobulle
     - **Enchères & marché** : durée d'enchère par défaut, délai de suppression automatique des enchères surveillées, onglet du marché ouvert à l'arrivée, opacité des cartes estompées par « ▲ Estomper »
     - **Prix de vente observés** : nombre de prix gardés par carte et nombre de prix retenus pour la moyenne de référence
-    - **Estimations & classements** : taille des classements « Top », seuil sous lequel une estimation s'affiche en "💩"
+    - **Estimations & classements** : taille des classements « Top », seuil sous lequel une estimation s'affiche en "💩", mémorisation (désactivée par défaut) des estimations inconnues « ? »
     - **Estimation en masse** : étiquette « TBD » (au choix parmi vos étiquettes), plages de valeur qui étiquettent automatiquement les cartes selon leur estimation, nombre d'essais par carte et délais d'attente de l'estimation
     - **Notifications & alertes** : seuil d'alerte de la pile de paquets, déclencheur de lueur rouge de fin d'enchère
   - **« Fonctionnalités »** : active/désactive individuellement chaque fonctionnalité du script
@@ -113,6 +113,7 @@ Je ne liste que celles qui change quelque chose de significatif pour l'utilisate
 - **Lueur rouge en fin d'enchère** : Le décompte « Se termine dans... » se met à luire en rouge quand il reste 15 secondes ou moins (seuil réglable)
 - **Bouton de mise en rouge si vous menez** : Le bouton pour enchérir devient rouge clair quand vous êtes déjà le meilleur enchérisseur
 - **Rechargement automatique si enchère introuvable** : Si la page affiche « Enchère introuvable », elle se recharge d'elle-même peu après
+- **Catégorie de la carte** : Sur la page d'une enchère, la catégorie de la carte (ex. « footballeur français ») s'affiche juste sous son nom, au-dessus de la ligne du vendeur
 - **Suivi des prix de vente** : Enregistre le prix de vente des enchères vendues mais non possédées (réglable), puis signale le prix courant lors des visites suivantes comme **_légendaire_**, **_extraordinaire_**, **excellent**, **agréable**, **tolérable**, ou **_excessif_** par rapport à ceux que vous avez observés
   - **Sur vos propres ventes**, le tag juge la vente plutôt que l'achat : **excellente**, **agréable**, **tolérable** ou **décevante**
   - **Sur vos propres enchères remportées**, le tag affiche aussi le prix moyen de référence utilisé pour le calcul
