@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.5
+// @version      0.31.6
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -1971,6 +1971,12 @@
     const others = [];
 
     children.forEach((child) => {
+      // Feature ABD's abandoned cards and their section stay direct children of the wrap, where they sort themselves
+      if (
+        child.classList.contains("wm-abandoned") ||
+        child.classList.contains("wm-abandoned-section")
+      )
+        return;
       const label = child.querySelector("span.rounded-lg")?.textContent ?? "";
       if (label.includes("Surenchéri")) surenchéri.push(child);
       else if (label.includes("Vous menez")) vousMenez.push(child);
@@ -5594,6 +5600,11 @@
       id: "rule-56",
       label: "Afficher la catégorie de la carte sur la page d'une enchère",
     },
+    {
+      id: "feature-abd",
+      label:
+        "Abandonner une enchère (œil barré, marché > Mes enchères) : elle passe dans une section repliée",
+    },
   ];
 
   function readFeatureFlags() {
@@ -7927,6 +7938,10 @@
     {
       title: "Le menu à gauche",
       text: "Il se réduit à de petites icônes. Passez la souris dessus pour le voir en entier, ou cliquez sur 📌 pour qu'il reste toujours ouvert.",
+    },
+    {
+      title: "Abandonner une enchère",
+      text: "Sur le marché, onglet « Mes enchères », l'œil barré en haut à gauche d'une carte la range dans la section repliée « Abandonnées » en bas de la liste. Dépliez la section, puis recliquez sur l'œil de la carte pour la reprendre.",
     },
   ];
 
@@ -10599,7 +10614,8 @@
   // every time a tag's real count shows up. While a tag's count hasn't loaded yet, its cached amount is shown
   // right away (as a data-wm-cached-count attribute rendered by a CSS ::after, so the site's own text node is
   // never touched) and the list is pre-sorted from the cache; once the real counts arrive, the cached amounts
-  // vanish, the cache is updated and the list is sorted again from the true values.
+  // vanish, the cache is updated and the list is sorted again from the true values. A tag with no count and no cached
+  // amount (one no card carries) is pre-sorted as 0, so it can't hold the pre-sort back.
   // ============================================================
   const TAG_COUNT_REGEX = /\((\d+)\)\s*$/;
   const TAG_CACHE_KEY = "wm-tags-cache";
@@ -10657,10 +10673,11 @@
 
     if (ul.dataset.wmTagsSorted === "true") return;
     const pending = entries.filter((entry) => entry.count === null);
-    if (!pending.length || pending.some((e) => cache[e.name] === undefined))
-      return;
+    if (!pending.length) return;
 
-    const amountOf = (entry) => entry.count ?? cache[entry.name];
+    // A tag with neither a loaded count nor a cached one (typically one no card carries: it never gets a count, so
+    // it never enters the cache) counts as 0 — waiting for it would block the pre-sort until the settle timer
+    const amountOf = (entry) => entry.count ?? cache[entry.name] ?? 0;
     const sorted = [...entries].sort((a, b) => amountOf(b) - amountOf(a));
     if (sorted.every((entry, i) => entry === entries[i])) return;
 
@@ -13520,8 +13537,7 @@
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
-        min-width: min(30rem, 25vw);
-        max-width: 50vw;
+        width: min(30rem, 25vw);
         max-height: 80vh;
         overflow-y: auto;
         padding: 0.5rem;
@@ -15552,6 +15568,269 @@
   }
 
   // ============================================================
+  // Feature ABD: on /marketplace, on the "Mes enchères" tab only, every auction card (div[id^="marketplace-auction-"])
+  // gets a small barred-eye "abandon" button docked on its top left corner (button.wm-card-abandon), mirroring Feature
+  // WAT's pin on the top right one. Clicking it (without opening the card) abandons the auction: the card moves to an
+  // "Abandonnées (n)" subsection at the end of the list, folded by default (the fold is not remembered: it is folded
+  // again on every load). Clicking the button again, on the card shown in the unfolded subsection, takes it back.
+  // Nothing is relocated in the DOM, which the site's framework owns: abandoned cards get the CSS class
+  // "wm-abandoned" (flex `order` past everything else, hidden while the subsection is folded) and the subsection's
+  // header (div.wm-abandoned-section, a toggle button) is appended to the cards' wrapper (div.flex-wrap) with an
+  // order just before them. Feature TMB's grouping leaves abandoned cards (and the header) out of its groups, and is
+  // re-applied when a card is abandoned or taken back. Abandoned auctions are kept in localStorage under
+  // "wm-abandoned" ({ auction id: epoch of the abandon }), entries older than 14 days (the auction is long over) being
+  // dropped at startup. The buttons, header and classes are removed on the other tabs and pages.
+  // ============================================================
+  const ABANDONED_KEY = "wm-abandoned";
+  const ABANDONED_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+  const ABANDON_EYE_OFF_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"></path><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"></path><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"></path><path d="m2 2 20 20"></path></svg>';
+  let abandonedSectionOpen = false;
+
+  function readAbandonedAuctions() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(ABANDONED_KEY) ?? "{}");
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : {};
+    } catch (error) {
+      logger(CPL.WARN, `${ABANDONED_KEY} unreadable, treated as empty`, error);
+      return {};
+    }
+  }
+
+  function writeAbandonedAuctions(abandoned) {
+    try {
+      localStorage.setItem(ABANDONED_KEY, JSON.stringify(abandoned));
+      return true;
+    } catch (error) {
+      logger(CPL.ERROR, `${ABANDONED_KEY} not saved`, error);
+      return false;
+    }
+  }
+
+  function pruneAbandonedAuctions() {
+    const abandoned = readAbandonedAuctions();
+    const ids = Object.keys(abandoned);
+    const kept = {};
+    ids.forEach((id) => {
+      if (Date.now() - Number(abandoned[id]) < ABANDONED_MAX_AGE_MS)
+        kept[id] = abandoned[id];
+    });
+    const dropped = ids.length - Object.keys(kept).length;
+    if (dropped === 0) return;
+    if (writeAbandonedAuctions(kept))
+      logger(
+        CPL.INFO,
+        `Abandoned auctions: ${dropped} old entr${dropped > 1 ? "ies" : "y"} dropped`,
+      );
+  }
+
+  function isMyAuctionsTabActive() {
+    return findAuctionsTabButton()?.classList.contains("border-b-2") ?? false;
+  }
+
+  function setCardAbandonState(button, abandoned) {
+    button.setAttribute("aria-pressed", String(abandoned));
+    button.title = abandoned
+      ? "Reprendre cette enchère (la sortir des abandonnées)"
+      : "Abandonner cette enchère (la ranger dans les abandonnées)";
+  }
+
+  function clearAbandonUi() {
+    document
+      .querySelectorAll(".wm-card-abandon, .wm-abandoned-section")
+      .forEach((el) => el.remove());
+    document
+      .querySelectorAll(".wm-abandoned")
+      .forEach((el) => el.classList.remove("wm-abandoned"));
+    document
+      .querySelectorAll(".wm-abandoned-open")
+      .forEach((el) => el.classList.remove("wm-abandoned-open"));
+  }
+
+  function syncAbandonedAuctions() {
+    const isListPage =
+      window.location.pathname.startsWith("/marketplace") &&
+      !MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname);
+    if (!isListPage || !isMyAuctionsTabActive()) {
+      clearAbandonUi();
+      return;
+    }
+
+    const wrap = document.querySelector("div.flex-wrap");
+    if (!wrap) return;
+
+    const abandoned = readAbandonedAuctions();
+    let abandonedCount = 0;
+    let added = 0;
+
+    document
+      .querySelectorAll(`div[id^="${WATCH_CARD_ID_PREFIX}"]`)
+      .forEach((card) => {
+        const id = card.id.slice(WATCH_CARD_ID_PREFIX.length);
+        if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+
+        const isAbandoned = abandoned[id] !== undefined;
+        if (isAbandoned) abandonedCount++;
+        if (card.classList.contains("wm-abandoned") !== isAbandoned)
+          card.classList.toggle("wm-abandoned", isAbandoned);
+
+        const existing = card.querySelector(":scope > .wm-card-abandon");
+        if (existing) {
+          if (existing.getAttribute("aria-pressed") !== String(isAbandoned))
+            setCardAbandonState(existing, isAbandoned);
+          return;
+        }
+
+        if (getComputedStyle(card).position === "static")
+          card.style.position = "relative";
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "wm-card-abandon";
+        button.innerHTML = ABANDON_EYE_OFF_SVG;
+        setCardAbandonState(button, isAbandoned);
+        // The card itself opens the auction on click: keep this click for the button
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleAbandonedAuction(card, id);
+        });
+        card.appendChild(button);
+        added++;
+      });
+
+    if (added > 0)
+      traceOnce(`[ABD] abandon button added on ${added} marketplace card(s)`);
+
+    let section = wrap.querySelector(":scope > .wm-abandoned-section");
+    if (abandonedCount === 0) {
+      section?.remove();
+      wrap.classList.remove("wm-abandoned-open");
+      return;
+    }
+
+    if (!section) {
+      section = document.createElement("div");
+      section.className = "wm-abandoned-section";
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.addEventListener("click", () => {
+        abandonedSectionOpen = !abandonedSectionOpen;
+        logger(
+          CPL.LOG,
+          `[ABD] abandoned section open: ${abandonedSectionOpen}`,
+        );
+        syncAbandonedAuctions();
+      });
+      section.appendChild(toggle);
+      wrap.appendChild(section);
+    }
+    const toggle = section.firstElementChild;
+    const label = `${abandonedSectionOpen ? "▾" : "▸"} Abandonnées (${abandonedCount})`;
+    if (toggle.textContent !== label) toggle.textContent = label;
+    toggle.setAttribute("aria-expanded", String(abandonedSectionOpen));
+    if (wrap.classList.contains("wm-abandoned-open") !== abandonedSectionOpen)
+      wrap.classList.toggle("wm-abandoned-open", abandonedSectionOpen);
+  }
+
+  function toggleAbandonedAuction(card, id) {
+    const abandoned = readAbandonedAuctions();
+    const name = card.querySelector("h3")?.textContent.trim() ?? "";
+    if (abandoned[id] !== undefined) {
+      delete abandoned[id];
+      logger(CPL.INFO, `[ABD] Auction taken back: "${name}" (${id})`);
+    } else {
+      abandoned[id] = Date.now();
+      logger(CPL.INFO, `[ABD] Auction abandoned: "${name}" (${id})`);
+    }
+    if (!writeAbandonedAuctions(abandoned)) return;
+
+    // Feature TMB's groups hold the cards they were given: rebuilt so this card lands where it belongs
+    const wrap = document.querySelector("div.flex-wrap");
+    if (wrap?.querySelector(":scope > .wm-group-list")) {
+      applyAuctionGrouping(wrap, false);
+      syncAbandonedAuctions();
+      applyAuctionGrouping(wrap, true);
+    }
+    syncAbandonedAuctions();
+  }
+
+  function watchAbandonedAuctions() {
+    addStyle(`
+      .wm-card-abandon {
+        position: absolute;
+        top: -0.5rem;
+        left: -0.5rem;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        padding: 0;
+        border: none;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        opacity: 0.7;
+        cursor: pointer;
+        transition: opacity 0.2s ease, color 0.2s ease, background 0.2s ease;
+      }
+      .wm-card-abandon:hover {
+        opacity: 1;
+        background: rgba(0, 0, 0, 0.8);
+      }
+      .wm-card-abandon svg {
+        width: 1rem;
+        height: 1rem;
+      }
+      .wm-card-abandon[aria-pressed="true"] {
+        opacity: 1;
+        color: var(--color-accent);
+      }
+      .wm-abandoned {
+        order: 1001;
+      }
+      div.flex-wrap:not(.wm-abandoned-open) > .wm-abandoned {
+        display: none !important;
+      }
+      .wm-abandoned-open > .wm-abandoned {
+        opacity: 0.6;
+      }
+      .wm-abandoned-section {
+        order: 1000;
+        width: 100%;
+        margin-top: 1.5rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid #ffffff1f;
+      }
+      .wm-abandoned-section > button {
+        font-size: 1.1rem;
+        font-weight: 600;
+        padding: 0.4rem 0.75rem;
+        border: none;
+        border-radius: 0.5rem;
+        background: #ffffff0f;
+        color: inherit;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      .wm-abandoned-section > button:hover {
+        background: #ffffff3f;
+      }
+    `);
+
+    pruneAbandonedAuctions();
+    syncAbandonedAuctions();
+
+    const observer = new MutationObserver(() => syncAbandonedAuctions());
+    observer.observe(document.body, { childList: true, subtree: true });
+    logger(CPL.INFO, "[ABD] abandoned auctions watcher started");
+  }
+
+  // ============================================================
   // Init
   // ============================================================
   function main() {
@@ -15652,6 +15931,7 @@
     run("rule-54", watchCardObtainedDate);
     run("rule-55", watchTagListFoldOnTagsAreaClick);
     run("rule-56", watchAuctionCategory);
+    run("feature-abd", watchAbandonedAuctions);
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");
