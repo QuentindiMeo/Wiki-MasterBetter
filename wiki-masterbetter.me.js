@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.6
+// @version      0.31.11
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2818,8 +2818,11 @@
   // span.bg-emerald-600/90, which is present whenever the viewer owns the card at all, won here or not), record
   // the final displayed price (span.text-2xl) — whether the auction actually sold or not, it's still useful
   // market signal — in localStorage, keyed by
-  // "observed-{card name}" (h1.flex-1). A legacy entry still stored under the untagged card name is migrated to that
-  // prefixed key on read. Skips while div.animate-spin is present (the page is still loading). Each stored entry is
+  // "wmb-observed-{rarity}-{card name}" (h1.flex-1; rarity: the short name from the page's rarity tag,
+  // div.top-2.left-2 — C, PC, R, SR, UR, L or L* —, so that a card's rarities never share an average; with no readable
+  // rarity nothing is recorded). A legacy entry stored under "observed-{card name}" (or the untagged card name) is
+  // upgraded to the rarity key on read, trusting the rarity of the auction at hand, unless the rarity key exists.
+  // The danger zone (Feature DZN) can also convert legacy entries by hand. Skips while div.animate-spin is present (the page is still loading). Each stored entry is
   // tagged as "{price}-{tag}", tag being the bid UUID's second segment, so the same bid can never be recorded twice.
   // Each card keeps at most N entries (the "Prix de vente gardés par carte" setting of Feature CFG, 7 by default,
   // read when the code acts): once full, a new price replaces the array's current highest value, but only when it's
@@ -2857,10 +2860,71 @@
     return effective;
   }
   const PRICE_ENTRY_REGEX = /^\d+-[0-9a-f]+$/i;
-  const BSP_KEY_PREFIX = "observed-";
+  // Observed prices are grouped per rarity: the same card in two rarities has very different price ranges, and
+  // mixing them falsified the reference average. Current key: "wmb-observed-{rarity short name}-{card name}"; legacy
+  // key (rarity unknown): "observed-{card name}", upgraded softly by readBspEntries, or by hand from the settings'
+  // danger zone (Feature DZN).
+  const BSP_KEY_PREFIX = "wmb-observed-";
+  const LEGACY_BSP_KEY_PREFIX = "observed-";
+  const RARITY_SHORT_NAMES = ["C", "PC", "R", "SR", "UR", "L", "L*"];
 
-  function getBspObservedStorageKey(cardName) {
-    return `${BSP_KEY_PREFIX}${cardName}`;
+  function getBspObservedStorageKey(cardName, rarity = null) {
+    return rarity
+      ? `${BSP_KEY_PREFIX}${rarity}-${cardName}`
+      : `${LEGACY_BSP_KEY_PREFIX}${cardName}`;
+  }
+
+  function isBspStorageKey(key) {
+    return (
+      key.startsWith(BSP_KEY_PREFIX) || key.startsWith(LEGACY_BSP_KEY_PREFIX)
+    );
+  }
+
+  // { cardName, rarity } of an observed key (rarity null for a legacy one), or null when it isn't one
+  function parseBspStorageKey(key) {
+    if (key.startsWith(BSP_KEY_PREFIX)) {
+      const rest = key.slice(BSP_KEY_PREFIX.length);
+      const rarity = RARITY_SHORT_NAMES.find((r) => rest.startsWith(`${r}-`));
+      return rarity
+        ? { cardName: rest.slice(rarity.length + 1), rarity }
+        : null;
+    }
+    if (key.startsWith(LEGACY_BSP_KEY_PREFIX))
+      return {
+        cardName: key.slice(LEGACY_BSP_KEY_PREFIX.length),
+        rarity: null,
+      };
+    return null;
+  }
+
+  // The rarity short name of a rarity tag (div.top-2.left-2): Feature ETS appends " ({eval})" to it, so only its
+  // first text node is read (or the base text Feature ETS saved). A shiny legendary renders as
+  // `L<span>✦</span><span class="sr-only"> shiny</span>` with the "shiny-badge" class: it is "L*", not "L".
+  // null when it isn't one of RARITY_SHORT_NAMES.
+  function readRarityFromTag(tagEl) {
+    if (!tagEl) return null;
+    const own = Array.from(tagEl.childNodes).find(
+      (node) => node.nodeType === Node.TEXT_NODE,
+    );
+    const text = (tagEl.dataset.wmBaseRarity ?? own?.textContent ?? "").trim();
+    const isShiny =
+      tagEl.classList.contains("shiny-badge") || /✦|shiny/i.test(text);
+    const token = text.split(/[\s✦]+/)[0];
+    const rarity = token === "L" && isShiny ? "L*" : token;
+    return RARITY_SHORT_NAMES.includes(rarity) ? rarity : null;
+  }
+
+  // The CSS color of a rarity: the site's own variable (--color-rarity-c, -pc, -r, -sr, -ur, -l; the shiny
+  // legendary has none known, hence the fallback to the legendary one)
+  function getRarityColorVar(rarity) {
+    const base = `--color-rarity-${rarity.replace("*", "").toLowerCase()}`;
+    return rarity === "L*"
+      ? "var(--color-rarity-shiny, var(--color-rarity-l, currentColor))"
+      : `var(${base}, currentColor)`;
+  }
+
+  function getBidPageRarity() {
+    return readRarityFromTag(document.querySelector("div.top-2.left-2"));
   }
 
   // A stored price entry is either the current tagged string
@@ -2876,18 +2940,37 @@
     );
   }
 
-  // Migrates a legacy untagged key (the plain card name) to the
-  // prefixed key if that's still where the data lives.
-  function readBspEntries(cardName) {
-    const key = getBspObservedStorageKey(cardName);
+  // Migrates the untagged key (the plain card name) to the legacy prefixed key if that's still where the data lives.
+  // Then, only when asked (upgradeLegacy: the caller is recording an observed auction), the rarity is known and
+  // nothing is stored under the rarity key yet, soft-upgrades the legacy entry: its data moves to the rarity key,
+  // trusting the rarity of that auction. A plain read never converts: a card listed in several rarities would hand
+  // its legacy data to whichever is displayed first. A legacy entry is never merged into an existing rarity key
+  // (that one is already right).
+  function readBspEntries(cardName, rarity = null, upgradeLegacy = false) {
+    const key = getBspObservedStorageKey(cardName, rarity);
     let raw = localStorage.getItem(key);
 
     if (raw === null) {
-      const legacyRaw = localStorage.getItem(cardName);
-      if (legacyRaw !== null) {
+      const legacyKey = getBspObservedStorageKey(cardName);
+      let legacyRaw = localStorage.getItem(legacyKey);
+      if (legacyRaw === null) {
+        const untaggedRaw = localStorage.getItem(cardName);
+        if (untaggedRaw !== null) {
+          localStorage.setItem(legacyKey, untaggedRaw);
+          localStorage.removeItem(cardName);
+          logger(CPL.LOG, `Legacy price key migrated: "${cardName}"`);
+          legacyRaw = untaggedRaw;
+        }
+      }
+
+      if (legacyRaw !== null && !rarity) raw = legacyRaw;
+      else if (legacyRaw !== null && upgradeLegacy) {
         localStorage.setItem(key, legacyRaw);
-        localStorage.removeItem(cardName);
-        logger(CPL.LOG, `Legacy price key migrated: "${cardName}"`);
+        localStorage.removeItem(legacyKey);
+        logger(
+          CPL.INFO,
+          `[BSP] Observed prices of "${cardName}" upgraded to rarity ${rarity}`,
+        );
         raw = legacyRaw;
       }
     }
@@ -2988,9 +3071,19 @@
       return;
     }
 
+    // Prices are grouped per rarity: with no readable rarity tag (not rendered yet), nothing is recorded and the
+    // flag stays off, so the next settled mutation tries again
+    const rarity = getBidPageRarity();
+    if (!rarity) {
+      traceOnce(
+        `[BSP] "${cardName}": rarity tag unreadable, price not recorded`,
+      );
+      return;
+    }
+
     soldSpan.dataset.wmPriceStored = "true";
 
-    const prices = readBspEntries(cardName);
+    const prices = readBspEntries(cardName, rarity, true);
     if (
       prices.some(
         (entry) => typeof entry === "string" && entry.endsWith(`-${tag}`),
@@ -3024,10 +3117,10 @@
     }
 
     localStorage.setItem(
-      getBspObservedStorageKey(cardName),
+      getBspObservedStorageKey(cardName, rarity),
       JSON.stringify(prices),
     );
-    logger(CPL.LOG, `Sale price recorded: "${cardName}" ${entry}`);
+    logger(CPL.LOG, `Sale price recorded: "${cardName}" (${rarity}) ${entry}`);
   }
 
   function watchSoldBidPriceRecording() {
@@ -3678,7 +3771,8 @@
     if (isMySoldAuction) {
       referenceValue = getCardEvalValueByName(cardName);
     } else {
-      const stored = readBspEntries(cardName);
+      const rarity = getBidPageRarity();
+      const stored = rarity ? readBspEntries(cardName, rarity) : [];
       observedEntryCount = stored.length;
 
       const currentTag = getBidTag();
@@ -3898,6 +3992,23 @@
     );
   }
 
+  // Feature MPA (cont'd): card name -> index (in RARITY_SHORT_NAMES) of the lowest rarity Feature BSP holds prices
+  // for. Only the rarity-keyed entries count, and an emptied list holds nothing.
+  function collectLowestObservedRarityIndexes() {
+    const lowest = new Map();
+    listStorageKeys((key) => key.startsWith(BSP_KEY_PREFIX)).forEach((key) => {
+      const parsed = parseBspStorageKey(key);
+      if (!parsed?.rarity) return;
+      const raw = localStorage.getItem(key);
+      if (raw === null || raw === "[]") return;
+      const index = RARITY_SHORT_NAMES.indexOf(parsed.rarity);
+      const known = lowest.get(parsed.cardName);
+      if (known === undefined || index < known)
+        lowest.set(parsed.cardName, index);
+    });
+    return lowest;
+  }
+
   function updateMarketplaceArrows() {
     if (!window.location.pathname.startsWith("/marketplace")) return;
 
@@ -3912,6 +4023,8 @@
     }
 
     let graded = 0;
+    let belowLowest = 0;
+    const lowestObserved = collectLowestObservedRarityIndexes();
     const auctionCards = document.querySelectorAll(
       'div[id^="marketplace-auction-"]',
     );
@@ -3922,8 +4035,18 @@
       if (!priceEl || !cardName) return;
 
       let stored = [];
+      // A listing of a lower rarity than any you observed prices for on this card is dimmed like a ▲ one, graded or not
+      const listedRarity = readRarityFromTag(
+        card.querySelector("div.top-2.left-2"),
+      );
+      const lowestIndex = lowestObserved.get(cardName);
+      const isBelowLowestRarity =
+        listedRarity !== null &&
+        lowestIndex !== undefined &&
+        RARITY_SHORT_NAMES.indexOf(listedRarity) < lowestIndex;
+      if (isBelowLowestRarity) belowLowest++;
       try {
-        stored = readBspEntries(cardName);
+        stored = listedRarity ? readBspEntries(cardName, listedRarity) : [];
       } catch {
         stored = [];
       }
@@ -3947,7 +4070,8 @@
 
       if (reference === null || Number.isNaN(price)) {
         existing?.remove();
-        delete card.dataset.wmMpaUp;
+        if (isBelowLowestRarity) card.dataset.wmMpaUp = "true";
+        else delete card.dataset.wmMpaUp;
         return;
       }
 
@@ -3955,8 +4079,9 @@
       const status = computeBuyStatus(price, reference, stored.length);
       const arrow = price < reference * TOLERABLE_THRESHOLD_RATIO ? "▼" : "▲";
       // Rule 40 dims the cards flagged here (the ones whose arrow points up)
-      if (arrow === "▲")
-        card.dataset.wmMpaUp = status === "tolerable" ? "tolerable" : "true";
+      if (arrow === "▲" || isBelowLowestRarity)
+        card.dataset.wmMpaUp =
+          status === "tolerable" && !isBelowLowestRarity ? "tolerable" : "true";
       else delete card.dataset.wmMpaUp;
       logger(CPL.DEBUG, `[MPA] "${cardName}" graded ${status}, arrow ${arrow}`);
       const title = `${BUY_STATUS_LABELS[status]} (obj. ${Math.round(reference)})${unreliable ? " — indice peu fiable" : ""}`;
@@ -3982,6 +4107,10 @@
     if (graded > 0)
       traceOnce(
         `[MPA] ${graded} of ${auctionCards.length} listed card(s) graded`,
+      );
+    if (belowLowest > 0)
+      traceOnce(
+        `[MPA] ${belowLowest} listed card(s) below the lowest observed rarity flagged`,
       );
   }
 
@@ -4110,16 +4239,16 @@
 
       if (!isValidBspPriceArray(value)) return;
 
-      const isTagged = key.startsWith(BSP_KEY_PREFIX);
-      const cardName = isTagged ? key.slice(BSP_KEY_PREFIX.length) : key;
+      const parsedKey = parseBspStorageKey(key);
+      const cardName = parsedKey ? parsedKey.cardName : key;
 
-      if (!isTagged) {
-        // Legacy untagged key — migrate it to the prefixed key.
+      if (!parsedKey) {
+        // Legacy untagged key — migrate it to the legacy prefixed key.
         localStorage.setItem(getBspObservedStorageKey(cardName), raw);
         localStorage.removeItem(key);
       }
 
-      entries.push([cardName, value]);
+      entries.push([cardName, value, parsedKey?.rarity ?? null]);
     });
 
     return entries;
@@ -4130,7 +4259,11 @@
   // moved to another browser/device. Values are carried as their raw stored strings (not re-parsed), since Feature
   // BSP's entries are JSON-encoded arrays while Feature ETS's are plain strings; both are CSV-quoted as needed.
   // Feature FOL's followed-users list and Feature UDS's player descriptions are carried too.
-  const TAGGED_CACHE_PREFIXES = [BSP_KEY_PREFIX, "eval-"];
+  const TAGGED_CACHE_PREFIXES = [
+    BSP_KEY_PREFIX,
+    LEGACY_BSP_KEY_PREFIX,
+    "eval-",
+  ];
 
   // Your own data and settings (Feature CFG's config, the feature flags, Feature BBS's best trades, Feature WAT's
   // watched auctions, your tag names, wishlist names and flagged outliers) are carried as well, see getUserDataMergers.
@@ -4545,7 +4678,7 @@
           }
 
           const isEval = key.startsWith("eval-");
-          const isBsp = key.startsWith(BSP_KEY_PREFIX);
+          const isBsp = isBspStorageKey(key);
           if (!isEval && !isBsp) return;
 
           const localRaw = localStorage.getItem(key);
@@ -4706,19 +4839,19 @@
 
     const rows = [];
 
-    const entriesWithAverage = entries.map(([cardName, prices]) => {
+    const entriesWithAverage = entries.map(([cardName, prices, rarity]) => {
       const numericPrices = prices.map((entry) => parseInt(entry, 10));
       const weightedAverage = computeWeightedAveragePrice(numericPrices);
       const average =
         weightedAverage !== null ? Math.round(weightedAverage) : null;
-      return { cardName, prices, average };
+      return { cardName, prices, average, rarity };
     });
 
     entriesWithAverage.sort(
       (a, b) => (b.average ?? -Infinity) - (a.average ?? -Infinity),
     );
 
-    entriesWithAverage.forEach(({ cardName, prices, average }) => {
+    entriesWithAverage.forEach(({ cardName, prices, average, rarity }) => {
       const entryEl = document.createElement("div");
       entryEl.className = "wm-bsp-dump-entry";
 
@@ -4732,6 +4865,14 @@
       nameCell.className = "wm-bsp-dump-name";
       nameCell.textContent =
         cardName.length < 42 ? cardName : cardName.trim().slice(0, 42) + "...";
+      if (rarity) {
+        // Colored like the site's own rarity tag (its --color-rarity-{short name} variables)
+        const rarityEl = document.createElement("span");
+        rarityEl.className = "wm-bsp-dump-rarity";
+        rarityEl.textContent = ` [${rarity}]`;
+        rarityEl.style.color = getRarityColorVar(rarity);
+        nameCell.appendChild(rarityEl);
+      }
 
       const pricesCell = document.createElement("span");
       pricesCell.className = "wm-bsp-dump-prices";
@@ -4769,7 +4910,7 @@
           priceBtn.textContent = price;
           priceBtn.title = "Considérer cette enchère comme absurde";
           priceBtn.addEventListener("click", () => {
-            if (!removeOutlierBid(tag, cardName, tag)) return;
+            if (!removeOutlierBid(tag, cardName, tag, rarity)) return;
             prices.splice(prices.indexOf(entry), 1);
             const newAverage = computeWeightedAveragePrice(
               prices.map((e) => parseInt(e, 10)),
@@ -4791,7 +4932,7 @@
 
       clearBtn.addEventListener("click", () => {
         logger(CPL.INFO, `Prices cleared: "${cardName}"`);
-        localStorage.removeItem(getBspObservedStorageKey(cardName));
+        localStorage.removeItem(getBspObservedStorageKey(cardName, rarity));
         clearBtn.remove();
         entryEl.classList.add("wm-bsp-dump-entry-cleared");
       });
@@ -6580,8 +6721,8 @@
     {
       id: "observed",
       label: "Prix de vente observés",
-      hint: () => "observed-{carte}",
-      keys: () => listStorageKeys((key) => key.startsWith(BSP_KEY_PREFIX)),
+      hint: () => "wmb-observed-{rareté}-{carte}",
+      keys: () => listStorageKeys(isBspStorageKey),
     },
     {
       id: "eval",
@@ -6651,6 +6792,165 @@
       if (value === UNKNOWN_EVAL_VALUE) return includeUnknown;
       return typeof value === "number" && value < threshold;
     });
+  }
+
+  // Feature DZN (cont'd): "Convertir les prix observés…" opens a modal listing every observed entry still in the legacy
+  // format ("observed-{card name}", rarity unknown). A <select> per card picks its rarity (left on "—", it isn't
+  // touched); "Convertir" moves each chosen entry to "wmb-observed-{rarity}-{card name}". Should that key already
+  // exist, both arrays are merged the way an import does (deduplicated by tag, capped), then the legacy key goes.
+  const RARITY_LABELS = {
+    C: "Commune",
+    PC: "Peu commune",
+    R: "Rare",
+    SR: "Super rare",
+    UR: "Ultra rare",
+    L: "Légendaire",
+    "L*": "Légendaire shiny",
+  };
+
+  function convertLegacyObservedKey(legacyKey, rarity) {
+    const parsed = parseBspStorageKey(legacyKey);
+    if (!parsed || parsed.rarity || !RARITY_SHORT_NAMES.includes(rarity))
+      return false;
+    const legacyRaw = localStorage.getItem(legacyKey);
+    if (legacyRaw === null || !isValidBspPriceArray(safeJsonParse(legacyRaw)))
+      return false;
+
+    const newKey = getBspObservedStorageKey(parsed.cardName, rarity);
+    const localRaw = localStorage.getItem(newKey);
+    if (localRaw === null) {
+      localStorage.setItem(newKey, legacyRaw);
+    } else {
+      const merged = mergeImportedBspEntries(localRaw, legacyRaw);
+      if (merged !== null) localStorage.setItem(newKey, merged);
+    }
+    localStorage.removeItem(legacyKey);
+    logger(
+      CPL.INFO,
+      `[DZN] "${parsed.cardName}" converted to rarity ${rarity}${localRaw === null ? "" : " (merged)"}`,
+    );
+    return true;
+  }
+
+  function openObservedConversionModal(onDone) {
+    const legacyKeys = listStorageKeys(
+      (key) => parseBspStorageKey(key)?.rarity === null,
+    ).sort((a, b) => a.localeCompare(b));
+    logger(
+      CPL.LOG,
+      `[DZN] Conversion modal opened (${legacyKeys.length} legacy entr${legacyKeys.length === 1 ? "y" : "ies"})`,
+    );
+
+    const overlay = document.createElement("div");
+    overlay.className = "wm-settings-overlay wm-convert-overlay";
+    const modal = document.createElement("div");
+    modal.className = "wm-settings-modal wm-convert-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Convertir les prix observés");
+
+    const header = document.createElement("div");
+    header.className = "wm-settings-header";
+    const title = document.createElement("h2");
+    title.className = "wm-settings-title";
+    title.textContent = "Convertir les prix observés";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "wm-settings-close";
+    closeBtn.setAttribute("aria-label", "Fermer");
+    closeBtn.textContent = "✕";
+    header.append(title, closeBtn);
+
+    const intro = document.createElement("p");
+    intro.className = "wm-danger-intro";
+    intro.textContent =
+      legacyKeys.length === 0
+        ? "Aucun prix observé à l'ancien format : tout est déjà classé par rareté."
+        : "Ces cartes ont des prix observés sans rareté. Choisissez la rareté de chacune ; celles laissées sur « — » ne sont pas modifiées.";
+
+    const makeSelect = (placeholder) => {
+      const select = document.createElement("select");
+      select.className = "wm-convert-select";
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = placeholder;
+      select.appendChild(empty);
+      RARITY_SHORT_NAMES.forEach((rarity) => {
+        const option = document.createElement("option");
+        option.value = rarity;
+        option.textContent = `${rarity} — ${RARITY_LABELS[rarity]}`;
+        select.appendChild(option);
+      });
+      return select;
+    };
+
+    const list = document.createElement("div");
+    list.className = "wm-convert-list";
+    const rows = legacyKeys.map((key) => {
+      const { cardName } = parseBspStorageKey(key);
+      let count = 0;
+      try {
+        count = JSON.parse(localStorage.getItem(key) ?? "[]").length;
+      } catch {
+        count = 0;
+      }
+      const row = document.createElement("div");
+      row.className = "wm-convert-row";
+      const name = document.createElement("span");
+      name.className = "wm-convert-name";
+      name.textContent = `${cardName} [${count}]`;
+      name.title = cardName;
+      const select = makeSelect("—");
+      row.append(name, select);
+      list.appendChild(row);
+      return { key, select };
+    });
+
+    const footer = document.createElement("div");
+    footer.className = "wm-convert-footer";
+    const allSelect = makeSelect("Tout définir sur…");
+    allSelect.addEventListener("change", () => {
+      if (!allSelect.value) return;
+      rows.forEach(({ select }) => (select.value = allSelect.value));
+    });
+    const applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.className = "wm-danger-btn";
+    applyBtn.textContent = "Convertir";
+    applyBtn.disabled = rows.length === 0;
+    footer.append(allSelect, applyBtn);
+
+    const close = () => {
+      document.removeEventListener("keydown", onKeydown, true);
+      overlay.remove();
+    };
+    const onKeydown = (event) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      close();
+    };
+    document.addEventListener("keydown", onKeydown, true);
+    closeBtn.addEventListener("click", close);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    applyBtn.addEventListener("click", () => {
+      const chosen = rows.filter(({ select }) => select.value);
+      let converted = 0;
+      chosen.forEach(({ key, select }) => {
+        if (convertLegacyObservedKey(key, select.value)) converted++;
+      });
+      logger(
+        CPL.INFO,
+        `[DZN] Manual conversion: ${converted}/${chosen.length} chosen entr${chosen.length === 1 ? "y" : "ies"} converted`,
+      );
+      close();
+      onDone(converted);
+    });
+
+    modal.append(header, intro, list, footer);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
   }
 
   function buildDangerPanel() {
@@ -6826,6 +7126,34 @@
       panel.appendChild(row);
     });
 
+    const convertRow = document.createElement("div");
+    convertRow.className = "wm-danger-row";
+    const convertLabel = document.createElement("div");
+    convertLabel.className = "wm-danger-label";
+    const convertName = document.createElement("strong");
+    convertName.textContent = "Convertir les prix observés";
+    const convertDetail = document.createElement("span");
+    convertDetail.className = "wm-danger-detail";
+    convertLabel.append(convertName, convertDetail);
+    const convertActions = document.createElement("div");
+    convertActions.className = "wm-danger-actions";
+    const convertBtn = makeButton("Convertir…", () =>
+      openObservedConversionModal((converted) => {
+        report(`${converted} carte(s) convertie(s) au format par rareté.`);
+        refreshAll();
+      }),
+    );
+    convertBtn.classList.add("wm-danger-btn-neutral");
+    convertActions.appendChild(convertBtn);
+    convertRow.append(convertLabel, convertActions);
+    refreshers.push(() => {
+      const count = listStorageKeys(
+        (key) => parseBspStorageKey(key)?.rarity === null,
+      ).length;
+      convertDetail.textContent = `observed-{carte} → wmb-observed-{rareté}-{carte} — ${count} carte(s) à l'ancien format`;
+      convertBtn.disabled = count === 0;
+    });
+
     const wholeRow = document.createElement("div");
     wholeRow.className = "wm-danger-row wm-danger-row-whole";
     const wholeLabel = document.createElement("div");
@@ -6843,7 +7171,7 @@
       TOP_EVALS_CACHE_KEY,
     ];
     const wholeBtn = makeButton("Vider le cache", () => {
-      const observed = listStorageKeys((key) => key.startsWith(BSP_KEY_PREFIX));
+      const observed = listStorageKeys(isBspStorageKey);
       const evals = listStorageKeys((key) => key.startsWith(EVAL_KEY_PREFIX));
       if (
         !confirm(
@@ -6879,7 +7207,7 @@
     });
     reloadBtn.classList.add("wm-danger-btn-neutral");
 
-    panel.append(wholeRow, status, reloadBtn);
+    panel.append(convertRow, wholeRow, status, reloadBtn);
     refreshAll();
     return panel;
   }
@@ -7468,6 +7796,47 @@
         align-self: flex-start;
         border-color: var(--color-accent);
         color: var(--color-accent);
+      }
+      .wm-convert-overlay {
+        z-index: 10000;
+      }
+      .wm-convert-modal {
+        width: min(42rem, 92vw);
+        max-height: 80vh;
+      }
+      .wm-convert-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        overflow-y: auto;
+        min-height: 0;
+      }
+      .wm-convert-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        font-size: 0.85rem;
+      }
+      .wm-convert-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .wm-convert-select {
+        padding: 0.25rem 0.5rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 0.5rem;
+        background: var(--color-surface-light);
+        color: var(--color-foreground);
+        font-size: 0.8rem;
+      }
+      .wm-convert-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
       }
       .wm-config-group-title {
         grid-column: 1 / -1;
@@ -13695,7 +14064,9 @@
   // is also kept as the row's last child: the "Réinitialiser" button the site appends once a filter is picked is moved
   // back in front of it (see keepDimUpDockLast). While it is on, the cards whose price arrow points
   // up (▲, Feature MPA: the price is at or above the reference, i.e. not a bargain) are dimmed (to the opacity of the "Opacité des cartes estompées" setting of Feature CFG, 20 % by default). MPA
-  // flags such cards with data-wm-mpa-up (value "tolerable" for the amber ones, whose fade is halved: 20 % becomes 60 %); the dimming itself is driven by a body attribute
+  // flags such cards with data-wm-mpa-up (value "tolerable" for the amber ones, whose fade is halved: 20 % becomes 60 %).
+  // It flags too, with the full fade, a card whose rarity ranks below the lowest rarity (C < PC < R < SR < UR < L < L*)
+  // Feature BSP holds prices for under that card's name — graded or not, whatever its price. The dimming itself is driven by a body attribute
   // (data-wm-dim-up, only set while the switch is on AND "Parcourir" is the active tab), so flipping the switch or
   // changing tab needs no re-scan. The state is persisted in localStorage under "wm-dim-up-cards". The switch is
   // removed from the page when leaving the tab.
@@ -14852,7 +15223,7 @@
   // ============================================================
   // Rule 49: on a bid page that is over ("Vendue" / "Non vendue", the same check as Feature BSP's recording, loaded
   // page included) and isn't the viewer's own auction, a "🚫 Valeur absurde" button is docked after the watch button
-  // — only while Feature BSP holds an entry for this very auction ("{price}-{tag}" in "observed-{card name}", tag
+  // — only while Feature BSP holds an entry for this very auction ("{price}-{tag}" in "wmb-observed-{rarity}-{card name}", tag
   // being the bid UUID's second segment), which is also why it never shows on an auction the viewer won (not recorded).
   // After a confirm(), that entry is removed from the card's array (the key itself goes when the array ends up
   // empty) and the auction's full UUID is added to "wm-outlier-bids", the list Feature BSP checks so the next visit
@@ -14882,10 +15253,10 @@
     return flagged.includes(bidId) || (!!tag && flagged.includes(tag));
   }
 
-  function findOutlierEntry(cardName, tag) {
+  function findOutlierEntry(cardName, tag, rarity = null) {
     try {
       return (
-        readBspEntries(cardName).find(
+        readBspEntries(cardName, rarity).find(
           (entry) => typeof entry === "string" && entry.endsWith(`-${tag}`),
         ) ?? null
       );
@@ -14899,10 +15270,10 @@
     }
   }
 
-  function removeOutlierBid(bidId, cardName, tag) {
+  function removeOutlierBid(bidId, cardName, tag, rarity = null) {
     try {
-      const key = getBspObservedStorageKey(cardName);
-      const kept = readBspEntries(cardName).filter(
+      const key = getBspObservedStorageKey(cardName, rarity);
+      const kept = readBspEntries(cardName, rarity).filter(
         (entry) => !(typeof entry === "string" && entry.endsWith(`-${tag}`)),
       );
       if (kept.length > 0) localStorage.setItem(key, JSON.stringify(kept));
@@ -14931,13 +15302,15 @@
     const id = match[1];
     const tag = getBidTag();
     const cardName = getBidPageCardName();
+    const rarity = getBidPageRarity();
     const eligible =
       !document.querySelector("div.animate-spin") &&
       !!findAuctionOutcomeSpan() &&
       !isMyUsername(getBidPageSellerUsername()) &&
       !!tag &&
       !!cardName &&
-      findOutlierEntry(cardName, tag) !== null;
+      !!rarity &&
+      findOutlierEntry(cardName, tag, rarity) !== null;
     if (!eligible) return remove();
 
     if (existing?.dataset.wmBidId === id) return;
@@ -14956,7 +15329,7 @@
     btn.title =
       "Cette enchère n'est pas représentative (autre rareté, prix absurde) : la retirer des prix observés";
     btn.addEventListener("click", () => {
-      const entry = findOutlierEntry(cardName, tag);
+      const entry = findOutlierEntry(cardName, tag, rarity);
       if (!entry) return;
       if (
         !confirm(
@@ -14966,7 +15339,7 @@
         logger(CPL.LOG, `Outlier: cancelled for "${cardName}" (${id})`);
         return;
       }
-      if (removeOutlierBid(id, cardName, tag)) btn.remove();
+      if (removeOutlierBid(id, cardName, tag, rarity)) btn.remove();
     });
     anchor.after(btn);
   }
@@ -15009,7 +15382,7 @@
   // ============================================================
   // Rule 50: on the page of an auction you just won ("Vendue" and Rule 33's isMyUsernameLeadingBid — not the
   // owned-card label, which is also there for a card owned from elsewhere), a "🧹 Vider les prix observés" button is
-  // docked after the watch button — only while Feature BSP holds prices for that card ("observed-{card name}"). After
+  // docked after the watch button — only while Feature BSP holds prices for that card in that rarity ("wmb-observed-{rarity}-{card name}"). After
   // a confirm(), that key is removed. Estimates (Feature ETS) and best trades (Feature BBS) are left alone.
   // ============================================================
   function ensureClearObservedButton() {
@@ -15019,10 +15392,11 @@
       return remove();
 
     const cardName = getBidPageCardName();
+    const rarity = getBidPageRarity();
     let count = 0;
-    if (cardName) {
+    if (cardName && rarity) {
       try {
-        count = readBspEntries(cardName).length;
+        count = readBspEntries(cardName, rarity).length;
       } catch (error) {
         logger(
           CPL.WARN,
@@ -15038,7 +15412,11 @@
       count > 0;
     if (!eligible) return remove();
 
-    if (existing?.dataset.wmCardName === cardName) return;
+    if (
+      existing?.dataset.wmCardName === cardName &&
+      existing.dataset.wmRarity === rarity
+    )
+      return;
     remove();
 
     const anchor =
@@ -15050,12 +15428,13 @@
     btn.type = "button";
     btn.className = "wm-clear-observed-btn";
     btn.dataset.wmCardName = cardName;
+    btn.dataset.wmRarity = rarity;
     btn.textContent = "🧹 Vider les prix observés";
     btn.title = `Vous possédez désormais cette carte : retirer ses ${count} prix observés du cache`;
     btn.addEventListener("click", () => {
       let entries;
       try {
-        entries = readBspEntries(cardName);
+        entries = readBspEntries(cardName, rarity);
       } catch (error) {
         logger(
           CPL.ERROR,
@@ -15066,13 +15445,13 @@
       }
       if (
         !confirm(
-          `Vider les prix observés de « ${cardName} » (${entries.length} prix) ? Cette action est définitive.`,
+          `Vider les prix observés de « ${cardName} » (${rarity}, ${entries.length} prix) ? Cette action est définitive.`,
         )
       ) {
         logger(CPL.LOG, `[Rule 50] Clearing cancelled for "${cardName}"`);
         return;
       }
-      localStorage.removeItem(getBspObservedStorageKey(cardName));
+      localStorage.removeItem(getBspObservedStorageKey(cardName, rarity));
       logger(
         CPL.INFO,
         `[Rule 50] Observed prices of "${cardName}" cleared (${entries.length} entries)`,
@@ -15577,7 +15956,8 @@
   // "wm-abandoned" (flex `order` past everything else, hidden while the subsection is folded) and the subsection's
   // header (div.wm-abandoned-section, a toggle button) is appended to the cards' wrapper (div.flex-wrap) with an
   // order just before them. Feature TMB's grouping leaves abandoned cards (and the header) out of its groups, and is
-  // re-applied when a card is abandoned or taken back. Abandoned auctions are kept in localStorage under
+  // re-applied when a card is abandoned or taken back. Abandoning an auction also un-watches it (Feature WAT's
+  // "Surveillées"); taking it back doesn't watch it again. Abandoned auctions are kept in localStorage under
   // "wm-abandoned" ({ auction id: epoch of the abandon }), entries older than 14 days (the auction is long over) being
   // dropped at startup. The buttons, header and classes are removed on the other tabs and pages.
   // ============================================================
@@ -15735,6 +16115,19 @@
       wrap.classList.toggle("wm-abandoned-open", abandonedSectionOpen);
   }
 
+  // Feature ABD (cont'd): abandoning an auction also removes it from Feature WAT's watched ones ("Surveillées"), as
+  // it is no longer of interest; taking it back doesn't watch it again. Only the watched entry of that auction goes,
+  // any other "wm-saved" entry stays. The card's pin and the "Surveillées" counter follow at once.
+  function unwatchAbandonedAuction(id, name) {
+    const entries = readSavedEntries();
+    const kept = entries.filter((entry) => parseWatchedEntry(entry)?.id !== id);
+    if (kept.length === entries.length) return;
+    if (!writeSavedEntries(kept)) return;
+    logger(CPL.INFO, `[ABD] Abandoned auction unwatched: "${name}" (${id})`);
+    ensureCardPins();
+    updateWatchListButtonCount();
+  }
+
   function toggleAbandonedAuction(card, id) {
     const abandoned = readAbandonedAuctions();
     const name = card.querySelector("h3")?.textContent.trim() ?? "";
@@ -15746,6 +16139,7 @@
       logger(CPL.INFO, `[ABD] Auction abandoned: "${name}" (${id})`);
     }
     if (!writeAbandonedAuctions(abandoned)) return;
+    if (abandoned[id] !== undefined) unwatchAbandonedAuction(id, name);
 
     // Feature TMB's groups hold the cards they were given: rebuilt so this card lands where it belongs
     const wrap = document.querySelector("div.flex-wrap");
