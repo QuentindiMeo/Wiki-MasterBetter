@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.11
+// @version      0.31.12
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2818,7 +2818,7 @@
   // span.bg-emerald-600/90, which is present whenever the viewer owns the card at all, won here or not), record
   // the final displayed price (span.text-2xl) — whether the auction actually sold or not, it's still useful
   // market signal — in localStorage, keyed by
-  // "wmb-observed-{rarity}-{card name}" (h1.flex-1; rarity: the short name from the page's rarity tag,
+  // "wm-observed-{rarity}-{card name}" (h1.flex-1; rarity: the short name from the page's rarity tag,
   // div.top-2.left-2 — C, PC, R, SR, UR, L or L* —, so that a card's rarities never share an average; with no readable
   // rarity nothing is recorded). A legacy entry stored under "observed-{card name}" (or the untagged card name) is
   // upgraded to the rarity key on read, trusting the rarity of the auction at hand, unless the rarity key exists.
@@ -2861,10 +2861,10 @@
   }
   const PRICE_ENTRY_REGEX = /^\d+-[0-9a-f]+$/i;
   // Observed prices are grouped per rarity: the same card in two rarities has very different price ranges, and
-  // mixing them falsified the reference average. Current key: "wmb-observed-{rarity short name}-{card name}"; legacy
+  // mixing them falsified the reference average. Current key: "wm-observed-{rarity short name}-{card name}"; legacy
   // key (rarity unknown): "observed-{card name}", upgraded softly by readBspEntries, or by hand from the settings'
   // danger zone (Feature DZN).
-  const BSP_KEY_PREFIX = "wmb-observed-";
+  const BSP_KEY_PREFIX = "wm-observed-";
   const LEGACY_BSP_KEY_PREFIX = "observed-";
   const RARITY_SHORT_NAMES = ["C", "PC", "R", "SR", "UR", "L", "L*"];
 
@@ -2874,10 +2874,10 @@
       : `${LEGACY_BSP_KEY_PREFIX}${cardName}`;
   }
 
+  // "wm-observed-" is also the start of Feature BBS's keys ("wm-observed-best-sells" / "-buys"): a key of the prefix
+  // only counts when it parses (a known rarity right after the prefix)
   function isBspStorageKey(key) {
-    return (
-      key.startsWith(BSP_KEY_PREFIX) || key.startsWith(LEGACY_BSP_KEY_PREFIX)
-    );
+    return parseBspStorageKey(key) !== null;
   }
 
   // { cardName, rarity } of an observed key (rarity null for a legacy one), or null when it isn't one
@@ -4259,11 +4259,7 @@
   // moved to another browser/device. Values are carried as their raw stored strings (not re-parsed), since Feature
   // BSP's entries are JSON-encoded arrays while Feature ETS's are plain strings; both are CSV-quoted as needed.
   // Feature FOL's followed-users list and Feature UDS's player descriptions are carried too.
-  const TAGGED_CACHE_PREFIXES = [
-    BSP_KEY_PREFIX,
-    LEGACY_BSP_KEY_PREFIX,
-    "eval-",
-  ];
+  const TAGGED_CACHE_PREFIXES = ["eval-"];
 
   // Your own data and settings (Feature CFG's config, the feature flags, Feature BBS's best trades, Feature WAT's
   // watched auctions, your tag names, wishlist names and flagged outliers) are carried as well, see getUserDataMergers.
@@ -4275,6 +4271,7 @@
     return (
       key === FOLLOWED_USERS_KEY ||
       key.startsWith(USER_DESC_KEY_PREFIX) ||
+      isBspStorageKey(key) ||
       TAGGED_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix))
     );
   }
@@ -6721,7 +6718,7 @@
     {
       id: "observed",
       label: "Prix de vente observés",
-      hint: () => "wmb-observed-{rareté}-{carte}",
+      hint: () => "wm-observed-{rareté}-{carte}",
       keys: () => listStorageKeys(isBspStorageKey),
     },
     {
@@ -6796,7 +6793,7 @@
 
   // Feature DZN (cont'd): "Convertir les prix observés…" opens a modal listing every observed entry still in the legacy
   // format ("observed-{card name}", rarity unknown). A <select> per card picks its rarity (left on "—", it isn't
-  // touched); "Convertir" moves each chosen entry to "wmb-observed-{rarity}-{card name}". Should that key already
+  // touched); "Convertir" moves each chosen entry to "wm-observed-{rarity}-{card name}". Should that key already
   // exist, both arrays are merged the way an import does (deduplicated by tag, capped), then the legacy key goes.
   const RARITY_LABELS = {
     C: "Commune",
@@ -6832,7 +6829,267 @@
     return true;
   }
 
-  function openObservedConversionModal(onDone) {
+  // Feature DZN (cont'd): "Détecter…" finds the rarity of the legacy entries by itself. The names of the cards still in
+  // the legacy format are kept in sessionStorage (RDT_STATE_KEY: it survives the page change to /marketplace and
+  // reloads, and is gone with the tab), then, on /marketplace's "Parcourir" tab, each name is typed into the search
+  // field in turn and the rarity tags of the listed cards bearing exactly that name are counted (first page of
+  // results only). Once every name is done, the conversion modal opens with, for each card, its most present rarity
+  // preselected (a tie goes to the lower rarity) for the user to check and confirm: nothing is converted unasked. A
+  // card with no listing stays on "—". The progress panel's "Annuler" stops it; leaving /marketplace drops it.
+  const RDT_STATE_KEY = "wm-rarity-detection";
+  const RDT_SETTLE_MS = 600;
+  const RDT_HARD_TIMEOUT_MS = 8000;
+
+  function readRarityDetectionState() {
+    try {
+      const state = JSON.parse(sessionStorage.getItem(RDT_STATE_KEY) ?? "null");
+      return state && Array.isArray(state.names) && state.counts ? state : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeRarityDetectionState(state) {
+    try {
+      if (state) sessionStorage.setItem(RDT_STATE_KEY, JSON.stringify(state));
+      else sessionStorage.removeItem(RDT_STATE_KEY);
+    } catch (error) {
+      logger(CPL.WARN, `[RDT] sessionStorage unavailable: ${error}`);
+    }
+  }
+
+  function startLegacyRarityDetection() {
+    const names = [
+      ...new Set(
+        listStorageKeys((key) => parseBspStorageKey(key)?.rarity === null).map(
+          (key) => parseBspStorageKey(key).cardName,
+        ),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+    if (names.length === 0) return;
+    writeRarityDetectionState({ names, counts: {} });
+    logger(
+      CPL.INFO,
+      `[RDT] Detection started for ${names.length} card(s), heading to the marketplace`,
+    );
+    window.location.assign("/marketplace");
+  }
+
+  function getMarketplaceCardIds() {
+    return Array.from(
+      document.querySelectorAll('div[id^="marketplace-auction-"]'),
+    )
+      .map((card) => card.id)
+      .join("|");
+  }
+
+  async function waitForMarketplaceResults(previousIds) {
+    const started = Date.now();
+    let lastIds = getMarketplaceCardIds();
+    let lastChange = started;
+    let changed = false;
+    while (Date.now() - started < RDT_HARD_TIMEOUT_MS) {
+      await new Promise((resolve) => nativeSetTimeout(resolve, 100));
+      const ids = getMarketplaceCardIds();
+      if (ids !== lastIds) {
+        lastIds = ids;
+        lastChange = Date.now();
+      }
+      if (ids !== previousIds) changed = true;
+      const quiet = Date.now() - lastChange >= RDT_SETTLE_MS;
+      const loading = document.querySelector("div.animate-spin") !== null;
+      // Same results as before the typing can be the genuine answer: no change is awaited past 3 s
+      if (quiet && !loading && (changed || Date.now() - started > 3000)) break;
+    }
+  }
+
+  async function waitForElement(find, timeout = 15000) {
+    const started = Date.now();
+    while (Date.now() - started < timeout) {
+      const el = find();
+      if (el) return el;
+      await new Promise((resolve) => nativeSetTimeout(resolve, 200));
+    }
+    return null;
+  }
+
+  // The "Rechercher" button of the marketplace search bar: looked for in the field's form, then in its ancestors
+  function findMarketplaceSearchButton(field) {
+    const isSearchBtn = (btn) =>
+      btn.textContent.trim().toLowerCase() === "rechercher";
+    for (let el = field.parentElement; el && el !== document.body; el = el.parentElement) {
+      const btn = Array.from(el.querySelectorAll("button")).find(isSearchBtn);
+      if (btn) return btn;
+    }
+    return null;
+  }
+
+  function countMarketplaceRaritiesOf(cardName) {
+    const wanted = cardName.trim().toLowerCase();
+    const counts = {};
+    document
+      .querySelectorAll('div[id^="marketplace-auction-"]')
+      .forEach((card) => {
+        if (card.querySelector("h3")?.textContent.trim().toLowerCase() !== wanted)
+          return;
+        const rarity = readRarityFromTag(card.querySelector("div.top-2.left-2"));
+        if (rarity) counts[rarity] = (counts[rarity] ?? 0) + 1;
+      });
+    return counts;
+  }
+
+  function buildRarityDetectionPresets(counts) {
+    const presets = {};
+    Object.entries(counts).forEach(([cardName, perRarity]) => {
+      const ranked = Object.entries(perRarity).sort(
+        ([a, countA], [b, countB]) =>
+          countB - countA ||
+          RARITY_SHORT_NAMES.indexOf(a) - RARITY_SHORT_NAMES.indexOf(b),
+      );
+      if (ranked.length === 0) return;
+      presets[cardName] = {
+        rarity: ranked[0][0],
+        hint: ranked.map(([rarity, n]) => `${rarity} ×${n}`).join(", "),
+      };
+    });
+    return presets;
+  }
+
+  function buildRarityDetectionPanel(onCancel) {
+    const panel = document.createElement("div");
+    panel.className = "wm-rdt-panel";
+    panel.setAttribute("role", "status");
+    const text = document.createElement("span");
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "wm-danger-btn";
+    cancel.textContent = "Annuler";
+    cancel.addEventListener("click", onCancel);
+    panel.append(text, cancel);
+    document.body.appendChild(panel);
+    return { panel, text };
+  }
+
+  let rarityDetectionRunning = false;
+
+  async function runLegacyRarityDetection() {
+    if (rarityDetectionRunning) return;
+    const state = readRarityDetectionState();
+    if (!state) return;
+    rarityDetectionRunning = true;
+    let cancelled = false;
+    const { panel, text } = buildRarityDetectionPanel(() => {
+      cancelled = true;
+    });
+    logger(
+      CPL.INFO,
+      `[RDT] Detection running (${Object.keys(state.counts).length}/${state.names.length} already done)`,
+    );
+
+    const finish = (message) => {
+      panel.remove();
+      writeRarityDetectionState(null);
+      rarityDetectionRunning = false;
+      logger(CPL.INFO, `[RDT] ${message}`);
+    };
+
+    try {
+      const isParcourirActive = () => isBrowseTabActive();
+      // Rule 9 selects its own default tab on arrival: "Parcourir" is clicked whatever the active tab, then given a
+      // moment so that a late auto-selection lands before it is claimed back
+      const findParcourirBtn = () =>
+        Array.from(document.querySelectorAll("div.overflow-x-auto button")).find(
+          (btn) => btn.textContent.trim().startsWith("Parcourir"),
+        );
+      const parcourirBtn = await waitForElement(findParcourirBtn);
+      if (parcourirBtn) {
+        parcourirBtn.click();
+        logger(CPL.LOG, '[RDT] "Parcourir" tab clicked to overrule the auto-selection');
+        await new Promise((resolve) => nativeSetTimeout(resolve, 1000));
+      }
+      const search = await waitForElement(() =>
+        document.querySelector('input[type="search"]'),
+      );
+      if (!search) {
+        finish("Search field not found, detection abandoned");
+        return;
+      }
+
+      for (let i = 0; i < state.names.length; i++) {
+        const name = state.names[i];
+        if (state.counts[name]) continue;
+        if (cancelled) {
+          finish("Detection cancelled");
+          return;
+        }
+        if (!window.location.pathname.startsWith("/marketplace")) {
+          finish("Left the marketplace, detection abandoned");
+          return;
+        }
+        text.textContent = `Détection des raretés : ${i + 1} / ${state.names.length} — ${name}`;
+
+        // Rule 9 may click its own default tab around arrival: "Parcourir" is claimed again whenever it isn't active
+        if (!isParcourirActive()) {
+          findParcourirBtn()?.click();
+          await waitForElement(isParcourirActive, 5000);
+        }
+        const field = document.querySelector('input[type="search"]') ?? search;
+        const previousIds = getMarketplaceCardIds();
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          "value",
+        ).set.call(field, name);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        // Typing isn't enough: the search only runs once the site's "Rechercher" button is pressed
+        const searchBtn = findMarketplaceSearchButton(field);
+        if (searchBtn) searchBtn.click();
+        else {
+          logger(CPL.WARN, '[RDT] "Rechercher" button not found, pressing Enter');
+          field.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "Enter",
+              code: "Enter",
+              bubbles: true,
+            }),
+          );
+        }
+        await waitForMarketplaceResults(previousIds);
+
+        state.counts[name] = countMarketplaceRaritiesOf(name);
+        writeRarityDetectionState(state);
+        logger(
+          CPL.LOG,
+          `[RDT] "${name}": ${JSON.stringify(state.counts[name])}`,
+        );
+      }
+
+      const presets = buildRarityDetectionPresets(state.counts);
+      finish(
+        `Detection done: ${Object.keys(presets).length}/${state.names.length} card(s) found on the market`,
+      );
+      openObservedConversionModal(
+        (converted) =>
+          logger(CPL.INFO, `[RDT] ${converted} card(s) converted after detection`),
+        presets,
+      );
+    } catch (error) {
+      finish(`Detection failed: ${error}`);
+    }
+  }
+
+  // Started from main(): picks up a detection requested before the page change; one left over on another page is dropped
+  function resumeLegacyRarityDetection() {
+    const state = readRarityDetectionState();
+    if (!state) return;
+    if (!window.location.pathname.startsWith("/marketplace")) {
+      writeRarityDetectionState(null);
+      logger(CPL.LOG, "[RDT] Stale detection state dropped (not on the marketplace)");
+      return;
+    }
+    runLegacyRarityDetection();
+  }
+
+  function openObservedConversionModal(onDone, presets = {}) {
     const legacyKeys = listStorageKeys(
       (key) => parseBspStorageKey(key)?.rarity === null,
     ).sort((a, b) => a.localeCompare(b));
@@ -6866,7 +7123,9 @@
     intro.textContent =
       legacyKeys.length === 0
         ? "Aucun prix observé à l'ancien format : tout est déjà classé par rareté."
-        : "Ces cartes ont des prix observés sans rareté. Choisissez la rareté de chacune ; celles laissées sur « — » ne sont pas modifiées.";
+        : Object.keys(presets).length > 0
+          ? "Rareté la plus présente sur le marché, présélectionnée pour chaque carte trouvée (le détail est en infobulle). Vérifiez, corrigez si besoin, puis confirmez ; celles laissées sur « — » ne sont pas modifiées."
+          : "Ces cartes ont des prix observés sans rareté. Choisissez la rareté de chacune ; celles laissées sur « — » ne sont pas modifiées.";
 
     const makeSelect = (placeholder) => {
       const select = document.createElement("select");
@@ -6901,6 +7160,11 @@
       name.textContent = `${cardName} [${count}]`;
       name.title = cardName;
       const select = makeSelect("—");
+      const preset = presets[cardName];
+      if (preset) {
+        select.value = preset.rarity;
+        name.title = `${cardName} — sur le marché : ${preset.hint}`;
+      }
       row.append(name, select);
       list.appendChild(row);
       return { key, select };
@@ -7144,14 +7408,28 @@
       }),
     );
     convertBtn.classList.add("wm-danger-btn-neutral");
-    convertActions.appendChild(convertBtn);
+    const detectBtn = makeButton("Détecter…", () => {
+      if (
+        !confirm(
+          "Détecter automatiquement la rareté des cartes à l'ancien format ? La page va ouvrir le marché et chercher chaque carte ; vous pourrez vérifier les résultats avant toute conversion.",
+        )
+      ) {
+        logger(CPL.LOG, "[RDT] Detection cancelled at confirmation");
+        return;
+      }
+      startLegacyRarityDetection();
+    });
+    detectBtn.classList.add("wm-danger-btn-neutral");
+    detectBtn.style.marginLeft = "0.5rem";
+    convertActions.append(convertBtn, detectBtn);
     convertRow.append(convertLabel, convertActions);
     refreshers.push(() => {
       const count = listStorageKeys(
         (key) => parseBspStorageKey(key)?.rarity === null,
       ).length;
-      convertDetail.textContent = `observed-{carte} → wmb-observed-{rareté}-{carte} — ${count} carte(s) à l'ancien format`;
+      convertDetail.textContent = `observed-{carte} → wm-observed-{rareté}-{carte} — ${count} carte(s) à l'ancien format`;
       convertBtn.disabled = count === 0;
+      detectBtn.disabled = count === 0;
     });
 
     const wholeRow = document.createElement("div");
@@ -7799,6 +8077,22 @@
       }
       .wm-convert-overlay {
         z-index: 10000;
+      }
+      .wm-rdt-panel {
+        position: fixed;
+        bottom: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10001;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.5rem 1rem;
+        border: 1px solid var(--color-accent);
+        border-radius: 0.75rem;
+        background: var(--color-surface-light);
+        color: var(--color-foreground);
+        font-size: 0.85rem;
       }
       .wm-convert-modal {
         width: min(42rem, 92vw);
@@ -15223,7 +15517,7 @@
   // ============================================================
   // Rule 49: on a bid page that is over ("Vendue" / "Non vendue", the same check as Feature BSP's recording, loaded
   // page included) and isn't the viewer's own auction, a "🚫 Valeur absurde" button is docked after the watch button
-  // — only while Feature BSP holds an entry for this very auction ("{price}-{tag}" in "wmb-observed-{rarity}-{card name}", tag
+  // — only while Feature BSP holds an entry for this very auction ("{price}-{tag}" in "wm-observed-{rarity}-{card name}", tag
   // being the bid UUID's second segment), which is also why it never shows on an auction the viewer won (not recorded).
   // After a confirm(), that entry is removed from the card's array (the key itself goes when the array ends up
   // empty) and the auction's full UUID is added to "wm-outlier-bids", the list Feature BSP checks so the next visit
@@ -15382,7 +15676,7 @@
   // ============================================================
   // Rule 50: on the page of an auction you just won ("Vendue" and Rule 33's isMyUsernameLeadingBid — not the
   // owned-card label, which is also there for a card owned from elsewhere), a "🧹 Vider les prix observés" button is
-  // docked after the watch button — only while Feature BSP holds prices for that card in that rarity ("wmb-observed-{rarity}-{card name}"). After
+  // docked after the watch button — only while Feature BSP holds prices for that card in that rarity ("wm-observed-{rarity}-{card name}"). After
   // a confirm(), that key is removed. Estimates (Feature ETS) and best trades (Feature BBS) are left alone.
   // ============================================================
   function ensureClearObservedButton() {
@@ -16326,6 +16620,7 @@
     run("rule-55", watchTagListFoldOnTagsAreaClick);
     run("rule-56", watchAuctionCategory);
     run("feature-abd", watchAbandonedAuctions);
+    trackFeature("feature-dzn", resumeLegacyRarityDetection, "start")();
 
     watchMyUsernameDetection();
     logger(CPL.LOG, "Initialization complete");
