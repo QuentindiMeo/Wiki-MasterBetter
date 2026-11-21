@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.13
+// @version      0.31.14
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -312,21 +312,44 @@
   }
 
   // ============================================================
-  // Rule 1b: On auction pages (/marketplace/{UUID}), hide every icon-only button.shrink-0 (wishlist button, market button)
+  // Rule 1b: On auction pages (/marketplace/{UUID}), hide the wishlist (bell) button — the first icon-only
+  // button.shrink-0 of its group. The second one (market analysis) is kept.
   // ============================================================
   // Re-evaluated on every DOM mutation: the site is an SPA, so the page (and its buttons) may only be there once the
-  // initial render is done, and the path changes without a reload.
+  // initial render is done, and the path changes without a reload. The hidden button still counts as "first" on the
+  // next passes (it is only hidden, not removed), so the market button is never picked up.
+  // Rule 1b (cont'd): the card name row ("div.space-y-4 div div.items-start", name plus buttons) is vertically
+  // centered. The rule is scoped through a data attribute on <html>, kept in sync with the current path.
   function hideShrinkButton() {
-    if (!/^\/marketplace\/[^/]+/.test(window.location.pathname)) return;
+    const isAuctionPage = /^\/marketplace\/[^/]+/.test(window.location.pathname);
+    const root = document.documentElement;
+    if (isAuctionPage && root.dataset.wmAuction !== "true") root.dataset.wmAuction = "true";
+    else if (!isAuctionPage && root.dataset.wmAuction) delete root.dataset.wmAuction;
+    if (!isAuctionPage) return;
 
+    const seenParents = new Set();
     document.querySelectorAll("button.shrink-0").forEach((btn) => {
       // Only the icon-only round buttons: a button with a label (e.g. the seller's "Appliquer") must stay
       if (btn.textContent.trim() !== "") return;
-      if (btn.style.display !== "none") btn.style.display = "none";
+      if (seenParents.has(btn.parentElement)) return;
+      seenParents.add(btn.parentElement);
+      if (btn.style.display !== "none") {
+        btn.style.display = "none";
+        logger(CPL.INFO, "Rule 1b: wishlist button hidden on auction page");
+      }
     });
   }
 
   function watchShrinkButtons() {
+    addStyle(`
+      html[data-wm-auction="true"] div.space-y-4 div div.items-start {
+        align-items: center !important;
+      }
+      html[data-wm-auction="true"] div.space-y-4 div div.items-start a {
+        display: flex !important;
+        margin-left: auto !important;
+      }
+    `);
     hideShrinkButton();
 
     const observer = new MutationObserver(() => hideShrinkButton());
@@ -5179,7 +5202,10 @@
     if (!value && MARKET_UNAVAILABLE_REGEX.test(modal.textContent)) {
       if (marketUnavailableCardName !== cardName) {
         marketUnavailableCardName = cardName ?? null;
-        logger(CPL.WARN, `Market unavailable for "${cardName}": nothing recorded`);
+        logger(
+          CPL.WARN,
+          `Market unavailable for "${cardName}": nothing recorded`,
+        );
       }
       return;
     }

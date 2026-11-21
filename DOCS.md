@@ -31,7 +31,7 @@ A few page routes on [wiki-masters.com](https://www.wiki-masters.com) come up re
 ## Rules and Features
 
 - **Rule 1a — Bigger notifications list.** Makes the notifications panel larger, so more notifications fit on screen at once without extra scrolling.
-- **Rule 1b — Declutter auction pages.** On auction pages (`/marketplace/{UUID}`), hides the non-essential round buttons next to the card (wishlist and market analysis buttons). Applied once the page has finished rendering, and again when navigating to an auction page without a reload.
+- **Rule 1b — Declutter auction pages.** On auction pages (`/marketplace/{UUID}`), hides the wishlist round button next to the card (the market analysis button is kept). Applied once the page has finished rendering, and again when navigating to an auction page without a reload. The card name row (name plus buttons) is vertically centered, and its wiki link button is pushed to the right.
 - **Rule 2 — Smarter "mark as read".** Clicking a notification also marks every notification older than it as read, not just the one you clicked.
 - **Rule 3 — Descriptive tab title.** Adds useful context to the browser tab's title depending on what you're looking at — for example the card currently being bid on, or the username of the profile you're viewing.
 - **Rule 4 — 3-column friends grid.** Rearranges your friends list into a tidy 3-column grid instead of one long single-column list.
