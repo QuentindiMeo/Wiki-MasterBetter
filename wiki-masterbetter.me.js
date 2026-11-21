@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.12
+// @version      0.31.13
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -5101,10 +5101,10 @@
   }
 
   // ============================================================
-  // Feature ETS: on /pulls and /collection, once the "Moyenne" row's span.tabular-nums appears (not the first
-  // span.tabular-nums, which is the "Ventes" count), store its value in localStorage
-  // under "eval-{name}", name being the text content of p.truncate. If it's missing but div.mb-5 p.mt-1\.5 reads
-  // "Aucune vente" (no sales recorded yet for that card), stores the "?" placeholder (UNKNOWN_EVAL_VALUE) instead
+  // Feature ETS: on /pulls and /collection, once the auction modal's ("Mettre aux enchères") market block — the
+  // p.uppercase "Marché · {rarity}" label and its span.tabular-nums average — appears, store its value in localStorage
+  // under "eval-{name}", name being the text content of the modal's div.mb-5 p.truncate. If it's missing but the
+  // modal reads "Aucune vente" (no sales recorded yet for that card), stores the "?" placeholder (UNKNOWN_EVAL_VALUE) instead
   // of leaving that card unrecorded. p.truncate's own text node is read directly (rather than its full
   // textContent) since Feature CNC prepends a 📋 button inside that same element — including it here would
   // corrupt the cache key with a stray emoji. Never overwrites an already-stored genuine (numeric) eval with the
@@ -5122,9 +5122,31 @@
     return getConfigValue(CACHE_UNKNOWN_EVALS_CONFIG_ID);
   }
 
+  // The auction modal ("Mettre aux enchères", the one the quick action of Feature EBC opens): the only place whose market
+  // price is read. The card modal's own "Marché" tab shows one too ("Prix moyen · {rarity}", for the rarity picked in
+  // its chart) but has no p.truncate name and a p.truncate "Ventes" label of its own, so it is deliberately ignored.
+  // Feature ETS (cont'd): the auction modal can say the market is unavailable (wording guessed: "indisponible" /
+  // "unavailable") rather than "Aucune vente enregistrée". marketUnavailableCardName holds the card the modal currently
+  // reports so for, null otherwise.
+  const MARKET_UNAVAILABLE_REGEX = /indisponible|unavailable/i;
+  let marketUnavailableCardName = null;
+
+  function findAuctionModal() {
+    return (
+      Array.from(document.querySelectorAll("div.card-frame")).find(
+        (modal) =>
+          modal.querySelector("h2")?.textContent.trim() ===
+          "Mettre aux enchères",
+      ) ?? null
+    );
+  }
+
+  // The market block of the auction modal: a p.uppercase label reading "Marché · {rarity}" (it read "Moyenne" before the
+  // site's market update), followed in the same container by the average as the first span.tabular-nums (the trend
+  // badge after it is a span.tabular-nums too, hence the first one)
   function findAverageValueEl(root = document) {
-    for (const label of root.querySelectorAll("span.uppercase")) {
-      if (label.textContent.trim() !== "Moyenne") continue;
+    for (const label of root.querySelectorAll("p.uppercase")) {
+      if (!/^Marché(\s|$)/.test(label.textContent.trim())) continue;
       const valueEl = label.parentElement?.querySelector("span.tabular-nums");
       if (valueEl) return valueEl;
     }
@@ -5138,8 +5160,11 @@
     )
       return;
 
-    const valueEl = findAverageValueEl();
-    const cardNameEl = document.querySelector("p.truncate");
+    const modal = findAuctionModal();
+    if (!modal) return;
+
+    const valueEl = findAverageValueEl(modal);
+    const cardNameEl = modal.querySelector("div.mb-5 p.truncate");
     const cardName = cardNameEl
       ? Array.from(cardNameEl.childNodes)
           .filter((node) => node.nodeType === Node.TEXT_NODE)
@@ -5149,9 +5174,23 @@
       : undefined;
     let value = valueEl?.textContent.trim().replace(/\s/g, "");
 
+    // The market can be reported as unavailable instead of "no sale recorded": that says nothing about the card, so
+    // no "?" is stored; the card's name is flagged for Feature EBC, which retries with an exponential backoff
+    if (!value && MARKET_UNAVAILABLE_REGEX.test(modal.textContent)) {
+      if (marketUnavailableCardName !== cardName) {
+        marketUnavailableCardName = cardName ?? null;
+        logger(CPL.WARN, `Market unavailable for "${cardName}": nothing recorded`);
+      }
+      return;
+    }
+    if (value) marketUnavailableCardName = null;
+
     if (!value) {
-      const noSalesContainer = document.querySelector("div.mb-5 p.mt-1\\.5");
-      if (noSalesContainer?.textContent.includes("Aucune vente")) {
+      const noSalesContainer = modal.querySelector("div.mb-5 p.mt-1\\.5");
+      if (
+        noSalesContainer?.textContent.includes("Aucune vente") ||
+        /aucune vente/i.test(modal.textContent)
+      ) {
         value = UNKNOWN_EVAL_VALUE;
       }
     }
@@ -6917,7 +6956,11 @@
   function findMarketplaceSearchButton(field) {
     const isSearchBtn = (btn) =>
       btn.textContent.trim().toLowerCase() === "rechercher";
-    for (let el = field.parentElement; el && el !== document.body; el = el.parentElement) {
+    for (
+      let el = field.parentElement;
+      el && el !== document.body;
+      el = el.parentElement
+    ) {
       const btn = Array.from(el.querySelectorAll("button")).find(isSearchBtn);
       if (btn) return btn;
     }
@@ -6930,9 +6973,13 @@
     document
       .querySelectorAll('div[id^="marketplace-auction-"]')
       .forEach((card) => {
-        if (card.querySelector("h3")?.textContent.trim().toLowerCase() !== wanted)
+        if (
+          card.querySelector("h3")?.textContent.trim().toLowerCase() !== wanted
+        )
           return;
-        const rarity = readRarityFromTag(card.querySelector("div.top-2.left-2"));
+        const rarity = readRarityFromTag(
+          card.querySelector("div.top-2.left-2"),
+        );
         if (rarity) counts[rarity] = (counts[rarity] ?? 0) + 1;
       });
     return counts;
@@ -6998,13 +7045,16 @@
       // Rule 9 selects its own default tab on arrival: "Parcourir" is clicked whatever the active tab, then given a
       // moment so that a late auto-selection lands before it is claimed back
       const findParcourirBtn = () =>
-        Array.from(document.querySelectorAll("div.overflow-x-auto button")).find(
-          (btn) => btn.textContent.trim().startsWith("Parcourir"),
-        );
+        Array.from(
+          document.querySelectorAll("div.overflow-x-auto button"),
+        ).find((btn) => btn.textContent.trim().startsWith("Parcourir"));
       const parcourirBtn = await waitForElement(findParcourirBtn);
       if (parcourirBtn) {
         parcourirBtn.click();
-        logger(CPL.LOG, '[RDT] "Parcourir" tab clicked to overrule the auto-selection');
+        logger(
+          CPL.LOG,
+          '[RDT] "Parcourir" tab clicked to overrule the auto-selection',
+        );
         await new Promise((resolve) => nativeSetTimeout(resolve, 1000));
       }
       const search = await waitForElement(() =>
@@ -7044,7 +7094,10 @@
         const searchBtn = findMarketplaceSearchButton(field);
         if (searchBtn) searchBtn.click();
         else {
-          logger(CPL.WARN, '[RDT] "Rechercher" button not found, pressing Enter');
+          logger(
+            CPL.WARN,
+            '[RDT] "Rechercher" button not found, pressing Enter',
+          );
           field.dispatchEvent(
             new KeyboardEvent("keydown", {
               key: "Enter",
@@ -7069,7 +7122,10 @@
       );
       openObservedConversionModal(
         (converted) =>
-          logger(CPL.INFO, `[RDT] ${converted} card(s) converted after detection`),
+          logger(
+            CPL.INFO,
+            `[RDT] ${converted} card(s) converted after detection`,
+          ),
         presets,
       );
     } catch (error) {
@@ -7083,7 +7139,10 @@
     if (!state) return;
     if (!window.location.pathname.startsWith("/marketplace")) {
       writeRarityDetectionState(null);
-      logger(CPL.LOG, "[RDT] Stale detection state dropped (not on the marketplace)");
+      logger(
+        CPL.LOG,
+        "[RDT] Stale detection state dropped (not on the marketplace)",
+      );
       return;
     }
     runLegacyRarityDetection();
@@ -9885,7 +9944,8 @@
     });
   }
 
-  // Resolves true once a fresh value lands under "eval-{cardName}" (the
+  // Resolves "unavailable" when the auction modal reports the market as unavailable (Feature ETS), see
+  // evaluateCollectionCards' backoff. Resolves true once a fresh value lands under "eval-{cardName}" (the
   // caller must have cleared that key beforehand so a stale value already
   // present can't be mistaken for a freshly recorded one), or false if
   // stopped/timed out first. The default timeout is only a fallback: evaluateCollectionCards, its sole caller,
@@ -9908,6 +9968,10 @@
           sessionUnknownEvals.has(cardName)
         ) {
           resolve(true);
+          return;
+        }
+        if (marketUnavailableCardName === cardName) {
+          resolve("unavailable");
           return;
         }
         if (Date.now() - start >= timeout) {
@@ -10179,6 +10243,10 @@
     });
   }
 
+  const EVAL_UNAVAILABLE_BASE_DELAY_MS = 2000;
+  const EVAL_UNAVAILABLE_MAX_DELAY_MS = 60000;
+  const EVAL_UNAVAILABLE_MAX_RETRIES = 6;
+
   function getEvalMaxAttempts() {
     return getConfigValue(EVAL_MAX_ATTEMPTS_CONFIG_ID);
   }
@@ -10233,13 +10301,12 @@
       // estimate after the last attempt is skipped, so one bad card can't hold the whole run up.
       let recorded = false;
       let skipReason = null;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (attempt > 1) {
-          stats.retries++;
-          logger(
-            CPL.WARN,
-            `No estimate yet for "${cardName}" (attempt ${attempt - 1}/${maxAttempts}), reopening its modal`,
-          );
+      // A market reported unavailable doesn't use up an attempt: the card is retried after a delay doubling each time
+      // (EVAL_UNAVAILABLE_BASE_DELAY_MS, capped at EVAL_UNAVAILABLE_MAX_DELAY_MS), up to EVAL_UNAVAILABLE_MAX_RETRIES times
+      let unavailableRetries = 0;
+      let needsReopen = false;
+      for (let attempt = 1; attempt <= maxAttempts; ) {
+        if (needsReopen) {
           document.dispatchEvent(
             new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
           );
@@ -10251,6 +10318,7 @@
           }
           (card.querySelector(".wm-quick-action") ?? quickActionBtn).click();
         }
+        needsReopen = true;
 
         const outcome = await waitForQuickActionOutcome(quickActionBtn, state);
         if (outcome === "no-image" || outcome === "no-sell-button") {
@@ -10259,12 +10327,42 @@
         }
         if (state.stopped) break;
 
-        recorded = await waitForCardEvaluation(
+        const result = await waitForCardEvaluation(
           cardName,
           state,
           attempt === 1 ? timeouts.first : timeouts.retry,
         );
+        if (result === "unavailable") {
+          if (unavailableRetries >= EVAL_UNAVAILABLE_MAX_RETRIES) {
+            skipReason = `market still unavailable after ${unavailableRetries} retries`;
+            break;
+          }
+          const delay = Math.min(
+            EVAL_UNAVAILABLE_BASE_DELAY_MS * 2 ** unavailableRetries,
+            EVAL_UNAVAILABLE_MAX_DELAY_MS,
+          );
+          unavailableRetries++;
+          stats.retries++;
+          logger(
+            CPL.WARN,
+            `Market unavailable for "${cardName}" (retry ${unavailableRetries}/${EVAL_UNAVAILABLE_MAX_RETRIES}), reopening its modal in ${delay} ms`,
+          );
+          // Sliced so that the stop button interrupts the wait
+          for (let waited = 0; waited < delay && !state.stopped; waited += 250)
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          if (state.stopped) break;
+          continue;
+        }
+        recorded = result;
         if (recorded || state.stopped) break;
+        if (attempt < maxAttempts) {
+          stats.retries++;
+          logger(
+            CPL.WARN,
+            `No estimate yet for "${cardName}" (attempt ${attempt}/${maxAttempts}), reopening its modal`,
+          );
+        }
+        attempt++;
       }
       if (!recorded && !state.stopped) {
         skipped.push(cardName);
