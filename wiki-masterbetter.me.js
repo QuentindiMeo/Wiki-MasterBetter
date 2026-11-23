@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.14
+// @version      0.31.17
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -321,10 +321,14 @@
   // Rule 1b (cont'd): the card name row ("div.space-y-4 div div.items-start", name plus buttons) is vertically
   // centered. The rule is scoped through a data attribute on <html>, kept in sync with the current path.
   function hideShrinkButton() {
-    const isAuctionPage = /^\/marketplace\/[^/]+/.test(window.location.pathname);
+    const isAuctionPage = /^\/marketplace\/[^/]+/.test(
+      window.location.pathname,
+    );
     const root = document.documentElement;
-    if (isAuctionPage && root.dataset.wmAuction !== "true") root.dataset.wmAuction = "true";
-    else if (!isAuctionPage && root.dataset.wmAuction) delete root.dataset.wmAuction;
+    if (isAuctionPage && root.dataset.wmAuction !== "true")
+      root.dataset.wmAuction = "true";
+    else if (!isAuctionPage && root.dataset.wmAuction)
+      delete root.dataset.wmAuction;
     if (!isAuctionPage) return;
 
     const seenParents = new Set();
@@ -5198,7 +5202,7 @@
     let value = valueEl?.textContent.trim().replace(/\s/g, "");
 
     // The market can be reported as unavailable instead of "no sale recorded": that says nothing about the card, so
-    // no "?" is stored; the card's name is flagged for Feature EBC, which retries with an exponential backoff
+    // no "?" is stored; the card's name is flagged for Feature EBC, which retries 3 times, 5 s apart
     if (!value && MARKET_UNAVAILABLE_REGEX.test(modal.textContent)) {
       if (marketUnavailableCardName !== cardName) {
         marketUnavailableCardName = cardName ?? null;
@@ -5807,6 +5811,10 @@
       id: "feature-abd",
       label:
         "Abandonner une enchère (œil barré, marché > Mes enchères) : elle passe dans une section repliée",
+    },
+    {
+      id: "rule-57",
+      label: "Fermer le panneau des notifications avec Échap",
     },
   ];
 
@@ -10029,10 +10037,6 @@
     return btn;
   }
 
-  // Measured: evaluating 50 cards takes about 27 seconds in best case scenario, 237 at usual times
-  const EVALUATION_SECONDS_PER_CARD__BEST = 27 / 50;
-  const EVALUATION_SECONDS_PER_CARD__WORST = 237 / 50;
-
   function updateEvaluateUnratedButtonLabel(btn) {
     if (btn.disabled) return;
 
@@ -10044,12 +10048,12 @@
     const label =
       cards === null
         ? "Estimer les inconnues (chargement...)"
-        : `Estimer les inconnues (${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__BEST)} – ${Math.round(cards.length * EVALUATION_SECONDS_PER_CARD__WORST)} s)`;
+        : "Estimer les inconnues";
 
     if (btn.textContent === label) return;
     btn.textContent = label;
     btn.title =
-      "Estimer les cartes de la pages n'ayant pas d'estimation de prix sur le marché (prend du temps quand le site est saturé)";
+      "Estimer les cartes de la pages n'ayant pas d'estimation de prix sur le marché";
   }
 
   // Feature TBD (cont'd of EBC, off by default): once a batch evaluation has ended on "?" for a card, the market
@@ -10076,10 +10080,22 @@
     return hasInput ? document.querySelector("div.relative input") : null;
   }
 
+  // A chip's label: its text without the remove button's
+  function readChipLabel(chip) {
+    const clone = chip.cloneNode(true);
+    clone.querySelectorAll("button").forEach((button) => button.remove());
+    return clone.textContent.trim();
+  }
+
+  // Tags are compared whole (never as substrings: "$$" is not "$$$"), ignoring case and surrounding spaces
+  function isSameTag(label, tag) {
+    return label.trim().toLowerCase() === tag.trim().toLowerCase();
+  }
+
   // The card's active tags, as the chips show them
   function readActiveCardTags() {
     return Array.from(document.querySelectorAll(CARD_TAG_CHIPS_SELECTOR)).map(
-      (chip) => chip.textContent,
+      readChipLabel,
     );
   }
 
@@ -10101,7 +10117,7 @@
     }
 
     return waitUntil(
-      () => readActiveCardTags().some((text) => text.includes(tag)),
+      () => readActiveCardTags().some((label) => isSameTag(label, tag)),
       state,
     );
   }
@@ -10182,13 +10198,17 @@
   async function removeTagFromCard(tag, state) {
     const chip = Array.from(
       document.querySelectorAll(CARD_TAG_CHIPS_SELECTOR),
-    ).find((el) => el.textContent.includes(tag));
+    ).find((el) => isSameTag(readChipLabel(el), tag));
     const removeBtn = chip?.querySelector("button") ?? chip?.lastElementChild;
-    if (!removeBtn) return false;
+    if (!removeBtn) {
+      logger(CPL.WARN, `Value tagging: no chip to remove for "${tag}"`);
+      return false;
+    }
 
+    logger(CPL.DEBUG, `Value tagging: removing chip "${readChipLabel(chip)}"`);
     removeBtn.click();
     return waitUntil(
-      () => !readActiveCardTags().some((text) => text.includes(tag)),
+      () => !readActiveCardTags().some((label) => isSameTag(label, tag)),
       state,
     );
   }
@@ -10205,16 +10225,20 @@
     }
 
     const autoTags = getAllValueRangeTags();
-    const isAuto = (text) => autoTags.some((tag) => text.includes(tag));
-    const present = readActiveCardTags();
-    if (present.length > 0 && !present.some(isAuto)) {
+    const isAuto = (label) => autoTags.some((tag) => isSameTag(label, tag));
+    const initial = readActiveCardTags();
+    logger(CPL.DEBUG, `Value tagging: card carries [${initial.join(", ")}]`);
+    if (initial.length > 0 && !initial.some(isAuto)) {
       logger(CPL.LOG, `Value tagging: card carries only other tags (${value})`);
       await closeCardModalFrom(input);
       return;
     }
 
     for (const tag of autoTags) {
-      if (tags.includes(tag) || !present.some((text) => text.includes(tag))) {
+      if (
+        tags.includes(tag) ||
+        !readActiveCardTags().some((label) => isSameTag(label, tag))
+      ) {
         continue;
       }
       const removed = await removeTagFromCard(tag, state);
@@ -10223,7 +10247,7 @@
     }
 
     for (const tag of tags) {
-      if (present.some((text) => text.includes(tag))) {
+      if (readActiveCardTags().some((label) => isSameTag(label, tag))) {
         logger(CPL.LOG, `Card already tagged "${tag}" (${value})`);
         continue;
       }
@@ -10269,9 +10293,8 @@
     });
   }
 
-  const EVAL_UNAVAILABLE_BASE_DELAY_MS = 2000;
-  const EVAL_UNAVAILABLE_MAX_DELAY_MS = 60000;
-  const EVAL_UNAVAILABLE_MAX_RETRIES = 6;
+  const EVAL_UNAVAILABLE_RETRY_DELAY_MS = 5000;
+  const EVAL_UNAVAILABLE_MAX_RETRIES = 3;
 
   function getEvalMaxAttempts() {
     return getConfigValue(EVAL_MAX_ATTEMPTS_CONFIG_ID);
@@ -10327,8 +10350,8 @@
       // estimate after the last attempt is skipped, so one bad card can't hold the whole run up.
       let recorded = false;
       let skipReason = null;
-      // A market reported unavailable doesn't use up an attempt: the card is retried after a delay doubling each time
-      // (EVAL_UNAVAILABLE_BASE_DELAY_MS, capped at EVAL_UNAVAILABLE_MAX_DELAY_MS), up to EVAL_UNAVAILABLE_MAX_RETRIES times
+      // A market reported unavailable doesn't use up an attempt: the card is retried after a fixed delay
+      // (EVAL_UNAVAILABLE_RETRY_DELAY_MS, 5 s), up to EVAL_UNAVAILABLE_MAX_RETRIES (3) times
       let unavailableRetries = 0;
       let needsReopen = false;
       for (let attempt = 1; attempt <= maxAttempts; ) {
@@ -10363,10 +10386,7 @@
             skipReason = `market still unavailable after ${unavailableRetries} retries`;
             break;
           }
-          const delay = Math.min(
-            EVAL_UNAVAILABLE_BASE_DELAY_MS * 2 ** unavailableRetries,
-            EVAL_UNAVAILABLE_MAX_DELAY_MS,
-          );
+          const delay = EVAL_UNAVAILABLE_RETRY_DELAY_MS;
           unavailableRetries++;
           stats.retries++;
           logger(
@@ -10520,6 +10540,19 @@
     );
   }
 
+  // Feature EBC (cont'd): the site's empty state ("Aucune carte trouvée avec ces filtres.") replaces the grid when
+  // nothing matches the filters (e.g. once the run's own retagging moved every card out of the filtered tag, or when
+  // the filters are empty from the start): "Estimer tout" has nothing left to walk, so the run ends there.
+  const NO_CARD_FOUND_TEXT = "Aucune carte trouvée avec ces filtres.";
+
+  function isCollectionEmpty() {
+    return Array.from(document.querySelectorAll("main p, main div")).some(
+      (el) =>
+        el.children.length === 0 &&
+        el.textContent.trim() === NO_CARD_FOUND_TEXT,
+    );
+  }
+
   async function evaluateAllCollectionPages(button, otherButtons) {
     const state = { stopped: false };
     const stopBtn = insertStopEvaluationButton(state);
@@ -10537,6 +10570,14 @@
     };
     logger(CPL.INFO, "Full-collection evaluation started");
     while (!state.stopped) {
+      if (isCollectionEmpty()) {
+        logger(
+          CPL.INFO,
+          `Full-collection evaluation: "${NO_CARD_FOUND_TEXT}" on page ${page}, run ended`,
+        );
+        break;
+      }
+
       button.textContent = `Estimation en masse... (page ${page})`;
       logger(CPL.LOG, `Full-collection evaluation: page ${page}`);
 
@@ -10563,7 +10604,10 @@
 
       await waitUntil(() => {
         const firstName = getFirstCollectionCardName();
-        return firstName !== null && firstName !== previousFirstCardName;
+        return (
+          isCollectionEmpty() ||
+          (firstName !== null && firstName !== previousFirstCardName)
+        );
       }, state);
     }
 
@@ -10607,11 +10651,11 @@
     const format = (value) => value.toLocaleString("fr-FR");
 
     const rows = [
-      ["Durée", formatDuration(run.elapsedMs)],
+      ["Durée totale de l'estimation", formatDuration(run.elapsedMs)],
       ["Pages parcourues", String(run.pages.length)],
       ["Cartes à estimer", String(run.targeted)],
-      ["Cartes estimées", String(run.evaluated.length)],
-      ["Estimation inconnue (?)", String(run.unknown.length)],
+      ["Cartes qui ont été estimées", String(run.evaluated.length)],
+      ["Cartes done l'estimation est inconnue (?)", String(run.unknown.length)],
       ["Cartes ignorées", String(run.skipped.length)],
       ["Réitérations", String(run.retries)],
     ];
@@ -10620,8 +10664,8 @@
     }
     if (run.evaluated.length > 0) {
       rows.push(
-        ["Valeur totale estimée", format(Math.round(total))],
         ["Valeur moyenne", format(Math.round(total / run.evaluated.length))],
+        ["Valeur totale estimée", format(Math.round(total))],
         ["Plus grosse estimation", `${best.cardName} (${format(best.value)})`],
       );
     }
@@ -10813,33 +10857,13 @@
     sortCollectionByPrice(collectionSortDescending);
   }
 
-  // Reads the number of pages left to go off the pagination indicator's whole text ("Page 1 / 92" -> 92 - 1 = 91);
-  // null when the indicator isn't on screen (yet) or doesn't read "{current} / {max}".
-  const COLLECTION_PAGE_INDICATOR_SELECTOR =
-    "span.text-\\[var\\(--color-foreground\\)\\]\\/40";
-
-  function getCollectionPagesLeft() {
-    for (const span of document.querySelectorAll(
-      COLLECTION_PAGE_INDICATOR_SELECTOR,
-    )) {
-      const match = span.textContent.match(/(\d+)\s*\/\s*(\d+)/);
-      if (match) return parseInt(match[2], 10) - parseInt(match[1], 10) + 1; // +1 because the current
-    }
-    return null;
-  }
-
   function updateMassButtonLabel(btn) {
     // Disabled while a run is in progress, when the button shows that run's own progress text instead
     if (!btn || btn.disabled) return;
 
-    const pagesLeft = getCollectionPagesLeft();
-    const label =
-      pagesLeft === null
-        ? "Estimer tout 🗃️"
-        : `Estimer tout 🗃️ (>${pagesLeft} min)`;
+    const label = "Estimer tout 🗃️";
     if (btn.textContent !== label) btn.textContent = label;
-    btn.title =
-      "Lancer une estimation de toutes les pages de cette collection (prend du temps quand le site est saturé)";
+    btn.title = "Lancer une estimation de toutes les pages de cette collection";
   }
 
   function insertEvaluateUnratedButton() {
@@ -11126,7 +11150,8 @@
   // Feature CNC: append a small copy-to-clipboard button right inside a card name element, in three contexts:
   //   - the card modal (div.card-frame.p-6)'s own name heading (h2.text-xl), on /pulls, /collection and
   //     /global-collection
-  //   - the auction modal's name (p.truncate — the same element Feature ETS already reads the card name from),
+  //   - the auction modal's name (div.mb-5 p.truncate inside the "Mettre aux enchères" modal only — the same element
+  //     Feature ETS already reads the card name from),
   //     on /pulls and /collection only
   //   - the bid page's own name heading (h1.flex-1 — the same element Feature BSP's badge group hangs off of),
   //     on /marketplace/{UUID}
@@ -11135,15 +11160,23 @@
   // text. Re-inserted on every mutation rather than guarded by a one-time flag: navigating between cards inside
   // an already-open modal (Rule 20's keyboard navigation), or between bid pages, re-renders the name element's
   // own children, which would otherwise silently drop our button.
+  // Feature CNC (cont'd): the same button is also prepended to the card's short description (p.text-sm.leading-snug,
+  // right under the name) in the card modal (div.card-frame.p-6), on /pulls, /collection and /global-collection; it
+  // copies that description instead of the name. The long, line-clamped article extract above it is not concerned.
+  // On a bid page the description is the line Rule 56 adds under the name (#wm-card-category), which gets the button
+  // too. The card modal's name heading is matched without the "pr-10" class, which the site now writes "md:pr-10".
   // ============================================================
-  function insertCopyButtonInto(nameEl) {
+  function insertCopyButtonInto(nameEl, what = "name") {
     if (nameEl.querySelector(":scope > .wm-copy-name")) return;
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "wm-copy-name";
     btn.textContent = "📋";
-    btn.title = "Copier le nom de la carte";
+    btn.title =
+      what === "description"
+        ? "Copier la description de la carte"
+        : "Copier le nom de la carte";
 
     btn.addEventListener("click", (event) => {
       event.preventDefault();
@@ -11155,6 +11188,7 @@
         .join("")
         .trim();
       navigator.clipboard.writeText(cardName).then(() => {
+        logger(CPL.LOG, `Card ${what} copied: "${cardName}"`);
         btn.textContent = "✅";
         setTimeout(() => {
           btn.textContent = "📋";
@@ -11172,26 +11206,40 @@
       window.location.pathname.startsWith("/global-collection");
 
     if (onPulls || onCollection || onGlobalCollection) {
-      const modalName = document.querySelector(
-        "div.card-frame.p-6 h2.text-xl.pr-10",
-      );
+      const modalName = document.querySelector("div.card-frame.p-6 h2.text-xl");
       if (modalName) insertCopyButtonInto(modalName);
+
+      const modalDescription = document.querySelector(
+        "div.card-frame.p-6 p.text-sm.leading-snug",
+      );
+      if (modalDescription)
+        insertCopyButtonInto(modalDescription, "description");
     }
 
     if (onPulls || onCollection) {
-      const auctionModalName = document.querySelector("p.truncate");
+      // Scoped to the auction modal's own card summary: a bare p.truncate also matches unrelated elements, such as the
+      // text of the Cloudflare verification prompt
+      const auctionModalName = findAuctionModal()?.querySelector(
+        "div.mb-5 p.truncate",
+      );
       if (auctionModalName) insertCopyButtonInto(auctionModalName);
     }
 
     if (MARKETPLACE_BID_PATH_REGEX.test(window.location.pathname)) {
       const bidPageName = document.querySelector("h1.flex-1");
       if (bidPageName) insertCopyButtonInto(bidPageName);
+
+      const bidPageDescription = document.getElementById(CATEGORY_LINE_ID);
+      if (bidPageDescription) {
+        insertCopyButtonInto(bidPageDescription, "description");
+      }
     }
   }
 
   function watchCardModalNameCopyButton() {
     addStyle(`
       .wm-copy-name {
+        display: contents;
         background: none;
         border: none;
         cursor: pointer;
@@ -15476,22 +15524,31 @@
 
   // ============================================================
   // Rule 47: in the auction modal ("Mettre aux enchères", div.card-frame), when the card already has a saved estimate
-  // (Feature ETS, "eval-{name}", the "?" placeholder doesn't count), that previous estimate is shown in the top right
-  // corner of the card summary (div.mb-5), as "Ancienne estimation : {value}" (formatted like Feature ETS's tags). It
+  // (Feature ETS, "eval-{name}", the "?" placeholder doesn't count), that previous estimate is shown inside the market
+  // box (the one headed "Marché · {rarity}"), as an "Ancienne estimation : {value}" badge docked to that box's top right
+  // corner (formatted like Feature ETS's tags). It
   // is read the moment the modal shows its card, since Feature ETS overwrites the stored value 300 ms later with the
-  // "Moyenne" the modal displays; the badge (data-wm-old-eval) keeps that earlier value for as long as the modal
-  // stays open on that card.
+  // "Moyenne" the modal displays; the value captured then is kept for as long as the modal stays open on that card,
+  // and its line (data-wm-old-eval) is put back whenever the site re-renders the box or once the market has loaded.
   // ============================================================
   const OLD_EVAL_ATTRIBUTE = "data-wm-old-eval";
+
+  // The previous estimate captured when the modal showed its current card (value null: none worth showing); reset once
+  // the modal closes. Kept apart from the DOM, since the badge below lives in the market block, which the site
+  // re-renders (and which only shows after the market data has loaded).
+  let auctionModalOldEval = null;
 
   function updateAuctionModalOldEval() {
     const modal = Array.from(document.querySelectorAll("div.card-frame")).find(
       (m) =>
         m.querySelector("h2")?.textContent.trim() === "Mettre aux enchères",
     );
-    const summary = modal?.querySelector("div.mb-5");
-    const nameEl = summary?.querySelector("p.truncate");
-    if (!summary || !nameEl) return;
+    if (!modal) {
+      auctionModalOldEval = null;
+      return;
+    }
+    const nameEl = modal.querySelector("div.mb-5 p.truncate");
+    if (!nameEl) return;
 
     const cardName = Array.from(nameEl.childNodes)
       .filter((node) => node.nodeType === Node.TEXT_NODE)
@@ -15500,32 +15557,45 @@
       .trim();
     if (!cardName) return;
 
-    let badge = summary.querySelector(`:scope > span[${OLD_EVAL_ATTRIBUTE}]`);
-    if (badge?.dataset.wmCard === cardName) return;
-    badge?.remove();
+    if (auctionModalOldEval?.card !== cardName) {
+      const oldEval = localStorage.getItem(`eval-${cardName}`);
+      const value = !oldEval || oldEval === UNKNOWN_EVAL_VALUE ? null : oldEval;
+      auctionModalOldEval = { card: cardName, value };
+      logger(
+        CPL.LOG,
+        value === null
+          ? `Old estimate: "${cardName}" has none to show`
+          : `Old estimate captured: "${cardName}" ${value}`,
+      );
+    }
 
-    const oldEval = localStorage.getItem(`eval-${cardName}`);
-    if (!oldEval || oldEval === UNKNOWN_EVAL_VALUE) {
-      logger(CPL.LOG, `Old estimate: "${cardName}" has none to show`);
-      // Remembered even without a badge, so a later overwrite by Feature ETS doesn't pass for an "old" value
-      badge = document.createElement("span");
-      badge.setAttribute(OLD_EVAL_ATTRIBUTE, "");
-      badge.dataset.wmCard = cardName;
-      badge.hidden = true;
-      summary.appendChild(badge);
+    const badge = modal.querySelector(`span[${OLD_EVAL_ATTRIBUTE}]`);
+    const { value } = auctionModalOldEval;
+    if (value === null) {
+      badge?.remove();
       return;
     }
 
-    summary.style.position = "relative";
-    badge = document.createElement("span");
-    badge.setAttribute(OLD_EVAL_ATTRIBUTE, "");
-    badge.dataset.wmCard = cardName;
-    badge.title = "Estimation enregistrée avant l'ouverture de cette fenêtre";
-    badge.style.cssText =
-      "position:absolute;top:0.35rem;right:0.6rem;font-size:0.65rem;opacity:0.6;";
-    badge.textContent = `Ancienne estimation : ${formatEvalValue(oldEval)}`;
-    summary.appendChild(badge);
-    logger(CPL.LOG, `Old estimate shown: "${cardName}" ${oldEval}`);
+    // The estimation box: the container of the "Marché · {rarity}" label
+    const label = Array.from(modal.querySelectorAll("p")).find((p) =>
+      /^Marché/i.test(p.textContent.trim()),
+    );
+    const box = label?.parentElement;
+    if (!box) return;
+    if (badge?.dataset.wmCard === cardName && box.contains(badge)) return;
+    badge?.remove();
+
+    // Docked to the box's top right corner, level with its "Marché · {rarity}" label
+    box.style.position = "relative";
+    const line = document.createElement("span");
+    line.setAttribute(OLD_EVAL_ATTRIBUTE, "");
+    line.dataset.wmCard = cardName;
+    line.title = "Estimation enregistrée avant l'ouverture de cette fenêtre";
+    line.style.cssText =
+      "position:absolute;top:0.55rem;right:0.75rem;font-size:0.65rem;opacity:0.6;";
+    line.textContent = `Ancienne estimation : ${formatEvalValue(value)}`;
+    box.appendChild(line);
+    logger(CPL.LOG, `Old estimate shown: "${cardName}" ${value}`);
   }
 
   function watchAuctionModalOldEval() {
@@ -16332,6 +16402,26 @@
   }
 
   // ============================================================
+  // Rule 57: on every page, pressing Escape while the notifications popover is open (the navbar's bell button reads
+  // aria-expanded="true") closes it, by clicking that same bell, which toggles it. Only real key presses count: the
+  // Escape presses WMB synthesizes itself (bulk evaluations, Rule 46) are left alone, so they never close it.
+  // ============================================================
+  const NOTIFICATIONS_BELL_SELECTOR =
+    'button[aria-label="Notifications"][aria-expanded="true"]';
+
+  function watchNotificationsPopoverEscape() {
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !event.isTrusted) return;
+
+      const bell = document.querySelector(NOTIFICATIONS_BELL_SELECTOR);
+      if (!bell) return;
+
+      bell.click();
+      logger(CPL.LOG, "Rule 57: notifications popover closed with Escape");
+    });
+  }
+
+  // ============================================================
   // Rule 55: in the card modal (div.card-frame.p-6), the tag list under the "Ajouter une étiquette…" field folds when
   // the user presses the mouse outside the tags' block (div.space-y-2), but a press inside that block (the "ÉTIQUETTES"
   // label, the gaps between the chips...) only blurs the field: the list stays open. When the press lands in that
@@ -16744,6 +16834,7 @@
     run("rule-55", watchTagListFoldOnTagsAreaClick);
     run("rule-56", watchAuctionCategory);
     run("feature-abd", watchAbandonedAuctions);
+    run("rule-57", watchNotificationsPopoverEscape);
     trackFeature("feature-dzn", resumeLegacyRarityDetection, "start")();
 
     watchMyUsernameDetection();
