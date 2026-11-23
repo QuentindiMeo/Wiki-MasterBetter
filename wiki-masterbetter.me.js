@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wiki-MasterBetter
 // @namespace    http://tampermonkey.net
-// @version      0.31.17
+// @version      0.31.18
 // @description  WMB: A collection of features and tweaks to improve the user experience on wiki-masters.com
 // @author       https://github.com/QuentindiMeo
 // @match        https://www.wiki-masters.com/*
@@ -2466,14 +2466,13 @@
     poll();
   }
 
-  // Feature AKP: on /pulls, once div.gap-4:not(.flex-col) is in the DOM, pressing ArrowLeft/ArrowRight clicks its
-  // first/second button; ArrowUp/ArrowDown do the same but 4 times in a row (each click re-reads the container/buttons,
+  // Feature AKP: on /pulls, once div.gap-4:not(.flex-col) is in the DOM, pressing ArrowUp/ArrowDown clicks its
+  // first/second button 4 times in a row (ArrowLeft/ArrowRight are native on the site now) (each click re-reads the container/buttons,
   // waiting 50ms between clicks for React to re-render). Pressing Space, only while no modal (div.fixed.inset-0)
   // is open, clicks the "Continuer" button inside main, or button.relative.gap-4 if that's what's present in the
   // DOM instead. Pressing E, while a span reading "Carte" is inside main, clicks main img.scale-[1.8]. Pressing V
   // does the same as E, then (50ms later, to let React re-render the sell button after the card click) also
-  // clicks button.py-2.5.font-semibold. E and V are ignored while focus is inside an <input>. ArrowLeft/ArrowRight and
-  // ArrowUp/ArrowDown are ignored while a modal (div.fixed.inset-0, e.g. the card modal) is open.
+  // clicks button.py-2.5.font-semibold. E and V are ignored while focus is inside an <input>. ArrowUp/ArrowDown are ignored while a modal (div.fixed.inset-0, e.g. the card modal) is open.
   // ============================================================
   function clickPullsNavButton(direction) {
     const container = document.querySelector("div.gap-4:not(.flex-col)");
@@ -2497,6 +2496,7 @@
   }
 
   function watchPullsArrowNavigation() {
+    logger(CPL.DEBUG, "AKP: left/right arrows left to the site (native)");
     document.addEventListener("keydown", (event) => {
       if (!window.location.pathname.startsWith("/pulls")) return;
 
@@ -2553,17 +2553,13 @@
         return;
       }
 
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-
-      clickPullsNavButton(event.key === "ArrowLeft" ? "left" : "right");
     });
   }
 
   // ============================================================
   // Feature AKP (cont'd): on /pulls, while a pulled card is shown large (same guard as the E/V shortcuts above:
   // main div.relative.inline-flex is present), dock a small legend in the space to the left of the card listing
-  // its keyboard shortcuts — ←/→ for Précédent/Suivant, ↑/↓ for Début/Fin. Précédent/Suivant already mirror
-  // the on-screen chevron buttons, but ↑/↓ have no visual hint otherwise. Positioned from
+  // its keyboard shortcuts — ↑/↓ for Début/Fin (←/→ are native on the site, so not listed). Positioned from
   // main div.relative.inline-flex's own getBoundingClientRect(), same anchor and same self-healing pattern
   // (mutation observer + 200ms fallback timer, since navigating between cards doesn't reliably fire a mutation
   // these are watching for) as Feature OWL's own button, which it sits directly above so the two read as one
@@ -2579,8 +2575,6 @@
     panel.className = "wm-akp-tutorial";
 
     [
-      ["←", "Carte précédente"],
-      ["→", "Carte suivante"],
       ["↑", "Première carte"],
       ["↓", "Dernière carte"],
       ["E", "Ouvrir la carte"],
@@ -11165,9 +11159,30 @@
   // copies that description instead of the name. The long, line-clamped article extract above it is not concerned.
   // On a bid page the description is the line Rule 56 adds under the name (#wm-card-category), which gets the button
   // too. The card modal's name heading is matched without the "pr-10" class, which the site now writes "md:pr-10".
+  // An element whose own text reads "Vérification rapide" (the Cloudflare verification prompt) never gets the button.
   // ============================================================
+  // The Cloudflare verification prompt reuses the elements this feature hangs off: whatever carries its title is never
+  // given a button (nor keeps one)
+  const COPY_BUTTON_EXCLUDED_NAMES = ["Vérification rapide"];
+
+  function readOwnText(el) {
+    return Array.from(el.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join("")
+      .trim();
+  }
+
   function insertCopyButtonInto(nameEl, what = "name") {
-    if (nameEl.querySelector(":scope > .wm-copy-name")) return;
+    const existing = nameEl.querySelector(":scope > .wm-copy-name");
+    if (COPY_BUTTON_EXCLUDED_NAMES.includes(readOwnText(nameEl))) {
+      if (existing) {
+        existing.remove();
+        logger(CPL.LOG, "Copy button removed from the verification prompt");
+      }
+      return;
+    }
+    if (existing) return;
 
     const btn = document.createElement("button");
     btn.type = "button";
@@ -11182,11 +11197,7 @@
       event.preventDefault();
       event.stopPropagation();
 
-      const cardName = Array.from(nameEl.childNodes)
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent)
-        .join("")
-        .trim();
+      const cardName = readOwnText(nameEl);
       navigator.clipboard.writeText(cardName).then(() => {
         logger(CPL.LOG, `Card ${what} copied: "${cardName}"`);
         btn.textContent = "✅";
